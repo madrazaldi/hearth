@@ -1,0 +1,451 @@
+<script lang="ts">
+  import { app } from '../state.svelte';
+  import { api } from '../api';
+  import { defaultServer, type ServerConfig, type Settings } from '../types';
+  import Icon from './Icon.svelte';
+  import Switch from './Switch.svelte';
+  import Segmented from './Segmented.svelte';
+  import ServerForm from './ServerForm.svelte';
+
+  const isMac = navigator.userAgent.includes('Mac');
+  const mod = isMac ? '⌘' : 'Ctrl';
+
+  const tabs = [
+    { id: 'servers', label: 'Servers', icon: 'server' },
+    { id: 'appearance', label: 'Appearance', icon: 'moon' },
+    { id: 'notifications', label: 'Notifications', icon: 'bell' },
+    { id: 'shortcuts', label: 'Shortcuts', icon: 'layers' },
+  ];
+
+  const tab = $derived(app.settingsOpen?.tab ?? 'appearance');
+  const editing = $derived(app.settingsOpen?.serverId);
+  const editServer = $derived<ServerConfig | null>(
+    editing === 'new' ? defaultServer() : (app.servers.find((s) => s.id === editing) ?? null),
+  );
+  let words = $state(app.settings.highlightWords.join(', '));
+
+  function set<K extends keyof Settings>(key: K) {
+    return {
+      get: () => app.settings[key],
+      set: (v: Settings[K]) => app.updateSettings({ [key]: v } as Partial<Settings>),
+    };
+  }
+
+  const theme = set('theme');
+  const layout = set('layout');
+  const fontSize = set('fontSize');
+  const clock = set('clock');
+  const membership = set('membership');
+
+  function go(t: string, serverId?: string) {
+    app.settingsOpen = { tab: t, serverId };
+  }
+
+  function close() {
+    app.settingsOpen = null;
+  }
+
+  function statusOf(id: string) {
+    const c = app.conns.get(id);
+    if (!c) return 'offline';
+    return c.status;
+  }
+</script>
+
+<svelte:window onkeydown={(e) => e.key === 'Escape' && close()} />
+
+<div class="scrim" onclick={close} role="presentation">
+  <div class="sheet" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Settings" tabindex="-1" onkeydown={() => {}}>
+    <nav>
+      <p class="eyebrow">Settings</p>
+      {#each tabs as t (t.id)}
+        <button class:on={tab === t.id} onclick={() => go(t.id)}>
+          <Icon name={t.icon} size={15} />{t.label}
+        </button>
+      {/each}
+      <div class="about">
+        <p>Hearth <span>0.1.0</span></p>
+      </div>
+    </nav>
+
+    <section>
+      <button class="icon-btn close" onclick={close} aria-label="Close"><Icon name="x" /></button>
+
+      {#if tab === 'servers'}
+        {#if editServer}
+          <h2>{editing === 'new' ? 'Add a server' : `Edit ${editServer.name}`}</h2>
+          {#key editing}
+            <ServerForm
+              server={editServer}
+              submitLabel={editing === 'new' ? 'Add & connect' : 'Save & reconnect'}
+              oncancel={() => go('servers')}
+              ondelete={editing !== 'new'
+                ? async () => {
+                    await app.deleteServer(editServer.id);
+                    go('servers');
+                  }
+                : undefined}
+              onsave={async (s) => {
+                await app.saveServer(s, true);
+                go('servers');
+              }}
+            />
+          {/key}
+        {:else}
+          <h2>Servers</h2>
+          <p class="lede">Networks and bouncers Hearth connects to. A soju bouncer expands into all of its networks automatically.</p>
+          <div class="servers">
+            {#each app.servers as s (s.id)}
+              {@const st = statusOf(s.id)}
+              <div class="server">
+                <span class="dot {st}"></span>
+                <div class="server-main">
+                  <div class="server-name">{s.name}</div>
+                  <div class="server-host mono">{s.websocket ? (s.tls ? 'wss://' : 'ws://') : ''}{s.host}:{s.port}{s.websocket ? s.websocketPath : ''}</div>
+                </div>
+                {#if st === 'offline' || st === 'disconnected'}
+                  <button class="btn ghost" onclick={() => api.connect(s.id)}>Connect</button>
+                {:else}
+                  <button class="btn ghost" onclick={() => api.disconnect(s.id)}>Disconnect</button>
+                {/if}
+                <button class="btn" onclick={() => go('servers', s.id)}>Edit</button>
+              </div>
+            {/each}
+          </div>
+          <button class="btn primary add" onclick={() => go('servers', 'new')}><Icon name="plus" size={14} />Add server</button>
+        {/if}
+      {:else if tab === 'appearance'}
+        <h2>Appearance</h2>
+        <div class="rows">
+          <div class="row">
+            <div><div class="label">Theme</div></div>
+            <Segmented
+              bind:value={theme.get, theme.set}
+              options={[
+                { value: 'system', label: 'System' },
+                { value: 'light', label: 'Light' },
+                { value: 'dark', label: 'Dark' },
+              ]}
+            />
+          </div>
+          <div class="row">
+            <div>
+              <div class="label">Message layout</div>
+              <div class="hint">Columns aligns nicks in a gutter; compact stacks them above messages.</div>
+            </div>
+            <Segmented
+              bind:value={layout.get, layout.set}
+              options={[
+                { value: 'columns', label: 'Columns' },
+                { value: 'compact', label: 'Compact' },
+              ]}
+            />
+          </div>
+          <div class="row">
+            <div><div class="label">Text size</div></div>
+            <Segmented
+              bind:value={fontSize.get, fontSize.set}
+              options={[
+                { value: 13, label: 'S' },
+                { value: 14, label: 'M' },
+                { value: 15, label: 'L' },
+                { value: 16, label: 'XL' },
+              ]}
+            />
+          </div>
+          <div class="row">
+            <div><div class="label">Clock</div></div>
+            <Segmented
+              bind:value={clock.get, clock.set}
+              options={[
+                { value: '24h', label: '24-hour' },
+                { value: '12h', label: '12-hour' },
+              ]}
+            />
+          </div>
+          <div class="row">
+            <div>
+              <div class="label">Joins, parts and quits</div>
+              <div class="hint">Collapse folds consecutive events into one line.</div>
+            </div>
+            <Segmented
+              bind:value={membership.get, membership.set}
+              options={[
+                { value: 'show', label: 'Show' },
+                { value: 'collapse', label: 'Collapse' },
+                { value: 'hide', label: 'Hide' },
+              ]}
+            />
+          </div>
+          <Switch bind:checked={() => app.settings.showSeconds, (v) => app.updateSettings({ showSeconds: v })} label="Show seconds in timestamps" />
+          <Switch bind:checked={() => app.settings.nickColors, (v) => app.updateSettings({ nickColors: v })} label="Colored nicknames" />
+          <Switch
+            bind:checked={() => app.settings.showTyping, (v) => app.updateSettings({ showTyping: v })}
+            label="Show when others are typing"
+          />
+          <Switch
+            bind:checked={() => app.settings.sendTyping, (v) => app.updateSettings({ sendTyping: v })}
+            label="Let others see when I'm typing"
+          />
+        </div>
+      {:else if tab === 'notifications'}
+        <h2>Notifications</h2>
+        <div class="rows">
+          <Switch
+            bind:checked={() => app.settings.notifyHighlights, (v) => app.updateSettings({ notifyHighlights: v })}
+            label="Mentions"
+            hint="When someone says your nickname or a highlight word."
+          />
+          <Switch
+            bind:checked={() => app.settings.notifyPrivate, (v) => app.updateSettings({ notifyPrivate: v })}
+            label="Private messages"
+          />
+          <label class="field">
+            <span>Highlight words</span>
+            <input
+              class="input"
+              bind:value={words}
+              onchange={() => app.updateSettings({ highlightWords: words.split(',').map((w) => w.trim()).filter(Boolean) })}
+              placeholder="hearth, deploy"
+            />
+            <small>Comma-separated. Your nickname always counts.</small>
+          </label>
+        </div>
+      {:else if tab === 'shortcuts'}
+        <h2>Shortcuts</h2>
+        <dl class="keys">
+          <dt><span class="kbd">{mod} K</span></dt><dd>Jump to buffer</dd>
+          <dt><span class="kbd">⌥ ↑</span> <span class="kbd">⌥ ↓</span></dt><dd>Previous / next buffer</dd>
+          <dt><span class="kbd">⌥ ⇧ ↑</span> <span class="kbd">⌥ ⇧ ↓</span></dt><dd>Previous / next unread</dd>
+          <dt><span class="kbd">{mod} 1–9</span></dt><dd>Go to channel by position</dd>
+          <dt><span class="kbd">{mod} F</span></dt><dd>Filter messages</dd>
+          <dt><span class="kbd">{mod} W</span></dt><dd>Close buffer</dd>
+          <dt><span class="kbd">{mod} ⇧ M</span></dt><dd>Toggle member list</dd>
+          <dt><span class="kbd">{mod} ,</span></dt><dd>Settings</dd>
+          <dt><span class="kbd">Tab</span></dt><dd>Complete nick, channel or command</dd>
+          <dt><span class="kbd">↑</span> <span class="kbd">↓</span></dt><dd>Input history</dd>
+          <dt><span class="kbd">⇧ ↵</span></dt><dd>New line</dd>
+        </dl>
+      {/if}
+    </section>
+  </div>
+</div>
+
+<style>
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    background: rgb(0 0 0 / 0.35);
+    display: grid;
+    place-items: center;
+    animation: fade 120ms;
+  }
+
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+  }
+
+  .sheet {
+    width: min(860px, 94vw);
+    height: min(640px, 88vh);
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    background: var(--bg);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    animation: rise 180ms var(--ease);
+  }
+
+  @keyframes rise {
+    from {
+      transform: translateY(8px) scale(0.995);
+      opacity: 0;
+    }
+  }
+
+  nav {
+    background: var(--bg-side);
+    border-right: 1px solid var(--line);
+    padding: 20px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  nav .eyebrow {
+    margin: 0 10px 10px;
+  }
+
+  nav button {
+    height: 32px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 10px;
+    border-radius: 7px;
+    font-size: 13.5px;
+    color: var(--text-2);
+    text-align: left;
+  }
+
+  nav button:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  nav button.on {
+    background: var(--bg-active);
+    color: var(--text);
+  }
+
+  .about {
+    margin-top: auto;
+    padding: 0 10px;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  .about span {
+    color: var(--text-4);
+    font-family: var(--font-mono);
+  }
+
+  section {
+    position: relative;
+    overflow-y: auto;
+    padding: 28px 36px 36px;
+    user-select: none;
+  }
+
+  .close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+  }
+
+  h2 {
+    margin: 0 0 6px;
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+  }
+
+  .lede {
+    margin: 0 0 20px;
+    color: var(--text-3);
+    font-size: 13px;
+    max-width: 52ch;
+  }
+
+  h2 + :global(form),
+  h2 + .rows,
+  h2 + .keys {
+    margin-top: 20px;
+  }
+
+  .servers {
+    display: grid;
+    border-radius: 10px;
+    box-shadow: 0 0 0 1px var(--line-strong) inset;
+    overflow: hidden;
+  }
+
+  .server {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+  }
+
+  .server + .server {
+    border-top: 1px solid var(--line);
+  }
+
+  .server-main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .server-name {
+    font-weight: 500;
+  }
+
+  .server-host {
+    font-size: 12px;
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-4);
+  }
+
+  .dot.connected {
+    background: var(--ok);
+  }
+
+  .dot.connecting,
+  .dot.registering {
+    background: var(--warn);
+  }
+
+  .dot.disconnected {
+    background: var(--danger);
+  }
+
+  .add {
+    margin-top: 16px;
+  }
+
+  .rows {
+    display: grid;
+    gap: 10px;
+    max-width: 560px;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 6px 0;
+  }
+
+  .row > div:first-child {
+    flex: 1;
+  }
+
+  .label {
+    font-size: 13.5px;
+  }
+
+  .hint {
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  .keys {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 10px 16px;
+    font-size: 13.5px;
+  }
+
+  .keys dt {
+    display: flex;
+    gap: 4px;
+  }
+
+  .keys dd {
+    margin: 0;
+    color: var(--text-2);
+  }
+</style>

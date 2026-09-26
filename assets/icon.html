@@ -1,0 +1,23 @@
+<!doctype html><html><body style="margin:0;background:transparent">
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ece4d8"/><stop offset="1" stop-color="#d9cfc1"/>
+    </linearGradient>
+    <linearGradient id="hole" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c1917"/><stop offset="1" stop-color="#2b211b"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.85" r="0.6">
+      <stop offset="0" stop-color="#ef8b4f" stop-opacity="0.55"/><stop offset="1" stop-color="#ef8b4f" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="flame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffc08f"/><stop offset="1" stop-color="#e8692e"/>
+    </linearGradient>
+    <clipPath id="arch"><path d="M332 780V472a180 180 0 0 1 360 0v308Z"/></clipPath>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#bg)"/>
+  <path d="M332 780V472a180 180 0 0 1 360 0v308Z" fill="url(#hole)"/>
+  <g clip-path="url(#arch)"><rect x="300" y="300" width="424" height="500" fill="url(#glow)"/></g>
+  <path d="M512 520c46 52 66 90 66 124a66 66 0 0 1-132 0c0-34 20-72 66-124Z" fill="url(#flame)"/>
+  <rect x="262" y="780" width="500" height="40" rx="20" fill="#3a302a"/>
+</svg></body></html>

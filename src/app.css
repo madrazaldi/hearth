@@ -1,0 +1,289 @@
+/* ─── Tokens ──────────────────────────────────────────────── */
+
+:root {
+  --font-ui: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --fs: 14px;
+  --sidebar-w: 248px;
+  --members-w: 224px;
+  --radius: 7px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  color-scheme: dark;
+  --bg: #171513;
+  --bg-side: #121110;
+  --bg-raised: #201d1b;
+  --bg-sunken: #0f0e0d;
+  --bg-hover: rgb(255 244 230 / 0.035);
+  --bg-active: rgb(255 244 230 / 0.075);
+  --line: rgb(255 240 220 / 0.075);
+  --line-strong: rgb(255 240 220 / 0.14);
+  --text: #ece6dd;
+  --text-2: #b7afa4;
+  --text-3: #80786e;
+  --text-4: #564f48;
+  --accent: #ef8b4f;
+  --accent-text: #1a0f08;
+  --accent-soft: rgb(239 139 79 / 0.14);
+  --mention: rgb(239 139 79 / 0.075);
+  --ok: #93c283;
+  --warn: #dcb866;
+  --danger: #e5705f;
+  --nick-l: 0.8;
+  --nick-c: 0.085;
+  --shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 16px 48px -12px rgb(0 0 0 / 0.6), 0 0 0 1px var(--line-strong);
+
+  --irc-0: #f2f2f2; --irc-1: #6b6b6b; --irc-2: #6f8fd6; --irc-3: #7fb069;
+  --irc-4: #e5705f; --irc-5: #b26a52; --irc-6: #b58ad8; --irc-7: #e39b4c;
+  --irc-8: #e3cf62; --irc-9: #98d67f; --irc-10: #5fb3b3; --irc-11: #78d2d9;
+  --irc-12: #82a6f2; --irc-13: #e188c6; --irc-14: #8c8c8c; --irc-15: #bdbdbd;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #fbf9f6;
+  --bg-side: #f2eee8;
+  --bg-raised: #ffffff;
+  --bg-sunken: #ebe6de;
+  --bg-hover: rgb(70 45 20 / 0.04);
+  --bg-active: rgb(70 45 20 / 0.075);
+  --line: rgb(70 45 20 / 0.09);
+  --line-strong: rgb(70 45 20 / 0.16);
+  --text: #221e1a;
+  --text-2: #57504a;
+  --text-3: #8b8379;
+  --text-4: #b6aea4;
+  --accent: #c9591c;
+  --accent-text: #fff;
+  --accent-soft: rgb(201 89 28 / 0.12);
+  --mention: rgb(201 89 28 / 0.06);
+  --ok: #4d8a3c;
+  --warn: #a67b12;
+  --danger: #c2412f;
+  --nick-l: 0.5;
+  --nick-c: 0.13;
+  --shadow: 0 16px 48px -12px rgb(60 40 20 / 0.25), 0 0 0 1px var(--line-strong);
+
+  --irc-0: #ffffff; --irc-1: #1e1e1e; --irc-2: #2f4fa8; --irc-3: #3f7a2c;
+  --irc-4: #c2412f; --irc-5: #7c3b24; --irc-6: #7a3fa5; --irc-7: #c06a14;
+  --irc-8: #a58a0a; --irc-9: #4b9a2d; --irc-10: #1f7f7f; --irc-11: #1c8e99;
+  --irc-12: #3864d0; --irc-13: #b0398d; --irc-14: #6f6f6f; --irc-15: #a8a8a8;
+}
+
+/* ─── Base ────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs);
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: 'ss02' 0;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: default;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+a {
+  color: inherit;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
+  outline-offset: 1px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+:hover::-webkit-scrollbar-thumb {
+  background-color: var(--line-strong);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: auto;
+}
+
+/* ─── Shared controls ─────────────────────────────────────── */
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field > span {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.field small {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.input {
+  height: 32px;
+  width: 100%;
+  padding: 0 10px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  outline: none;
+  transition: border-color 120ms, box-shadow 120ms;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+textarea.input {
+  height: auto;
+  padding: 8px 10px;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.input::placeholder {
+  color: var(--text-4);
+}
+
+.input:focus {
+  border-color: color-mix(in oklab, var(--accent) 60%, var(--line));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.btn {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  background: var(--bg-raised);
+  box-shadow: 0 0 0 1px var(--line-strong) inset;
+  transition: background 120ms;
+}
+.btn:hover {
+  background: color-mix(in oklab, var(--bg-raised) 88%, var(--text));
+}
+.btn.primary {
+  background: var(--accent);
+  color: var(--accent-text);
+  box-shadow: none;
+}
+.btn.primary:hover {
+  background: color-mix(in oklab, var(--accent) 88%, white);
+}
+.btn.ghost {
+  background: none;
+  box-shadow: none;
+  color: var(--text-2);
+}
+.btn.ghost:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.btn.danger {
+  color: var(--danger);
+}
+.btn:disabled {
+  opacity: 0.5;
+}
+
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--text-3);
+  transition: background 120ms, color 120ms;
+}
+.icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.icon-btn.on {
+  color: var(--text);
+  background: var(--bg-active);
+}
+
+.kbd {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  padding: 1px 5px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--line-strong) inset;
+}
+
+.eyebrow {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.nick {
+  color: oklch(var(--nick-l) var(--nick-c) var(--h, 60));
+}
+.no-nick-colors .nick {
+  color: var(--text);
+}
