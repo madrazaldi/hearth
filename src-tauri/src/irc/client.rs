@@ -349,7 +349,7 @@ impl State<'_> {
         for chunk in bytes.chunks(400) {
             self.send(format!("AUTHENTICATE {}", std::str::from_utf8(chunk).unwrap_or("")));
         }
-        if bytes.len() % 400 == 0 {
+        if bytes.len().is_multiple_of(400) {
             self.send("AUTHENTICATE +");
         }
     }

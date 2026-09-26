@@ -3,7 +3,7 @@ name = "hearth"
 version = "0.1.0"
 description = "A modern IRC client"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.90"
 
 [lib]
 name = "hearth_lib"
