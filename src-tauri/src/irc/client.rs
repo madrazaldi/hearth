@@ -4,12 +4,16 @@
 
 use super::events::{Emitter, Event, Status};
 use super::manager::Manager;
-use super::message::{casefold, Message};
+use super::message::{casefold, Message, Source};
+use super::scram::Scram;
+use super::time::{format_ms, now_ms};
 use super::transport::{self, Endpoint, LineWriter};
 use crate::config::{SaslMechanism, ServerConfig};
+use crate::store::{Db, LogEntry};
 use anyhow::{anyhow, Result};
 use base64::Engine;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
@@ -23,16 +27,20 @@ const WANTED_CAPS: &[&str] = &[
     "chghost",
     "draft/chathistory",
     "draft/event-playback",
+    "draft/extended-monitor",
     "draft/message-redaction",
     "draft/read-marker",
     "echo-message",
     "extended-join",
+    "extended-monitor",
     "invite-notify",
+    "labeled-response",
     "message-tags",
     "multi-prefix",
     "server-time",
     "setname",
     "soju.im/bouncer-networks",
+    "soju.im/search",
     "userhost-in-names",
 ];
 
@@ -40,16 +48,31 @@ const WANTED_CAPS: &[&str] = &[
 pub enum HistoryKind {
     Messages,
     Targets,
+    Search,
 }
+
+impl HistoryKind {
+    fn batch_type(self) -> &'static str {
+        match self {
+            HistoryKind::Messages => "chathistory",
+            HistoryKind::Targets => "draft/chathistory-targets",
+            HistoryKind::Search => "soju.im/search",
+        }
+    }
+
+    fn cap(self) -> &'static str {
+        match self {
+            HistoryKind::Search => "soju.im/search",
+            _ => "draft/chathistory",
+        }
+    }
+}
+
+type Reply = oneshot::Sender<Result<Vec<Message>, String>>;
 
 pub enum Cmd {
     Send(Vec<String>),
-    History {
-        kind: HistoryKind,
-        target: String,
-        line: String,
-        reply: oneshot::Sender<Result<Vec<Message>, String>>,
-    },
+    History { kind: HistoryKind, target: String, line: String, reply: Reply },
     Quit(Option<String>),
     Reconnect,
 }
@@ -61,16 +84,22 @@ pub struct Spec {
     pub bind: Option<String>,
     /// Distinguishes this actor from a later one reusing the same id.
     pub generation: u64,
+    pub db: Arc<Db>,
+    /// Lines queued for the socket but not yet written.
+    pub backlog: Arc<AtomicUsize>,
 }
 
 enum End {
     Quit,
     Reconnect,
     Error(anyhow::Error, bool),
+    /// The server's STS policy asks us to reconnect over TLS on this port.
+    Upgrade(u16),
 }
 
 pub async fn run(spec: Spec, mut rx: mpsc::UnboundedReceiver<Cmd>, emitter: Emitter, manager: Weak<Manager>) {
     let mut attempt: u32 = 0;
+    let mut upgrade: Option<u16> = None;
     loop {
         emitter.emit(Event::Status {
             conn: spec.id.clone(),
@@ -78,9 +107,15 @@ pub async fn run(spec: Spec, mut rx: mpsc::UnboundedReceiver<Cmd>, emitter: Emit
             error: None,
             retry_in: None,
         });
-        let error = match session(&spec, &mut rx, &emitter, &manager).await {
+        let error = match session(&spec, upgrade, &mut rx, &emitter, &manager).await {
             End::Quit => break,
             End::Reconnect => {
+                attempt = 0;
+                None
+            }
+            End::Upgrade(port) => {
+                log::info!("{}: STS policy requires TLS, reconnecting on port {port}", spec.id);
+                upgrade = Some(port);
                 attempt = 0;
                 None
             }
@@ -124,11 +159,34 @@ pub async fn run(spec: Spec, mut rx: mpsc::UnboundedReceiver<Cmd>, emitter: Emit
 }
 
 struct Pending {
+    id: u64,
     kind: HistoryKind,
+    /// Case-folded target, for matching unlabeled replies.
     target: String,
-    batch: Option<String>,
+    label: Option<String>,
+    /// A reply batch has been matched to this request.
+    assigned: bool,
     messages: Vec<Message>,
-    reply: oneshot::Sender<Result<Vec<Message>, String>>,
+    reply: Reply,
+}
+
+/// Where the contents of a batch go.
+#[derive(Debug, Clone)]
+enum Route {
+    /// Collected as the reply to a pending request.
+    Collect(u64),
+    /// A labeled-response wrapper around the reply to a pending request.
+    Wrap(u64),
+    /// A labeled response to a line the frontend sent; its messages carry
+    /// this label so the UI can route them.
+    Label(String),
+    Other,
+}
+
+enum Sasl {
+    Plain,
+    External,
+    Scram(Box<Scram>),
 }
 
 struct State<'a> {
@@ -136,6 +194,9 @@ struct State<'a> {
     emitter: &'a Emitter,
     manager: &'a Weak<Manager>,
     out: mpsc::UnboundedSender<String>,
+    /// Whether this link is encrypted, and the port it uses (for STS).
+    secure: bool,
+    port: u16,
     nick: String,
     registered: bool,
     welcomed: bool,
@@ -145,13 +206,22 @@ struct State<'a> {
     reqs_outstanding: usize,
     cap_ended: bool,
     isupport: BTreeMap<String, String>,
-    batches: HashMap<String, Option<usize>>,
+    batches: HashMap<String, Route>,
     pending: Vec<Pending>,
+    next_id: u64,
+    sasl: Option<Sasl>,
+    sasl_step: u8,
+    sasl_in: String,
+    sasl_fell_back: bool,
+    sts_upgrade: Option<u16>,
 }
 
 impl State<'_> {
     fn send(&self, line: impl Into<String>) {
-        let _ = self.out.send(line.into());
+        self.spec.backlog.fetch_add(1, Ordering::Relaxed);
+        if self.out.send(line.into()).is_err() {
+            self.spec.backlog.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 
     fn conn(&self) -> String {
@@ -162,13 +232,37 @@ impl State<'_> {
         self.isupport.get("CASEMAPPING").map(String::as_str).unwrap_or("rfc1459")
     }
 
+    fn fold(&self, s: &str) -> String {
+        casefold(s, self.casemapping())
+    }
+
+    fn is_channel(&self, name: &str) -> bool {
+        let types = self.isupport.get("CHANTYPES").map(String::as_str).unwrap_or("#&");
+        name.chars().next().is_some_and(|c| types.contains(c))
+    }
+
+    fn is_me(&self, nick: &str) -> bool {
+        self.fold(nick) == self.fold(&self.nick)
+    }
+
     fn is_control(&self) -> bool {
         self.spec.bind.is_none() && self.enabled.contains("soju.im/bouncer-networks")
     }
 
     fn sasl_wanted(&self) -> bool {
         let s = &self.spec.server;
-        s.sasl == SaslMechanism::Plain && !s.sasl_password.is_empty()
+        match s.sasl {
+            SaslMechanism::Plain => !s.sasl_password.is_empty(),
+            SaslMechanism::External => !s.client_cert.trim().is_empty(),
+            SaslMechanism::None => false,
+        }
+    }
+
+    fn sasl_offered(&self) -> Vec<String> {
+        self.available
+            .get("sasl")
+            .map(|v| v.split(',').filter(|m| !m.is_empty()).map(|m| m.to_ascii_uppercase()).collect())
+            .unwrap_or_default()
     }
 
     fn request_caps(&mut self, offered: impl Iterator<Item = String>) {
@@ -204,14 +298,95 @@ impl State<'_> {
     }
 
     fn maybe_end_cap(&mut self) {
-        if self.cap_ended || self.registered || self.reqs_outstanding > 0 {
+        if self.cap_ended || self.registered || self.reqs_outstanding > 0 || self.sasl.is_some() {
             return;
         }
         if self.enabled.contains("sasl") && self.sasl_wanted() {
-            self.send("AUTHENTICATE PLAIN");
+            self.start_sasl();
             return;
         }
         self.finish_cap();
+    }
+
+    fn start_sasl(&mut self) {
+        let s = &self.spec.server;
+        let offered = self.sasl_offered();
+        let mech = match s.sasl {
+            SaslMechanism::External => Sasl::External,
+            _ if offered.iter().any(|m| m == "SCRAM-SHA-256") => {
+                Sasl::Scram(Box::new(Scram::new(self.sasl_user(), &s.sasl_password)))
+            }
+            _ => Sasl::Plain,
+        };
+        self.begin_mechanism(mech);
+    }
+
+    fn begin_mechanism(&mut self, mech: Sasl) {
+        let name = match mech {
+            Sasl::Plain => "PLAIN",
+            Sasl::External => "EXTERNAL",
+            Sasl::Scram(_) => "SCRAM-SHA-256",
+        };
+        self.sasl = Some(mech);
+        self.sasl_step = 0;
+        self.sasl_in.clear();
+        self.send(format!("AUTHENTICATE {name}"));
+    }
+
+    fn sasl_user(&self) -> &str {
+        let s = &self.spec.server;
+        if s.sasl_username.is_empty() { &s.nick } else { &s.sasl_username }
+    }
+
+    /// Send a SASL payload, base64-encoded and split into 400-byte chunks.
+    fn send_sasl(&self, payload: &[u8]) {
+        if payload.is_empty() {
+            self.send("AUTHENTICATE +");
+            return;
+        }
+        let encoded = base64::engine::general_purpose::STANDARD.encode(payload);
+        let bytes = encoded.as_bytes();
+        for chunk in bytes.chunks(400) {
+            self.send(format!("AUTHENTICATE {}", std::str::from_utf8(chunk).unwrap_or("")));
+        }
+        if bytes.len() % 400 == 0 {
+            self.send("AUTHENTICATE +");
+        }
+    }
+
+    fn handle_authenticate(&mut self, data: &str) {
+        if data != "+" {
+            self.sasl_in.push_str(data);
+            if data.len() == 400 {
+                return; // More chunks follow.
+            }
+        }
+        let raw = std::mem::take(&mut self.sasl_in);
+        let challenge = base64::engine::general_purpose::STANDARD.decode(raw).unwrap_or_default();
+        let challenge = String::from_utf8_lossy(&challenge).to_string();
+        let user = self.sasl_user().to_string();
+        let password = self.spec.server.sasl_password.clone();
+        let step = self.sasl_step;
+        self.sasl_step += 1;
+        let answer: Result<Option<Vec<u8>>, String> = match self.sasl.as_mut() {
+            Some(Sasl::Plain) => Ok(Some(format!("{user}\0{user}\0{password}").into_bytes())),
+            Some(Sasl::External) => Ok(Some(Vec::new())),
+            Some(Sasl::Scram(scram)) => match step {
+                0 => Ok(Some(scram.client_first().into_bytes())),
+                1 => scram.client_final(&challenge).map(|s| Some(s.into_bytes())),
+                _ => scram.verify(&challenge).map(|_| Some(Vec::new())),
+            },
+            None => Ok(None),
+        };
+        match answer {
+            Ok(Some(payload)) => self.send_sasl(&payload),
+            Ok(None) => {}
+            Err(e) => {
+                log::warn!("{}: SASL aborted: {e}", self.spec.id);
+                self.forward(Message::new("FAIL", &["AUTHENTICATE", "SCRAM", &format!("SCRAM failed: {e}")]));
+                self.send("AUTHENTICATE *");
+            }
+        }
     }
 
     fn finish_cap(&mut self) {
@@ -232,42 +407,76 @@ impl State<'_> {
         });
     }
 
+    /// React to an advertised STS policy. Returns true when the connection
+    /// must be dropped and re-established over TLS.
+    fn check_sts(&mut self) -> bool {
+        let Some(value) = self.available.get("sts") else { return false };
+        let attrs: HashMap<&str, &str> = value.split(',').map(|kv| kv.split_once('=').unwrap_or((kv, ""))).collect();
+        let s = &self.spec.server;
+        if !self.secure {
+            if s.websocket {
+                return false;
+            }
+            if let Some(port) = attrs.get("port").and_then(|p| p.parse::<u16>().ok()) {
+                self.sts_upgrade = Some(port);
+                return true;
+            }
+        } else if !s.accept_invalid_certs {
+            // Only persist a policy learned over a verified TLS connection.
+            if let Some(duration) = attrs.get("duration").and_then(|d| d.parse::<i64>().ok()) {
+                self.spec.db.set_sts_policy(s.host.trim(), self.port, duration);
+            }
+        }
+        false
+    }
+
     /// Returns Err to tear the session down.
-    fn handle(&mut self, msg: Message) -> Result<()> {
-        // Route messages that belong to a requested history batch.
-        if let Some(batch) = msg.tag("batch") {
-            if let Some(Some(idx)) = self.batches.get(batch) {
-                let idx = *idx;
-                if msg.command != "BATCH" {
-                    if let Some(p) = self.pending.get_mut(idx) {
+    fn handle(&mut self, mut msg: Message) -> Result<()> {
+        // Route messages that belong to a batch.
+        if let Some(batch) = msg.tag("batch").map(str::to_string) {
+            match self.batches.get(&batch).cloned() {
+                Some(Route::Collect(id)) | Some(Route::Wrap(id)) if msg.command != "BATCH" => {
+                    if msg.command == "FAIL" {
+                        self.complete(id, Err(msg.params.last().cloned().unwrap_or_default()));
+                    } else if let Some(p) = self.pending.iter_mut().find(|p| p.id == id) {
                         p.messages.push(msg);
                     }
                     return Ok(());
                 }
+                Some(Route::Label(label)) => {
+                    msg.tags.entry("label".into()).or_insert(label);
+                }
+                _ => {}
             }
         }
 
         match msg.command.as_str() {
             "PING" => self.send(Message::new("PONG", &msg.params.iter().map(String::as_str).collect::<Vec<_>>()).serialize()),
-            "CAP" => self.handle_cap(&msg),
-            "AUTHENTICATE" if msg.param(0) == "+" => {
-                let s = &self.spec.server;
-                let user = if s.sasl_username.is_empty() { &s.nick } else { &s.sasl_username };
-                let payload = format!("{user}\0{user}\0{}", s.sasl_password);
-                let encoded = base64::engine::general_purpose::STANDARD.encode(payload);
-                let bytes = encoded.as_bytes();
-                for chunk in bytes.chunks(400) {
-                    self.send(format!("AUTHENTICATE {}", std::str::from_utf8(chunk).unwrap_or("")));
-                }
-                if bytes.len() % 400 == 0 {
-                    self.send("AUTHENTICATE +");
+            "CAP" => {
+                if self.handle_cap(&msg) {
+                    return Err(anyhow!("upgrading to TLS as required by the server's STS policy"));
                 }
             }
-            "903" | "907" => self.finish_cap(),
-            "902" | "904" | "905" | "906" | "908" => {
-                if msg.command != "908" {
-                    self.finish_cap();
+            "AUTHENTICATE" => self.handle_authenticate(msg.param(0)),
+            "903" | "907" => {
+                self.sasl = None;
+                self.finish_cap();
+            }
+            "904" if matches!(self.sasl, Some(Sasl::Scram(_))) && !self.sasl_fell_back => {
+                // Accounts without SCRAM credentials (common on Atheme) still
+                // accept PLAIN; try it once before giving up.
+                let offered = self.sasl_offered();
+                if offered.is_empty() || offered.iter().any(|m| m == "PLAIN") {
+                    self.sasl_fell_back = true;
+                    self.begin_mechanism(Sasl::Plain);
+                    return Ok(());
                 }
+                self.sasl = None;
+                self.finish_cap();
+            }
+            "902" | "904" | "905" | "906" => {
+                self.sasl = None;
+                self.finish_cap();
             }
             "001" => {
                 self.registered = true;
@@ -310,18 +519,21 @@ impl State<'_> {
             }
             "NICK" => {
                 if let Some(src) = &msg.source {
-                    let cm = self.casemapping().to_string();
-                    if casefold(&src.nick, &cm) == casefold(&self.nick, &cm) {
+                    if self.is_me(&src.nick) {
                         self.nick = msg.param(0).to_string();
                     }
                 }
             }
             "BATCH" => self.handle_batch(&msg),
-            "FAIL" if msg.param(0) == "CHATHISTORY" => {
-                if let Some(i) = self.pending.iter().position(|p| p.batch.is_none()) {
-                    let p = self.pending.remove(i);
-                    self.reindex_batches(i);
-                    let _ = p.reply.send(Err(msg.params.last().cloned().unwrap_or_default()));
+            "ACK" => {
+                if let Some(id) = msg.tag("label").and_then(|l| self.pending_by_label(l)) {
+                    self.complete(id, Ok(Vec::new()));
+                    return Ok(());
+                }
+            }
+            "FAIL" if matches!(msg.param(0), "CHATHISTORY" | "SEARCH") => {
+                if let Some(id) = self.pending_for_fail(&msg) {
+                    self.complete(id, Err(msg.params.last().cloned().unwrap_or_default()));
                 }
             }
             "BOUNCER" if msg.param(0) == "NETWORK" && self.is_control() => {
@@ -341,6 +553,7 @@ impl State<'_> {
             }
             _ => {}
         }
+        self.log_live(&msg);
         self.forward(msg);
         Ok(())
     }
@@ -349,7 +562,8 @@ impl State<'_> {
         self.emitter.emit(Event::Message { conn: self.conn(), msg });
     }
 
-    fn handle_cap(&mut self, msg: &Message) {
+    /// Returns true when an STS upgrade is required.
+    fn handle_cap(&mut self, msg: &Message) -> bool {
         let sub = msg.param(1).to_ascii_uppercase();
         let last = msg.params.last().cloned().unwrap_or_default();
         match sub.as_str() {
@@ -357,12 +571,15 @@ impl State<'_> {
                 self.ls_buffer.push(last);
                 // A "*" before the list means more lines follow.
                 if msg.params.len() >= 4 && msg.param(2) == "*" {
-                    return;
+                    return false;
                 }
                 let all = std::mem::take(&mut self.ls_buffer).join(" ");
                 for tok in all.split_whitespace() {
                     let (k, v) = tok.split_once('=').unwrap_or((tok, ""));
                     self.available.insert(k.to_string(), v.to_string());
+                }
+                if self.check_sts() {
+                    return true;
                 }
                 let offered: Vec<String> = self.available.keys().cloned().collect();
                 self.request_caps(offered.into_iter());
@@ -394,6 +611,9 @@ impl State<'_> {
                     self.available.insert(k.to_string(), v.to_string());
                     offered.push(k.to_string());
                 }
+                if offered.iter().any(|c| c == "sts") && self.check_sts() {
+                    return true;
+                }
                 self.request_caps(offered.into_iter());
             }
             "DEL" => {
@@ -405,45 +625,162 @@ impl State<'_> {
             }
             _ => {}
         }
+        false
+    }
+
+    fn pending_by_label(&self, label: &str) -> Option<u64> {
+        self.pending.iter().find(|p| p.label.as_deref() == Some(label)).map(|p| p.id)
+    }
+
+    /// The oldest unlabeled request of `kind` still waiting for its batch,
+    /// preferring one for `target`.
+    fn unassigned(&self, kind: HistoryKind, target: Option<&str>) -> Option<u64> {
+        let open = || self.pending.iter().filter(|p| !p.assigned && p.label.is_none() && p.kind == kind);
+        target
+            .and_then(|t| open().find(|p| p.target == t))
+            .or_else(|| open().next())
+            .map(|p| p.id)
+    }
+
+    fn pending_for_fail(&self, msg: &Message) -> Option<u64> {
+        if let Some(id) = msg.tag("label").and_then(|l| self.pending_by_label(l)) {
+            return Some(id);
+        }
+        let kind = match (msg.param(0), msg.param(2)) {
+            ("SEARCH", _) => HistoryKind::Search,
+            (_, "TARGETS") => HistoryKind::Targets,
+            _ => HistoryKind::Messages,
+        };
+        // FAIL CHATHISTORY <code> <subcommand> [<target>] :<description>
+        let target = (msg.params.len() > 4).then(|| self.fold(msg.param(3)));
+        self.unassigned(kind, target.as_deref())
+    }
+
+    fn complete(&mut self, id: u64, result: Result<Vec<Message>, String>) {
+        let Some(i) = self.pending.iter().position(|p| p.id == id) else { return };
+        let p = self.pending.remove(i);
+        if let (Ok(msgs), HistoryKind::Messages) = (&result, p.kind) {
+            // Backfill the local log; only messages with an id can be deduplicated.
+            for m in msgs.iter().filter(|m| m.tag("msgid").is_some() && loggable(m)) {
+                self.spec.db.log(LogEntry { network: self.conn(), target: p.target.clone(), msg: m.clone() });
+            }
+        }
+        let _ = p.reply.send(result);
     }
 
     fn handle_batch(&mut self, msg: &Message) {
         let reference = msg.param(0);
         if let Some(r) = reference.strip_prefix('+') {
             let kind = msg.param(1);
-            let cm = self.casemapping().to_string();
-            let slot = match kind {
-                "chathistory" => {
-                    let target = casefold(msg.param(2), &cm);
-                    self.pending
-                        .iter()
-                        .position(|p| p.batch.is_none() && p.kind == HistoryKind::Messages && p.target == target)
+            let parent = msg.tag("batch").and_then(|b| self.batches.get(b)).cloned();
+            let own = msg.tag("label").and_then(|l| self.pending_by_label(l));
+            let route = if kind == "labeled-response" {
+                match (own, msg.tag("label")) {
+                    (Some(id), _) => Route::Wrap(id),
+                    (None, Some(label)) => Route::Label(label.to_string()),
+                    _ => Route::Other,
                 }
-                "draft/chathistory-targets" => self
-                    .pending
-                    .iter()
-                    .position(|p| p.batch.is_none() && p.kind == HistoryKind::Targets),
-                _ => None,
+            } else {
+                let hkind = [HistoryKind::Messages, HistoryKind::Targets, HistoryKind::Search]
+                    .into_iter()
+                    .find(|k| k.batch_type() == kind);
+                let id = hkind.and_then(|hk| {
+                    own.or(match parent {
+                        Some(Route::Wrap(id)) => Some(id),
+                        _ => None,
+                    })
+                    .or_else(|| {
+                        let target = (hk == HistoryKind::Messages).then(|| self.fold(msg.param(2)));
+                        self.unassigned(hk, target.as_deref())
+                    })
+                });
+                match (id, parent) {
+                    (Some(id), _) => {
+                        if let Some(p) = self.pending.iter_mut().find(|p| p.id == id) {
+                            p.assigned = true;
+                        }
+                        Route::Collect(id)
+                    }
+                    (None, Some(Route::Label(l))) => Route::Label(l),
+                    _ => Route::Other,
+                }
             };
-            if let Some(i) = slot {
-                self.pending[i].batch = Some(r.to_string());
-            }
-            self.batches.insert(r.to_string(), slot);
+            self.batches.insert(r.to_string(), route);
         } else if let Some(r) = reference.strip_prefix('-') {
-            if let Some(Some(i)) = self.batches.remove(r) {
-                let p = self.pending.remove(i);
-                self.reindex_batches(i);
-                let _ = p.reply.send(Ok(p.messages));
+            match self.batches.remove(r) {
+                Some(Route::Collect(id)) | Some(Route::Wrap(id)) => {
+                    let msgs = self
+                        .pending
+                        .iter_mut()
+                        .find(|p| p.id == id)
+                        .map(|p| std::mem::take(&mut p.messages));
+                    if let Some(msgs) = msgs {
+                        self.complete(id, Ok(msgs));
+                    }
+                }
+                _ => {}
             }
         }
     }
 
-    fn reindex_batches(&mut self, removed: usize) {
-        for slot in self.batches.values_mut().flatten() {
-            if *slot > removed {
-                *slot -= 1;
+    /// The buffer a message belongs in, case-folded, if it should be logged.
+    fn log_target(&self, msg: &Message) -> Option<String> {
+        let src = msg.source.as_ref();
+        let target = msg.param(0);
+        match msg.command.as_str() {
+            "PRIVMSG" | "NOTICE" | "TAGMSG" => {
+                let src = src?;
+                // Server notices have no user part and usually a dotted name.
+                if src.user.is_none() && (src.nick.contains('.') || !self.registered) {
+                    return None;
+                }
+                let statusmsg = self.isupport.get("STATUSMSG").map(String::as_str).unwrap_or("");
+                let mut t = target;
+                while t.len() > 1 && statusmsg.contains(&t[..1]) && self.is_channel(&t[1..]) {
+                    t = &t[1..];
+                }
+                if t.is_empty() || t == "*" {
+                    return None;
+                }
+                let peer = if self.is_channel(t) || self.is_me(&src.nick) { t } else { &src.nick };
+                Some(self.fold(peer))
             }
+            "JOIN" | "PART" | "KICK" | "TOPIC" => Some(self.fold(target)),
+            "MODE" if self.is_channel(target) => Some(self.fold(target)),
+            _ => None,
         }
+    }
+
+    fn log_live(&self, msg: &Message) {
+        if self.is_control() {
+            return;
+        }
+        if msg.command == "REDACT" {
+            self.spec.db.redact(&self.spec.id, msg.param(1));
+            return;
+        }
+        if !self.spec.db.logging() || !loggable(msg) {
+            return;
+        }
+        if let Some(target) = self.log_target(msg) {
+            self.spec.db.log(LogEntry { network: self.conn(), target, msg: msg.clone() });
+        }
+    }
+
+    /// Without echo-message the server never reflects our own messages, so
+    /// log them as they are sent.
+    fn log_outgoing(&self, line: &str) {
+        if self.enabled.contains("echo-message") || self.is_control() || !self.spec.db.logging() {
+            return;
+        }
+        let Some(mut msg) = Message::parse(line) else { return };
+        if !matches!(msg.command.as_str(), "PRIVMSG" | "NOTICE") || !loggable(&msg) {
+            return;
+        }
+        msg.source = Some(Source { nick: self.nick.clone(), user: Some(String::new()), host: None });
+        msg.tags.insert("time".into(), format_ms(now_ms()));
+        let target = self.fold(msg.param(0));
+        self.spec.db.log(LogEntry { network: self.conn(), target, msg });
     }
 
     fn on_welcome(&mut self) {
@@ -463,6 +800,19 @@ impl State<'_> {
                 self.send(line.replace("$nick", &self.nick));
             }
         }
+    }
+}
+
+/// Whether a message is worth keeping in the local log.
+fn loggable(msg: &Message) -> bool {
+    match msg.command.as_str() {
+        "PRIVMSG" | "NOTICE" => {
+            let body = msg.param(1);
+            !body.starts_with('\x01') || body.starts_with("\x01ACTION")
+        }
+        "TAGMSG" => msg.tag("+draft/react").is_some(),
+        "JOIN" | "PART" | "KICK" | "TOPIC" | "MODE" => true,
+        _ => false,
     }
 }
 
@@ -487,14 +837,30 @@ fn unescape_isupport(v: &str) -> String {
     out
 }
 
-async fn session(spec: &Spec, rx: &mut mpsc::UnboundedReceiver<Cmd>, emitter: &Emitter, manager: &Weak<Manager>) -> End {
+async fn session(
+    spec: &Spec,
+    upgrade: Option<u16>,
+    rx: &mut mpsc::UnboundedReceiver<Cmd>,
+    emitter: &Emitter,
+    manager: &Weak<Manager>,
+) -> End {
     let s = &spec.server;
+    let host = s.host.trim().to_string();
+    // A remembered STS policy upgrades plaintext connections before they start.
+    let policy = if !s.tls && !s.websocket { spec.db.sts_policy(&host) } else { None };
+    let (tls, port) = match (upgrade, policy) {
+        (Some(port), _) => (true, port),
+        (None, Some(p)) => (true, p.port),
+        _ => (s.tls, s.port),
+    };
+    let client_cert = s.client_cert.trim();
     let ep = Endpoint {
-        host: s.host.trim().to_string(),
-        port: s.port,
-        tls: s.tls,
+        host,
+        port,
+        tls,
         accept_invalid_certs: s.accept_invalid_certs,
         websocket_path: s.websocket.then(|| s.websocket_path.clone()),
+        client_cert: (tls && !client_cert.is_empty()).then(|| client_cert.to_string()),
     };
     let (mut reader, writer) = match transport::connect(&ep).await {
         Ok(rw) => rw,
@@ -509,7 +875,8 @@ async fn session(spec: &Spec, rx: &mut mpsc::UnboundedReceiver<Cmd>, emitter: &E
 
     let (out_tx, out_rx) = mpsc::unbounded_channel::<String>();
     let throttle = spec.bind.is_none() && !s.websocket;
-    let mut writer_task = tokio::spawn(write_loop(writer, out_rx, throttle));
+    spec.backlog.store(0, Ordering::Relaxed);
+    let mut writer_task = tokio::spawn(write_loop(writer, out_rx, throttle, spec.backlog.clone()));
 
     let nick = if s.nick.trim().is_empty() { "hearth".to_string() } else { s.nick.trim().to_string() };
     let mut st = State {
@@ -517,6 +884,8 @@ async fn session(spec: &Spec, rx: &mut mpsc::UnboundedReceiver<Cmd>, emitter: &E
         emitter,
         manager,
         out: out_tx,
+        secure: tls,
+        port,
         nick: nick.clone(),
         registered: false,
         welcomed: false,
@@ -528,6 +897,12 @@ async fn session(spec: &Spec, rx: &mut mpsc::UnboundedReceiver<Cmd>, emitter: &E
         isupport: BTreeMap::new(),
         batches: HashMap::new(),
         pending: Vec::new(),
+        next_id: 1,
+        sasl: None,
+        sasl_step: 0,
+        sasl_in: String::new(),
+        sasl_fell_back: false,
+        sts_upgrade: None,
     };
 
     st.send("CAP LS 302");
@@ -553,6 +928,9 @@ async fn session(spec: &Spec, rx: &mut mpsc::UnboundedReceiver<Cmd>, emitter: &E
                     pinged = false;
                     let Some(msg) = Message::parse(&line) else { continue };
                     if let Err(e) = st.handle(msg) {
+                        if let Some(port) = st.sts_upgrade {
+                            break End::Upgrade(port);
+                        }
                         break End::Error(e, st.registered);
                     }
                 }
@@ -561,13 +939,23 @@ async fn session(spec: &Spec, rx: &mut mpsc::UnboundedReceiver<Cmd>, emitter: &E
             },
             cmd = rx.recv() => match cmd {
                 None => break End::Quit,
-                Some(Cmd::Send(lines)) => for l in lines { st.send(l) },
+                Some(Cmd::Send(lines)) => for l in lines {
+                    st.log_outgoing(&l);
+                    st.send(l);
+                },
                 Some(Cmd::History { kind, target, line, reply }) => {
-                    if !st.enabled.contains("draft/chathistory") {
-                        let _ = reply.send(Err("server does not support chat history".into()));
+                    if !st.enabled.contains(kind.cap()) {
+                        let _ = reply.send(Err("server does not support this request".into()));
                     } else {
-                        let target = casefold(&target, st.casemapping());
-                        st.pending.push(Pending { kind, target, batch: None, messages: Vec::new(), reply });
+                        let id = st.next_id;
+                        st.next_id += 1;
+                        let label = st.enabled.contains("labeled-response").then(|| format!("h{id}"));
+                        let line = match &label {
+                            Some(l) => format!("@label={l} {line}"),
+                            None => line,
+                        };
+                        let target = st.fold(&target);
+                        st.pending.push(Pending { id, kind, target, label, assigned: false, messages: Vec::new(), reply });
                         st.send(line);
                     }
                 }
@@ -613,7 +1001,12 @@ async fn session(spec: &Spec, rx: &mut mpsc::UnboundedReceiver<Cmd>, emitter: &E
     end
 }
 
-async fn write_loop(mut writer: LineWriter, mut rx: mpsc::UnboundedReceiver<String>, throttle: bool) -> Result<()> {
+async fn write_loop(
+    mut writer: LineWriter,
+    mut rx: mpsc::UnboundedReceiver<String>,
+    throttle: bool,
+    backlog: Arc<AtomicUsize>,
+) -> Result<()> {
     // Token bucket: bursts of 8, then one line every 400ms. Bouncers do their own pacing.
     let mut tokens: f64 = 8.0;
     let mut last = Instant::now();
@@ -631,7 +1024,9 @@ async fn write_loop(mut writer: LineWriter, mut rx: mpsc::UnboundedReceiver<Stri
             tokens -= 1.0;
         }
         let quitting = line.starts_with("QUIT");
-        writer.send_line(&line).await?;
+        let sent = writer.send_line(&line).await;
+        backlog.fetch_sub(1, Ordering::Relaxed);
+        sent?;
         if quitting {
             break;
         }

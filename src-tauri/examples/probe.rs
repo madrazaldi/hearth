@@ -25,14 +25,18 @@ async fn main() {
         ..Default::default()
     };
     let verbose = std::env::var("VERBOSE").is_ok();
-    let mgr = Manager::new(Emitter::spawn(move |events| {
-        for e in events {
-            let s = serde_json::to_string(e).unwrap();
-            if verbose || !s.contains("\"type\":\"message\"") {
-                println!("{}", &s[..s.len().min(300)]);
+    let db = std::sync::Arc::new(hearth_lib::store::Db::memory().unwrap());
+    let mgr = Manager::new(
+        Emitter::spawn(move |events| {
+            for e in events {
+                let s = serde_json::to_string(e).unwrap();
+                if verbose || !s.contains("\"type\":\"message\"") {
+                    println!("{}", &s[..s.len().min(300)]);
+                }
             }
-        }
-    }));
+        }),
+        db,
+    );
     mgr.connect(&server);
     tokio::time::sleep(Duration::from_secs(6)).await;
     if let Ok(target) = std::env::var("HEARTH_HISTORY") {

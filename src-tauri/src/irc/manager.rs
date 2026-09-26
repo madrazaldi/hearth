@@ -5,22 +5,30 @@ use super::client::{self, Cmd, HistoryKind, Spec};
 use super::events::{Emitter, Event};
 use super::message::Message;
 use crate::config::ServerConfig;
+use crate::store::Db;
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
+
+/// Lines a connection may have waiting for the socket before further sends
+/// are refused. At the direct-connection pace of 2.5 lines/s this is minutes
+/// of backlog, which only a flood (or a runaway paste) produces.
+const MAX_BACKLOG: usize = 300;
 
 struct Entry {
     tx: mpsc::UnboundedSender<Cmd>,
     generation: u64,
     server: String,
+    backlog: Arc<AtomicUsize>,
 }
 
 pub struct Manager {
     conns: Mutex<HashMap<String, Entry>>,
     emitter: Emitter,
+    db: Arc<Db>,
     generation: AtomicU64,
     me: std::sync::Weak<Manager>,
 }
@@ -30,10 +38,11 @@ pub fn child_id(server: &str, netid: &str) -> String {
 }
 
 impl Manager {
-    pub fn new(emitter: Emitter) -> Arc<Self> {
+    pub fn new(emitter: Emitter, db: Arc<Db>) -> Arc<Self> {
         Arc::new_cyclic(|me| Manager {
             conns: Mutex::new(HashMap::new()),
             emitter,
+            db,
             generation: AtomicU64::new(1),
             me: me.clone(),
         })
@@ -47,7 +56,8 @@ impl Manager {
         }
         let generation = self.generation.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::unbounded_channel();
-        conns.insert(id.clone(), Entry { tx, generation, server: server.id.clone() });
+        let backlog = Arc::new(AtomicUsize::new(0));
+        conns.insert(id.clone(), Entry { tx, generation, server: server.id.clone(), backlog: backlog.clone() });
         drop(conns);
 
         self.emitter.emit(Event::ConnAdded {
@@ -56,7 +66,7 @@ impl Manager {
             parent: bind.as_ref().map(|_| server.id.clone()),
             netid: bind.clone(),
         });
-        let spec = Spec { id, server: server.clone(), bind, generation };
+        let spec = Spec { id, server: server.clone(), bind, generation, db: self.db.clone(), backlog };
         client::spawn(spec, rx, self.emitter.clone(), me);
     }
 
@@ -117,6 +127,10 @@ impl Manager {
         }
     }
 
+    pub fn db(&self) -> &Arc<Db> {
+        &self.db
+    }
+
     fn sender(&self, conn: &str) -> Result<mpsc::UnboundedSender<Cmd>> {
         self.conns
             .lock()
@@ -127,6 +141,10 @@ impl Manager {
     }
 
     pub fn send(&self, conn: &str, lines: Vec<String>) -> Result<()> {
+        let backlog = self.conns.lock().unwrap().get(conn).map(|e| e.backlog.load(Ordering::Relaxed)).unwrap_or(0);
+        if backlog >= MAX_BACKLOG {
+            return Err(anyhow!("too many lines waiting to be sent; try again in a moment"));
+        }
         let lines = lines
             .into_iter()
             .map(|l| l.replace(['\r', '\n'], " "))

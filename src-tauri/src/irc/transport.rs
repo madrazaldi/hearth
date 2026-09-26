@@ -7,7 +7,8 @@ use anyhow::{anyhow, Context, Result};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
-use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,6 +35,8 @@ pub struct Endpoint {
     pub accept_invalid_certs: bool,
     /// When set, speak IRC over WebSocket at this path.
     pub websocket_path: Option<String>,
+    /// PEM file with a client certificate and key to present (CertFP).
+    pub client_cert: Option<String>,
 }
 
 pub enum LineReader {
@@ -57,7 +60,11 @@ pub async fn connect(ep: &Endpoint) -> Result<(LineReader, LineWriter)> {
     tcp.set_nodelay(true).ok();
 
     let stream: BoxStream = if ep.tls {
-        let connector = TlsConnector::from(tls_config(ep.accept_invalid_certs));
+        let identity = match &ep.client_cert {
+            Some(path) => Some(load_identity(path)?),
+            None => None,
+        };
+        let connector = TlsConnector::from(tls_config(ep.accept_invalid_certs, identity)?);
         let name = ServerName::try_from(ep.host.clone()).context("invalid TLS server name")?;
         let tls = tokio::time::timeout(Duration::from_secs(20), connector.connect(name, tcp))
             .await
@@ -164,21 +171,37 @@ fn decode(bytes: &[u8]) -> String {
     }
 }
 
-fn tls_config(accept_invalid: bool) -> Arc<rustls::ClientConfig> {
+type Identity = (Vec<CertificateDer<'static>>, PrivateKeyDer<'static>);
+
+/// Read a certificate chain and private key from one PEM file.
+pub fn load_identity(path: &str) -> Result<Identity> {
+    let certs = CertificateDer::pem_file_iter(path)
+        .with_context(|| format!("could not read client certificate {path}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .context("invalid client certificate")?;
+    if certs.is_empty() {
+        return Err(anyhow!("{path} contains no certificate"));
+    }
+    let key = PrivateKeyDer::from_pem_file(path).context("client certificate file has no usable private key")?;
+    Ok((certs, key))
+}
+
+fn tls_config(accept_invalid: bool, identity: Option<Identity>) -> Result<Arc<rustls::ClientConfig>> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let builder = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_safe_default_protocol_versions()
         .expect("default TLS versions");
-    let config = if accept_invalid {
-        builder
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoVerify(provider)))
-            .with_no_client_auth()
+    let builder = if accept_invalid {
+        builder.dangerous().with_custom_certificate_verifier(Arc::new(NoVerify(provider)))
     } else {
         let roots = rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        builder.with_root_certificates(roots).with_no_client_auth()
+        builder.with_root_certificates(roots)
     };
-    Arc::new(config)
+    let config = match identity {
+        Some((certs, key)) => builder.with_client_auth_cert(certs, key).context("unusable client certificate")?,
+        None => builder.with_no_client_auth(),
+    };
+    Ok(Arc::new(config))
 }
 
 #[derive(Debug)]

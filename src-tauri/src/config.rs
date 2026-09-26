@@ -17,7 +17,10 @@ pub struct Config {
 pub enum SaslMechanism {
     #[default]
     None,
+    /// Account and password: SCRAM-SHA-256 when offered, else PLAIN.
     Plain,
+    /// A TLS client certificate (CertFP).
+    External,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +46,11 @@ pub struct ServerConfig {
     pub autojoin: Vec<String>,
     /// Raw lines sent after registration.
     pub perform: Vec<String>,
+    /// PEM file holding a client certificate and its private key.
+    pub client_cert: String,
+    /// Secrets are held in the OS keychain rather than this file.
+    #[serde(skip)]
+    pub in_keychain: bool,
 }
 
 impl Default for ServerConfig {
@@ -66,6 +74,8 @@ impl Default for ServerConfig {
             autoconnect: true,
             autojoin: Vec::new(),
             perform: Vec::new(),
+            client_cert: String::new(),
+            in_keychain: false,
         }
     }
 }
@@ -79,7 +89,23 @@ impl Store {
         Store { path: dir.join("config.json") }
     }
 
+    /// Load the config and fill in secrets from the keychain, migrating any
+    /// that are still stored in the file.
     pub fn load(&self) -> Config {
+        let mut config = self.read();
+        let mut migrated = false;
+        for s in &mut config.servers {
+            migrated |= crate::secrets::load(s);
+        }
+        if migrated {
+            if let Err(e) = self.save(&config) {
+                log::error!("could not rewrite config after moving secrets to the keychain: {e}");
+            }
+        }
+        config
+    }
+
+    fn read(&self) -> Config {
         match std::fs::read_to_string(&self.path) {
             Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
                 log::error!("config at {} is invalid ({e}); starting fresh", self.path.display());
@@ -94,8 +120,13 @@ impl Store {
         if let Some(dir) = self.path.parent() {
             std::fs::create_dir_all(dir)?;
         }
+        let mut on_disk = config.clone();
+        for s in on_disk.servers.iter_mut().filter(|s| s.in_keychain) {
+            s.password.clear();
+            s.sasl_password.clear();
+        }
         let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(config)?)?;
+        std::fs::write(&tmp, serde_json::to_vec_pretty(&on_disk)?)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
