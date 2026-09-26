@@ -13,6 +13,10 @@
   const isOp = $derived(!!member?.prefix.includes('@'));
   const isVoice = $derived(!!member?.prefix.includes('+'));
   const self = $derived(conn.isMe(nick));
+  const source = $derived({ nick, user: member?.user, host: member?.host });
+  const ignored = $derived(app.isIgnored(conn, source));
+  const watched = $derived(app.isWatched(conn, nick));
+  const online = $derived(conn.online.get(conn.fold(nick)));
 
   let el = $state<HTMLDivElement>();
   let pos = $state({ left: 0, top: 0 });
@@ -51,6 +55,8 @@
       {#if member?.prefix}<span>{member.prefix}</span>{/if}
       {#if member?.account}<span>signed in as {member.account}</span>{/if}
       {#if member?.away}<span class="away">away</span>{/if}
+      {#if online !== undefined}<span class:on={online}>{online ? 'online' : 'offline'}</span>{/if}
+      {#if ignored}<span class="away">ignored</span>{/if}
     </div>
     {#if member?.realname}<div class="real">{member.realname}</div>{/if}
   </div>
@@ -59,7 +65,15 @@
       <button onclick={() => act(() => app.query(conn, nick))}>Message</button>
       <button onclick={() => act(mention)}>Mention</button>
     {/if}
-    <button onclick={() => act(() => conn.send(`WHOIS ${nick} ${nick}`))}>Whois</button>
+    <button onclick={() => act(() => conn.sendFrom(buf, `WHOIS ${nick} ${nick}`))}>Whois</button>
+    {#if !self && conn.canMonitor}
+      <button onclick={() => act(() => (watched ? app.unwatch(conn, nick) : app.watch(conn, nick)))}>
+        {watched ? 'Stop watching' : 'Tell me when online'}
+      </button>
+    {/if}
+    {#if !self}
+      <button onclick={() => act(() => (ignored ? app.unignore(nick) : app.ignore(nick)))}>{ignored ? 'Stop ignoring' : 'Ignore'}</button>
+    {/if}
     {#if canModerate && !self}
       <hr />
       <button onclick={() => act(() => conn.send(`MODE ${buf.name} ${isOp ? '-' : '+'}o ${nick}`))}>{isOp ? 'Remove operator' : 'Make operator'}</button>
@@ -120,6 +134,10 @@
 
   .away {
     color: var(--warn);
+  }
+
+  .on {
+    color: var(--ok);
   }
 
   .real {

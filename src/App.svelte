@@ -5,6 +5,8 @@
   import Sidebar from './lib/components/Sidebar.svelte';
   import BufferView from './lib/components/BufferView.svelte';
   import QuickSwitcher from './lib/components/QuickSwitcher.svelte';
+  import SearchPanel from './lib/components/SearchPanel.svelte';
+  import ChannelBrowser from './lib/components/ChannelBrowser.svelte';
   import Settings from './lib/components/Settings.svelte';
   import Welcome from './lib/components/Welcome.svelte';
 
@@ -36,8 +38,8 @@
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const onScheme = () => (systemDark = mq.matches);
     mq.addEventListener('change', onScheme);
-    const onFocus = () => (app.focused = true);
-    const onBlur = () => (app.focused = false);
+    const onFocus = () => app.setFocused(true);
+    const onBlur = () => app.setFocused(false);
     window.addEventListener('focus', onFocus);
     window.addEventListener('blur', onBlur);
     app.init().catch((e) => (bootError = String(e)));
@@ -53,6 +55,10 @@
     if (mod && e.key.toLowerCase() === 'k') {
       e.preventDefault();
       app.switcherOpen = !app.switcherOpen;
+    } else if (mod && e.shiftKey && e.key.toLowerCase() === 'f') {
+      e.preventDefault();
+      e.stopPropagation();
+      app.searchOpen = !app.searchOpen;
     } else if (mod && e.key === ',') {
       e.preventDefault();
       app.settingsOpen = app.settingsOpen ? null : { tab: 'appearance' };
@@ -102,6 +108,12 @@
 
 {#if app.switcherOpen}
   <QuickSwitcher />
+{/if}
+{#if app.searchOpen}
+  <SearchPanel />
+{/if}
+{#if app.browserConn}
+  <ChannelBrowser conn={app.browserConn} />
 {/if}
 {#if app.settingsOpen}
   <Settings />

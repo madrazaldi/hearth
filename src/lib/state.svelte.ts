@@ -359,6 +359,7 @@ export class App {
   atBottom = $state(true);
   switcherOpen = $state(false);
   searchOpen = $state(false);
+  searchQuery = $state('');
   browserConn = $state<Conn | null>(null);
   settingsOpen = $state<null | { tab: string; serverId?: string }>(null);
   toasts = $state<Toast[]>([]);

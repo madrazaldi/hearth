@@ -137,3 +137,14 @@ export function mentions(text: string, words: string[]): boolean {
   const plain = stripFormatting(text);
   return words.some((w) => w && new RegExp(`(^|[^\\w-])${escapeRe(w)}($|[^\\w-])`, 'i').test(plain));
 }
+
+/** The first http(s) link in a message, for previews. */
+export function firstLink(text: string): string | null {
+  const plain = stripFormatting(text);
+  for (const m of plain.matchAll(URL_RE)) {
+    const url = trimUrl(m[0]);
+    if (/^mailto:/i.test(url)) continue;
+    return /^www\./i.test(url) ? 'https://' + url : url;
+  }
+  return null;
+}

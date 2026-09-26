@@ -20,6 +20,9 @@ function need(cond: unknown, usage: string): asserts cond {
   if (!cond) throw new UsageError(usage);
 }
 
+/** Send a command whose replies should come back to this buffer. */
+const ask = (ctx: Pick<Ctx, 'buf'>, line: string) => ctx.buf.conn.sendFrom(ctx.buf, line);
+
 const chanOf = (ctx: Ctx, arg?: string) => {
   if (arg && ctx.buf.conn.isChannel(arg)) return arg;
   need(ctx.buf.kind === 'channel', 'This command needs a channel');
@@ -107,7 +110,8 @@ export const COMMANDS: Record<string, Command> = {
     help: 'Show or set the channel topic',
     run: (ctx) => {
       const chan = chanOf(ctx);
-      ctx.buf.conn.send(ctx.rest ? `TOPIC ${chan} :${ctx.rest}` : `TOPIC ${chan}`);
+      if (ctx.rest) ctx.buf.conn.send(`TOPIC ${chan} :${ctx.rest}`);
+      else ask(ctx, `TOPIC ${chan}`);
     },
   },
   whois: {
@@ -116,18 +120,18 @@ export const COMMANDS: Record<string, Command> = {
     run: ({ buf, args }) => {
       const nick = args[0] ?? (buf.kind === 'query' ? buf.name : '');
       need(nick, '/whois <nick>');
-      buf.conn.send(`WHOIS ${nick} ${nick}`);
+      ask({ buf }, `WHOIS ${nick} ${nick}`);
     },
   },
   away: {
     usage: '/away [message]',
     help: 'Mark yourself away (no message clears it)',
-    run: ({ buf, rest }) => void buf.conn.send(rest ? `AWAY :${rest}` : 'AWAY'),
+    run: ({ buf, rest }) => void ask({ buf }, rest ? `AWAY :${rest}` : 'AWAY'),
   },
   back: {
     usage: '/back',
     help: 'Clear away status',
-    run: ({ buf }) => void buf.conn.send('AWAY'),
+    run: ({ buf }) => void ask({ buf }, 'AWAY'),
   },
   invite: {
     usage: '/invite <nick> [#channel]',
@@ -172,17 +176,17 @@ export const COMMANDS: Record<string, Command> = {
     help: 'Show or change modes',
     run: ({ buf, args }) => {
       const first = args[0];
-      if (first && (buf.conn.isChannel(first) || buf.conn.isMe(first))) buf.conn.send(`MODE ${args.join(' ')}`);
+      if (first && (buf.conn.isChannel(first) || buf.conn.isMe(first))) ask({ buf }, `MODE ${args.join(' ')}`);
       else {
         need(buf.kind === 'channel', '/mode <target> <modes>');
-        buf.conn.send(`MODE ${buf.name} ${args.join(' ')}`.trim());
+        ask({ buf }, `MODE ${buf.name} ${args.join(' ')}`.trim());
       }
     },
   },
   names: {
     usage: '/names',
     help: 'Refresh the member list',
-    run: (ctx) => void ctx.buf.conn.send(`NAMES ${chanOf(ctx)}`),
+    run: (ctx) => void ask(ctx, `NAMES ${chanOf(ctx)}`),
   },
   ctcp: {
     usage: '/ctcp <nick> <command> [args]',
@@ -198,7 +202,7 @@ export const COMMANDS: Record<string, Command> = {
     help: 'Send a raw IRC line',
     run: ({ buf, rest }) => {
       need(rest, '/raw <line>');
-      buf.conn.send(rest);
+      ask({ buf }, rest);
     },
   },
   quote: { usage: '/quote <line>', help: 'Alias for /raw', run: (ctx) => COMMANDS.raw.run(ctx) },
@@ -220,11 +224,72 @@ export const COMMANDS: Record<string, Command> = {
     help: 'Disconnect from this server',
     run: ({ buf, rest }) => api.disconnect(buf.conn.serverId, rest || undefined),
   },
-  motd: { usage: '/motd', help: 'Show the message of the day', run: ({ buf }) => void buf.conn.send('MOTD') },
+  motd: { usage: '/motd', help: 'Show the message of the day', run: ({ buf }) => void ask({ buf }, 'MOTD') },
   list: {
-    usage: '/list [filter]',
-    help: 'List channels (output in server buffer)',
-    run: ({ buf, rest }) => void buf.conn.send(rest ? `LIST ${rest}` : 'LIST'),
+    usage: '/list',
+    help: 'Browse the channels on this network',
+    run: ({ app, buf }) => app.browseChannels(buf.conn),
+  },
+  search: {
+    usage: '/search [text]',
+    help: 'Search message history',
+    run: ({ app, rest }) => {
+      app.searchQuery = rest;
+      app.searchOpen = true;
+    },
+  },
+  ignore: {
+    usage: '/ignore [nick|mask]',
+    help: 'Hide messages from someone (no argument lists ignores)',
+    run: ({ app, buf, args }) => {
+      if (!args[0]) {
+        const list = app.settings.ignores;
+        buf.push(mkLine({ type: 'info', text: list.length ? `Ignoring: ${list.join(', ')}` : 'Not ignoring anyone' }));
+        return;
+      }
+      app.ignore(args[0]);
+      app.toast(`Ignoring ${args[0]}`);
+    },
+  },
+  unignore: {
+    usage: '/unignore <nick|mask>',
+    help: 'Stop ignoring someone',
+    run: ({ app, args }) => {
+      need(args[0], '/unignore <nick|mask>');
+      app.toast(app.unignore(args[0]) ? `No longer ignoring ${args[0]}` : `${args[0]} was not ignored`);
+    },
+  },
+  watch: {
+    usage: '/watch [nick]',
+    help: 'Get told when someone comes online (no argument lists them)',
+    run: ({ app, buf, args }) => {
+      const conn = buf.conn;
+      need(conn.canMonitor, 'This server does not support MONITOR');
+      if (!args[0]) {
+        const list = conn.watched.map((n) => `${n} (${conn.online.get(conn.fold(n)) ? 'online' : 'offline'})`);
+        buf.push(mkLine({ type: 'info', text: list.length ? `Watching: ${list.join(', ')}` : 'Not watching anyone' }));
+        return;
+      }
+      for (const n of args) app.watch(conn, n);
+    },
+  },
+  unwatch: {
+    usage: '/unwatch <nick…>',
+    help: 'Stop watching someone',
+    run: ({ app, buf, args }) => {
+      need(args[0], '/unwatch <nick…>');
+      for (const n of args) app.unwatch(buf.conn, n);
+    },
+  },
+  notify: {
+    usage: '/notify <all|mentions|none|default>',
+    help: 'Set notifications for this buffer',
+    run: ({ app, buf, args }) => {
+      const level = args[0]?.toLowerCase();
+      need(buf.kind !== 'server' && ['all', 'mentions', 'none', 'default'].includes(level ?? ''), '/notify <all|mentions|none|default>');
+      app.setNotify(buf, level as 'all' | 'mentions' | 'none' | 'default');
+      app.toast(`Notifications for ${buf.name}: ${level}`);
+    },
   },
   help: {
     usage: '/help',
@@ -238,14 +303,26 @@ export const COMMANDS: Record<string, Command> = {
   },
 };
 
-export const ALIASES: Record<string, string> = { j: 'join', p: 'part', q: 'query', w: 'whois', leave: 'part', m: 'msg' };
+export const ALIASES: Record<string, string> = {
+  j: 'join',
+  p: 'part',
+  q: 'query',
+  w: 'whois',
+  leave: 'part',
+  m: 'msg',
+  monitor: 'watch',
+  mute: 'notify',
+  unmute: 'notify',
+};
 
 /** Run composer input. Returns false if nothing was sent. */
-export async function runInput(app: App, buf: Buffer, input: string): Promise<boolean> {
+export async function runInput(app: App, buf: Buffer, input: string, replyTo?: string): Promise<boolean> {
   if (!input.trim()) return false;
   if (input.startsWith('/') && !input.startsWith('//')) {
     const [rawName, ...args] = input.slice(1).split(/ +/);
     const name = ALIASES[rawName.toLowerCase()] ?? rawName.toLowerCase();
+    const lower = rawName.toLowerCase();
+    if (lower === 'mute' || lower === 'unmute') args.splice(0, args.length, lower === 'mute' ? 'none' : 'default');
     const rest = input.slice(1 + rawName.length).replace(/^ /, '');
     const cmd = COMMANDS[name];
     if (!cmd) {
@@ -266,6 +343,9 @@ export async function runInput(app: App, buf: Buffer, input: string): Promise<bo
     app.toast('This is a server buffer — use /raw to send commands', 'error');
     return false;
   }
-  for (const line of text.split('\n')) if (line.trim()) app.sendMessage(buf, line);
+  text
+    .split('\n')
+    .filter((line) => line.trim())
+    .forEach((line, i) => app.sendMessage(buf, line, 'PRIVMSG', false, i === 0 ? replyTo : undefined));
   return true;
 }

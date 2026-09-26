@@ -1,7 +1,15 @@
 <script lang="ts">
   import { app, type Buffer, type Conn } from '../state.svelte';
   import { api } from '../api';
+  import type { NotifyLevel } from '../types';
   import Icon from './Icon.svelte';
+
+  const LEVELS: { value: NotifyLevel | 'default'; label: string }[] = [
+    { value: 'default', label: 'Default' },
+    { value: 'all', label: 'All messages' },
+    { value: 'mentions', label: 'Mentions only' },
+    { value: 'none', label: 'Nothing (mute)' },
+  ];
 
   const isMac = navigator.userAgent.includes('Mac');
   let menu = $state<{ x: number; y: number; conn?: Conn; buf?: Buffer } | null>(null);
@@ -21,8 +29,20 @@
     return () => clearInterval(t);
   });
 
+  let menuEl = $state<HTMLDivElement>();
+  let menuPos = $state({ left: 0, top: 0 });
+  $effect(() => {
+    if (!menu || !menuEl) return;
+    const r = menuEl.getBoundingClientRect();
+    menuPos = {
+      left: Math.min(menu.x, window.innerWidth - r.width - 8),
+      top: Math.max(8, Math.min(menu.y, window.innerHeight - r.height - 8)),
+    };
+  });
+
   function openMenu(e: MouseEvent, conn?: Conn, buf?: Buffer) {
     e.preventDefault();
+    menuPos = { left: 0, top: 0 };
     menu = { x: e.clientX, y: e.clientY, conn, buf };
   }
 
@@ -53,14 +73,20 @@
       class:active={app.active === b}
       class:unread={b.unread > 0}
       class:parted={b.kind === 'channel' && !b.joined}
+      class:muted={b.level === 'none'}
       onclick={() => app.open(b)}
       oncontextmenu={(e) => openMenu(e, conn, b)}
     >
       <span class="glyph">
         {#if b.kind === 'channel'}#{:else}<Icon name="user" size={12} stroke={1.6} />{/if}
+        {#if b.kind === 'query' && conn.online.has(conn.fold(b.name))}
+          <i class="presence" class:online={conn.online.get(conn.fold(b.name))}></i>
+        {/if}
       </span>
       <span class="label">{name(b)}</span>
-      {#if b.highlights > 0}
+      {#if b.level === 'none'}
+        <span class="mute" title="Muted"><Icon name="bellOff" size={12} /></span>
+      {:else if b.highlights > 0}
         <span class="badge">{b.highlights}</span>
       {:else if b.typing.size > 0 && b.kind === 'query'}
         <span class="typing-dots"><i></i><i></i><i></i></span>
@@ -90,6 +116,9 @@
       <Icon name="search" size={14} />
       <span>Jump to…</span>
       <span class="kbd">{isMac ? '⌘' : 'Ctrl '}K</span>
+    </button>
+    <button class="icon-btn" title="Search messages ({isMac ? '⌘⇧F' : 'Ctrl+Shift+F'})" onclick={() => (app.searchOpen = true)}>
+      <Icon name="list" size={15} />
     </button>
   </div>
 
@@ -162,17 +191,36 @@
 </aside>
 
 {#if menu}
-  <div class="menu" style="left:{menu.x}px; top:{menu.y}px" role="menu">
+  <div class="menu" bind:this={menuEl} style="left:{menuPos.left || menu.x}px; top:{menuPos.top || menu.y}px" role="menu">
     {#if menu.buf}
       {@const b = menu.buf}
       <button onclick={() => app.markRead(b)}>Mark as read</button>
       {#if b.kind === 'channel' && !b.joined}
         <button onclick={() => app.join(b.conn, b.name)}>Rejoin</button>
       {/if}
+      {#if b.kind === 'query' && b.conn.canMonitor}
+        {@const watched = app.isWatched(b.conn, b.name)}
+        <button onclick={() => (watched ? app.unwatch(b.conn, b.name) : app.watch(b.conn, b.name))}>
+          {watched ? 'Stop watching' : 'Tell me when online'}
+        </button>
+      {/if}
+      <hr />
+      <p class="menu-label">Notify me about</p>
+      {#each LEVELS as l (l.value)}
+        <button class="check" onclick={() => app.setNotify(b, l.value)}>
+          <span class="tick">{#if b.level === l.value}<Icon name="check" size={13} />{/if}</span>{l.label}
+        </button>
+      {/each}
+      <hr />
       <button onclick={() => app.closeBuffer(b)}>{b.kind === 'channel' && b.joined ? 'Leave channel' : 'Close'}</button>
     {:else if menu.conn}
       {@const c = menu.conn}
       <button onclick={() => app.open(c.server)}>Open server log</button>
+      {#if c.isControl}
+        <button onclick={() => (app.settingsOpen = { tab: 'servers', serverId: c.serverId })}>Manage networks…</button>
+      {:else if c.status === 'connected'}
+        <button onclick={() => app.browseChannels(c)}>Browse channels…</button>
+      {/if}
       <button onclick={() => api.reconnect(c.serverId)}>Reconnect</button>
       {#if c.status === 'disconnected' && !c.retryAt}
         <button onclick={() => api.connect(c.serverId)}>Connect</button>
@@ -196,6 +244,8 @@
   }
 
   .top {
+    display: flex;
+    gap: 4px;
     padding: 10px 10px 6px;
   }
 
@@ -204,7 +254,8 @@
   }
 
   .find {
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     height: 30px;
     display: flex;
     align-items: center;
@@ -396,6 +447,62 @@
     width: 2px;
     border-radius: 2px;
     background: var(--accent);
+  }
+
+  .buf.muted {
+    opacity: 0.6;
+  }
+
+  .buf.muted.unread {
+    font-weight: 400;
+  }
+
+  .mute {
+    display: grid;
+    place-items: center;
+    color: var(--text-4);
+    padding-right: 3px;
+  }
+
+  .buf:hover .mute {
+    display: none;
+  }
+
+  .glyph {
+    position: relative;
+  }
+
+  .presence {
+    position: absolute;
+    right: -2px;
+    bottom: -1px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-4);
+    box-shadow: 0 0 0 1.5px var(--bg-side);
+  }
+
+  .presence.online {
+    background: var(--ok);
+  }
+
+  .menu-label {
+    margin: 2px 10px 2px;
+    font-size: 11px;
+    color: var(--text-3);
+  }
+
+  .menu .check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .tick {
+    width: 14px;
+    display: grid;
+    place-items: center;
   }
 
   .buf.parted .label {

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { ServerConfig } from '../types';
+  import type { CertInfo, ServerConfig } from '../types';
+  import { api } from '../api';
   import Switch from './Switch.svelte';
   import Segmented from './Segmented.svelte';
 
@@ -28,6 +29,29 @@
 
   const transport = $derived(s.websocket ? 'ws' : 'tcp');
 
+  let cert = $state<CertInfo | null>(null);
+  let certError = $state('');
+
+  $effect(() => {
+    const path = s.clientCert.trim();
+    cert = null;
+    certError = '';
+    if (!path) return;
+    api.certInfo(path).then(
+      (info) => (cert = info),
+      (e) => (certError = String(e)),
+    );
+  });
+
+  async function generateCert() {
+    try {
+      const info = await api.generateCert(s.id || `new-${crypto.randomUUID().slice(0, 8)}`);
+      s.clientCert = info.path;
+    } catch (e) {
+      certError = String(e);
+    }
+  }
+
   function setTransport(v: string) {
     s.websocket = v === 'ws';
     if (s.websocket && (s.port === 6697 || s.port === 6667)) s.port = s.tls ? 443 : 80;
@@ -52,6 +76,8 @@
       .map((c) => (/^[#&+!]/.test(c) ? c : '#' + c));
     s.perform = perform.split('\n').map((l) => l.trim()).filter(Boolean);
     if (s.sasl === 'plain' && !s.saslUsername) s.saslUsername = s.nick;
+    if (s.sasl === 'external' && !s.clientCert.trim()) return (error = 'Choose or generate a client certificate.');
+    if (s.sasl === 'external' && !s.tls) return (error = 'Certificate authentication needs TLS.');
     saving = true;
     try {
       await onsave($state.snapshot(s) as ServerConfig);
@@ -123,7 +149,8 @@
       bind:value={s.sasl}
       options={[
         { value: 'none', label: 'None' },
-        { value: 'plain', label: 'SASL' },
+        { value: 'plain', label: 'Password' },
+        { value: 'external', label: 'Certificate' },
       ]}
     />
   </div>
@@ -137,6 +164,24 @@
         <span>Password</span>
         <input class="input" type="password" bind:value={s.saslPassword} />
       </label>
+    </div>
+    <small class="note">Uses SCRAM-SHA-256 when the server offers it, so the password never crosses the wire. Stored in your system keychain.</small>
+  {:else if s.sasl === 'external'}
+    <div class="field">
+      <span>Client certificate</span>
+      <div class="cert-row">
+        <input class="input mono" bind:value={s.clientCert} placeholder="/path/to/cert.pem (certificate and key)" spellcheck="false" />
+        <button type="button" class="btn" onclick={generateCert}>Generate</button>
+      </div>
+      {#if cert}
+        <small class="fp">SHA-512 <code class="selectable">{cert.sha512}</code></small>
+        <small>
+          Register it with the network's services while connected — on Libera.Chat and most Atheme networks:
+          <code class="selectable">/msg NickServ CERT ADD</code>
+        </small>
+      {:else if certError}
+        <small class="bad">{certError}</small>
+      {/if}
     </div>
   {/if}
 
@@ -240,6 +285,29 @@
   code {
     font-family: var(--font-mono);
     font-size: 11.5px;
+  }
+
+  .note {
+    margin-top: -8px;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+
+  .cert-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .cert-row .input {
+    flex: 1;
+  }
+
+  .fp code {
+    word-break: break-all;
+  }
+
+  .bad {
+    color: var(--danger);
   }
 
   .error {

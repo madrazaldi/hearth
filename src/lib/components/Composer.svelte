@@ -4,6 +4,8 @@
   import { app, type Buffer } from '../state.svelte';
   import { COMMANDS, runInput } from '../commands';
   import { api } from '../api';
+  import { stripFormatting } from '../format';
+  import { nickHue } from '../nickcolor';
   import Icon from './Icon.svelte';
 
   let { buf }: { buf: Buffer } = $props();
@@ -57,8 +59,10 @@
   async function submit() {
     const value = text;
     if (!value.trim()) return;
-    if (await runInput(app, buf, value)) {
+    const replyTo = value.startsWith('/') && !value.startsWith('//') ? undefined : buf.replyTo?.msgid;
+    if (await runInput(app, buf, value, replyTo)) {
       app.inputHistory = [value, ...app.inputHistory.filter((h) => h !== value)].slice(0, 100);
+      if (replyTo) buf.replyTo = null;
       text = '';
       histIndex = -1;
       app.sendTyping(buf, 'done');
@@ -158,7 +162,10 @@
       text = histIndex >= 0 ? app.inputHistory[histIndex] : '';
       return;
     }
-    if (e.key === 'Escape') ta?.blur();
+    if (e.key === 'Escape') {
+      if (buf.replyTo) buf.replyTo = null;
+      else ta?.blur();
+    }
   }
 
   function onInput() {
@@ -237,12 +244,15 @@
       text = text ? `${text.replace(/\s*$/, ' ')}${s}` : s;
       ta?.focus({ preventScroll: true });
     };
+    const onFocusReq = () => ta?.focus({ preventScroll: true });
     window.addEventListener('keydown', refocus);
     window.addEventListener('hearth:insert', onInsert);
+    window.addEventListener('hearth:focus-composer', onFocusReq);
     return () => {
       unlisten?.();
       window.removeEventListener('keydown', refocus);
       window.removeEventListener('hearth:insert', onInsert);
+      window.removeEventListener('hearth:focus-composer', onFocusReq);
     };
   });
 </script>
@@ -267,7 +277,16 @@
       {/each}
     </div>
   {/if}
-  <div class="box">
+  {#if buf.replyTo}
+    {@const r = buf.replyTo}
+    <div class="replying">
+      <Icon name="reply" size={13} />
+      <span>Replying to <b class="nick" style="--h:{nickHue(r.nick)}">{r.nick}</b></span>
+      <span class="snip">{stripFormatting(r.text)}</span>
+      <button class="icon-btn" title="Cancel reply (Esc)" onclick={() => (buf.replyTo = null)}><Icon name="x" size={13} /></button>
+    </div>
+  {/if}
+  <div class="box" class:with-reply={!!buf.replyTo}>
     <button class="nickname mono" title="Change nickname" onclick={() => (text = `/nick ${conn.nick}`)}>{conn.nick || '…'}</button>
     <textarea
       bind:this={ta}
@@ -318,6 +337,39 @@
     border-radius: 10px;
     box-shadow: 0 0 0 1px var(--line-strong) inset;
     transition: box-shadow 120ms;
+  }
+
+  .replying {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px 5px 12px;
+    font-size: 12.5px;
+    color: var(--text-3);
+    background: var(--bg-side);
+    border-radius: 10px 10px 0 0;
+    box-shadow: 0 0 0 1px var(--line-strong) inset;
+  }
+
+  .replying b {
+    font-weight: 600;
+  }
+
+  .replying .snip {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .replying .icon-btn {
+    width: 22px;
+    height: 22px;
+  }
+
+  .box.with-reply {
+    border-radius: 0 0 10px 10px;
   }
 
   .box:focus-within {

@@ -41,9 +41,9 @@ function scene(): IrcEvent[] {
     m('soju', msg('bouncer.example', 'BOUNCER', ['NETWORK', id, `name=${name};state=connected`]));
     const c = `soju/${id}`;
     ev.push({ type: 'conn-added', conn: c, server: 'soju', parent: 'soju', netid: id });
-    const caps = ['message-tags', 'server-time', 'echo-message', 'away-notify', 'multi-prefix'];
+    const caps = ['message-tags', 'server-time', 'echo-message', 'away-notify', 'multi-prefix', 'draft/message-redaction', 'labeled-response'];
     ev.push({ type: 'registered', conn: c, nick: 'ember', caps });
-    ev.push({ type: 'isupport', conn: c, isupport: { CHANTYPES: '#', PREFIX: '(ov)@+', CASEMAPPING: 'rfc1459', NETWORK: name } });
+    ev.push({ type: 'isupport', conn: c, isupport: { CHANTYPES: '#', PREFIX: '(ov)@+', CASEMAPPING: 'rfc1459', NETWORK: name, MONITOR: '100' } });
     ev.push({ type: 'status', conn: c, status: id === '3' ? 'disconnected' : 'connected', error: id === '3' ? 'connection reset by peer' : null, retryIn: id === '3' ? 16 : null });
   }
 
@@ -55,7 +55,7 @@ function scene(): IrcEvent[] {
   const people = ['@mira', '@tobias', '+wren', '+kestrel', 'juniper', 'oskar', 'lin_', 'halvard', 'sable', 'quill', 'rook', 'ada', 'pim', 'felix', 'noor', 'ember'];
   m(L, msg('irc.libera.chat', '353', ['ember', '=', chan, people.join(' ')]));
   m(L, msg('irc.libera.chat', '366', ['ember', chan, 'End of /NAMES list.']));
-  m(L, say('mira', chan, 'morning all — the websocket transport landed on main last night', 2));
+  m(L, { ...say('mira', chan, 'morning all — the websocket transport landed on main last night', 2), tags: { time: at(0), msgid: 'ws1' } });
   m(L, say('tobias', chan, 'nice. does it negotiate text.ircv3.net or just assume it?', 1));
   m(L, say('mira', chan, 'negotiates, falls back to binary frames', 1));
   m(L, say('mira', chan, 'and lines over 4k get rejected before they hit the parser', 0));
@@ -69,8 +69,12 @@ function scene(): IrcEvent[] {
   m(L, say('oskar', chan, 'wait, are we coalescing the IPC events? that would explain it', 1));
   m(L, say('juniper', chan, 'yep, 8ms window, capped at 2000 events per payload', 1));
   m(L, msg('tobias!tobias@user/tobias', 'MODE', [chan, '+v', 'juniper'], { time: at(1) }));
-  m(L, say('halvard', chan, 'drafted the release notes: https://hearth.example/notes/0.1 — shout if anything is wrong', 6));
-  m(L, say('sable', chan, 'the typing indicator is subtle in a good way', 1));
+  m(L, { ...say('halvard', chan, 'drafted the release notes: https://hearth.example/notes/0.1 — shout if anything is wrong', 6), tags: { time: at(0), msgid: 'rn1' } });
+  m(L, msg('tobias!tobias@user/tobias', 'TAGMSG', [chan], { '+draft/react': '🎉', '+draft/reply': 'rn1' }));
+  m(L, msg('wren!wren@user/wren', 'TAGMSG', [chan], { '+draft/react': '🎉', '+draft/reply': 'rn1' }));
+  m(L, msg('mira!mira@user/mira', 'TAGMSG', [chan], { '+draft/react': '👀', '+draft/reply': 'rn1' }));
+  m(L, { ...say('sable', chan, 'the typing indicator is subtle in a good way', 1), tags: { time: at(0), msgid: 'ty1', '+draft/reply': 'ws1' } });
+  m(L, msg('irc.libera.chat', '730', ['ember', 'mira!mira@user/mira']));
 
   m(L, say('mira', 'ember', 'hey, can you review #42 when you have a minute?', 3));
   m(L, say('ember', 'mira', 'on it after lunch', 1));
@@ -107,13 +111,37 @@ mockIPC(
       case 'get_config':
         return {
           servers: empty ? [] : [server],
-          settings: { theme: params.get('theme') ?? 'dark', layout: params.get('layout') ?? 'columns' },
+          settings: { theme: params.get('theme') ?? 'dark', layout: params.get('layout') ?? 'columns', linkPreviews: true },
         };
       case 'connect':
         setTimeout(() => emit('irc', scene()), 30);
         return null;
       case 'history':
-        return a.kind === 'targets' ? [] : history(a.target as string);
+        return a.kind === 'targets' || a.kind === 'search' ? [] : history(a.target as string);
+      case 'local_history':
+      case 'load_buffers':
+        return [];
+      case 'search': {
+        const q = String(a.query).toLowerCase();
+        const all = [...history('#hearth')];
+        clock = T0 + 60_000 * 30;
+        all.push(say('mira', '#hearth', 'morning all — the websocket transport landed on main last night', 0));
+        return all
+          .filter((x) => x.params[1].toLowerCase().includes(q))
+          .map((x) => ({ network: 'soju/1', target: '#hearth', msg: x }));
+      }
+      case 'link_preview':
+        if (!String(a.url).includes('hearth.example')) throw new Error('no preview');
+        return {
+          url: a.url,
+          kind: 'page',
+          title: 'Hearth 0.1 release notes',
+          description: 'Local search, saved scrollback, replies and reactions, link previews, and a channel browser.',
+          site: 'hearth.example',
+          image: null,
+        };
+      case 'cert_info':
+        throw new Error('file not found');
       case 'save_server':
         return { ...(a.server as ServerConfig), id: 'new' };
       default:
@@ -133,4 +161,22 @@ setTimeout(async () => {
   const view = params.get('view');
   if (view === 'switcher') window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, ctrlKey: true }));
   if (view === 'settings') window.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: true, ctrlKey: true }));
+  if (view === 'search') {
+    app.searchQuery = params.get('q') ?? 'transport';
+    app.searchOpen = true;
+  }
+  if (view === 'channels' && conn) {
+    conn.channelList = {
+      loading: false,
+      at: Date.now(),
+      items: [
+        { name: '#libera', users: 2210, topic: 'Welcome to Libera.Chat | https://libera.chat' },
+        { name: '#linux', users: 1874, topic: 'Linux help and discussion' },
+        { name: '#rust', users: 1203, topic: 'The Rust programming language | https://rust-lang.org' },
+        { name: '#hearth', users: 16, topic: 'Hearth — a quiet IRC client' },
+      ],
+    };
+    app.browserConn = conn;
+  }
+  if (params.get('tab')) app.settingsOpen = { tab: params.get('tab')!, serverId: params.get('server') ?? undefined };
 }, 400);

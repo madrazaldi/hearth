@@ -6,14 +6,17 @@
   import Switch from './Switch.svelte';
   import Segmented from './Segmented.svelte';
   import ServerForm from './ServerForm.svelte';
+  import BouncerNetworks from './BouncerNetworks.svelte';
 
   const isMac = navigator.userAgent.includes('Mac');
   const mod = isMac ? '⌘' : 'Ctrl';
 
   const tabs = [
     { id: 'servers', label: 'Servers', icon: 'server' },
+    { id: 'general', label: 'General', icon: 'settings' },
     { id: 'appearance', label: 'Appearance', icon: 'moon' },
     { id: 'notifications', label: 'Notifications', icon: 'bell' },
+    { id: 'privacy', label: 'Privacy & data', icon: 'lock' },
     { id: 'shortcuts', label: 'Shortcuts', icon: 'layers' },
   ];
 
@@ -23,6 +26,25 @@
     editing === 'new' ? defaultServer() : (app.servers.find((s) => s.id === editing) ?? null),
   );
   let words = $state(app.settings.highlightWords.join(', '));
+  let newIgnore = $state('');
+  let confirmClear = $state(false);
+  const bouncer = $derived(editing && editing !== 'new' ? app.conns.get(editing) : undefined);
+
+  async function clearLogs() {
+    confirmClear = false;
+    try {
+      await api.clearLogs();
+      app.toast('Saved messages deleted');
+    } catch (e) {
+      app.toast(String(e), 'error');
+    }
+  }
+
+  function addIgnore(e: SubmitEvent) {
+    e.preventDefault();
+    if (newIgnore.trim()) app.ignore(newIgnore);
+    newIgnore = '';
+  }
 
   function set<K extends keyof Settings>(key: K) {
     return {
@@ -36,6 +58,7 @@
   const fontSize = set('fontSize');
   const clock = set('clock');
   const membership = set('membership');
+  const autoAway = set('autoAwayMinutes');
 
   function go(t: string, serverId?: string) {
     app.settingsOpen = { tab: t, serverId };
@@ -91,6 +114,9 @@
               }}
             />
           {/key}
+          {#if bouncer?.isControl}
+            <BouncerNetworks conn={bouncer} />
+          {/if}
         {:else}
           <h2>Servers</h2>
           <p class="lede">Networks and bouncers Hearth connects to. A soju bouncer expands into all of its networks automatically.</p>
@@ -114,6 +140,74 @@
           </div>
           <button class="btn primary add" onclick={() => go('servers', 'new')}><Icon name="plus" size={14} />Add server</button>
         {/if}
+      {:else if tab === 'general'}
+        <h2>General</h2>
+        <div class="rows">
+          <Switch
+            bind:checked={() => app.settings.closeToTray, (v) => app.updateSettings({ closeToTray: v })}
+            label="Keep running when the window is closed"
+            hint="Hearth stays connected in the menu bar or system tray. Quit from the tray icon."
+          />
+          <div class="row">
+            <div>
+              <div class="label">Mark me away</div>
+              <div class="hint">When Hearth has been in the background this long. You're marked back when you return.</div>
+            </div>
+            <Segmented
+              bind:value={autoAway.get, autoAway.set}
+              options={[
+                { value: 0, label: 'Never' },
+                { value: 10, label: '10 min' },
+                { value: 30, label: '30 min' },
+                { value: 60, label: '1 hour' },
+              ]}
+            />
+          </div>
+        </div>
+      {:else if tab === 'privacy'}
+        <h2>Privacy & data</h2>
+        <div class="rows">
+          <Switch
+            bind:checked={() => app.settings.storeLogs, (v) => app.updateSettings({ storeLogs: v })}
+            label="Save messages on this computer"
+            hint="Keeps scrollback across restarts and makes messages searchable. Stored only on this device."
+          />
+          <div class="row">
+            <div>
+              <div class="label">Saved messages</div>
+              <div class="hint">Deleting them doesn't affect history kept by a server or bouncer.</div>
+            </div>
+            {#if confirmClear}
+              <button class="btn danger" onclick={clearLogs}>Delete all?</button>
+              <button class="btn ghost" onclick={() => (confirmClear = false)}>Cancel</button>
+            {:else}
+              <button class="btn ghost danger" onclick={() => (confirmClear = true)}>Delete saved messages</button>
+            {/if}
+          </div>
+          <Switch
+            bind:checked={() => app.settings.linkPreviews, (v) => app.updateSettings({ linkPreviews: v })}
+            label="Show link previews"
+            hint="Hearth fetches linked pages and images itself, so those sites see your IP address. Links to local or private addresses are never fetched."
+          />
+          <div class="field">
+            <span>Ignored people</span>
+            {#if app.settings.ignores.length}
+              <div class="ignores">
+                {#each app.settings.ignores as mask (mask)}
+                  <div class="ignore">
+                    <span class="mono">{mask}</span>
+                    <button class="icon-btn" title="Stop ignoring" onclick={() => app.unignore(mask)}><Icon name="x" size={13} /></button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+            <form class="add-ignore" onsubmit={addIgnore}>
+              <input class="input mono" bind:value={newIgnore} placeholder="nick or nick!user@host" spellcheck="false" />
+              <button class="btn" type="submit" disabled={!newIgnore.trim()}>Ignore</button>
+            </form>
+            <small>Hides their messages, notices, invites and reactions everywhere. <code>*</code> and <code>?</code> are wildcards.</small>
+          </div>
+        </div>
       {:else if tab === 'appearance'}
         <h2>Appearance</h2>
         <div class="rows">
@@ -219,6 +313,7 @@
           <dt><span class="kbd">⌥ ⇧ ↑</span> <span class="kbd">⌥ ⇧ ↓</span></dt><dd>Previous / next unread</dd>
           <dt><span class="kbd">{mod} 1–9</span></dt><dd>Go to channel by position</dd>
           <dt><span class="kbd">{mod} F</span></dt><dd>Filter messages</dd>
+          <dt><span class="kbd">{mod} ⇧ F</span></dt><dd>Search all messages</dd>
           <dt><span class="kbd">{mod} W</span></dt><dd>Close buffer</dd>
           <dt><span class="kbd">{mod} ⇧ M</span></dt><dd>Toggle member list</dd>
           <dt><span class="kbd">{mod} ,</span></dt><dd>Settings</dd>
@@ -430,6 +525,39 @@
   .hint {
     font-size: 12px;
     color: var(--text-3);
+  }
+
+  .ignores {
+    display: grid;
+    border-radius: 8px;
+    box-shadow: 0 0 0 1px var(--line-strong) inset;
+    overflow: hidden;
+  }
+
+  .ignore {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px 4px 3px 12px;
+    font-size: 12.5px;
+  }
+
+  .ignore + .ignore {
+    border-top: 1px solid var(--line);
+  }
+
+  .add-ignore {
+    display: flex;
+    gap: 8px;
+  }
+
+  .add-ignore .input {
+    flex: 1;
+  }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
   }
 
   .keys {

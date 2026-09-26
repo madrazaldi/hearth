@@ -1,13 +1,14 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { app, type Buffer } from '../state.svelte';
-  import { stripFormatting } from '../format';
+  import { firstLink, stripFormatting } from '../format';
   import { nickHue } from '../nickcolor';
   import { dayKey, formatClock, formatDay, formatDuration, formatFull } from '../time';
   import type { Line } from '../types';
   import RichText from './RichText.svelte';
   import Icon from './Icon.svelte';
+  import LinkPreview from './LinkPreview.svelte';
 
   let { buf, filter = '', onnick }: { buf: Buffer; filter?: string; onnick: (nick: string, e: MouseEvent) => void } = $props();
 
@@ -25,6 +26,12 @@
   let limit = $state(PAGE);
   let atBottom = $state(true);
   const expanded = new SvelteSet<string>();
+  let flash = $state<number | null>(null);
+  let reactFor = $state<number | null>(null);
+  let confirmDelete = $state<number | null>(null);
+
+  const EMOJI = ['👍', '❤️', '😂', '🎉', '😮', '😢', '👀', '✅'];
+  const canReply = (l: Line) => !!l.msgid && buf.kind !== 'server' && buf.conn.canTag('draft/reply') && !l.redacted;
 
   const s = $derived(app.settings);
 
@@ -126,6 +133,42 @@
     }
   }
 
+  // Scroll to a line requested through buf.focus (search results, reply quotes).
+  $effect(() => {
+    const f = buf.focus;
+    if (!f) return;
+    untrack(() => {
+      buf.focus = null;
+      const idx = source.findIndex((l) => (f.msgid ? l.msgid === f.msgid : l.time === f.time));
+      if (idx < 0) return;
+      const line = source[idx];
+      limit = Math.max(limit, source.length - idx + 40);
+      tick().then(() => {
+        const row = el?.querySelector(`[data-line="${line.id}"]`) as HTMLElement | null;
+        if (!row || !el) return;
+        el.scrollTop = row.offsetTop - el.clientHeight / 2;
+        atBottom = isAtBottom();
+        app.atBottom = atBottom;
+        flash = line.id;
+        setTimeout(() => flash === line.id && (flash = null), 1800);
+      });
+    });
+  });
+
+  async function copy(l: Line) {
+    try {
+      await navigator.clipboard.writeText(stripFormatting(l.text));
+      app.toast('Copied');
+    } catch (e) {
+      app.toast(String(e), 'error');
+    }
+  }
+
+  function startReply(l: Line) {
+    buf.replyTo = l;
+    window.dispatchEvent(new CustomEvent('hearth:focus-composer'));
+  }
+
   function toBottom() {
     limit = PAGE;
     tick().then(() => el && el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }));
@@ -140,12 +183,18 @@
       el.scrollTop = d.offsetTop - el.clientHeight / 3;
       atBottom = isAtBottom();
     } else el.scrollTop = el.scrollHeight;
-    const ro = new ResizeObserver(() => {
+    const pin = () => {
       if (atBottom && el) el.scrollTop = el.scrollHeight;
-    });
+    };
+    const ro = new ResizeObserver(pin);
     ro.observe(el);
+    // Link previews grow rows after render; keep the bottom in view.
+    el.addEventListener('contentgrow', pin);
     if (el.scrollHeight <= el.clientHeight) onScroll();
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      el?.removeEventListener('contentgrow', pin);
+    };
   });
 
   const clock = (t: number) => formatClock(t, s);
@@ -216,6 +265,81 @@
   {/if}
 {/snippet}
 
+{#snippet quote(l: Line)}
+  {#if l.replyTo && !l.redacted}
+    {@const parent = buf.byMsgid.get(l.replyTo)}
+    <button
+      class="reply-quote"
+      disabled={!parent}
+      onclick={() => parent && app.jumpTo(buf, parent.time, parent.msgid)}
+      title={parent ? 'Show the original message' : undefined}
+    >
+      <span class="reply-arrow">↪</span>
+      {#if parent}
+        <span class="reply-nick" style="--h:{nickHue(parent.nick)}">{parent.nick}</span>
+        <span class="reply-snip">{parent.redacted ? 'message deleted' : stripFormatting(parent.text).slice(0, 140)}</span>
+      {:else}
+        <span class="faint">a message that isn't loaded</span>
+      {/if}
+    </button>
+  {/if}
+{/snippet}
+
+{#snippet extras(l: Line)}
+  {#if l.reactions && !l.redacted}
+    <div class="reactions">
+      {#each Object.entries(l.reactions) as [emoji, nicks] (emoji)}
+        {@const mine = nicks.some((n) => buf.conn.isMe(n))}
+        <button
+          class="chip"
+          class:mine
+          title={nicks.join(', ')}
+          disabled={mine || !app.canReact(buf, l)}
+          onclick={() => app.react(buf, l, emoji)}>{emoji}<span>{nicks.length}</span></button
+        >
+      {/each}
+    </div>
+  {/if}
+  {#if s.linkPreviews && !l.redacted && buf.kind !== 'server'}
+    {@const url = firstLink(l.text)}
+    {#if url}<LinkPreview {url} />{/if}
+  {/if}
+{/snippet}
+
+{#snippet tools(l: Line)}
+  {@const react = app.canReact(buf, l)}
+  {@const redact = app.canRedact(buf, l)}
+  <div class="tools" class:open={reactFor === l.id || confirmDelete === l.id}>
+    {#if canReply(l)}
+      <button title="Reply" onclick={() => startReply(l)}><Icon name="reply" size={14} /></button>
+    {/if}
+    {#if react}
+      <button title="React" class:on={reactFor === l.id} onclick={(e) => { e.stopPropagation(); reactFor = reactFor === l.id ? null : l.id; }}>
+        <Icon name="smile" size={14} />
+      </button>
+    {/if}
+    {#if !l.redacted}
+      <button title="Copy text" onclick={() => copy(l)}><Icon name="copy" size={14} /></button>
+    {/if}
+    {#if redact && !l.redacted}
+      {#if confirmDelete === l.id}
+        <button class="danger wide" onclick={() => { app.redact(buf, l); confirmDelete = null; }}>Delete?</button>
+      {:else}
+        <button title="Delete" class="danger" onclick={(e) => { e.stopPropagation(); confirmDelete = l.id; }}><Icon name="trash" size={14} /></button>
+      {/if}
+    {/if}
+    {#if reactFor === l.id}
+      <div class="emoji" role="menu" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
+        {#each EMOJI as e (e)}
+          <button onclick={() => { app.react(buf, l, e); reactFor = null; }}>{e}</button>
+        {/each}
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
+<svelte:window onclick={() => { reactFor = null; confirmDelete = null; }} />
+
 <div class="scroller layout-{s.layout}" bind:this={el} onscroll={onScroll}>
   <div class="spacer"></div>
   {#if buf.history === 'loading'}
@@ -264,9 +388,11 @@
       {#if l.type === 'privmsg' || l.type === 'notice' || l.type === 'action'}
         <div
           class="row msg {l.type}"
-          class:cont={it.cont}
+          class:cont={it.cont && !l.replyTo}
           class:hl={l.highlight}
           class:self={l.self}
+          class:flash={flash === l.id}
+          data-line={l.id}
         >
           <time title={formatFull(l.time)}>{clock(l.time)}</time>
           {#if s.layout === 'columns'}
@@ -277,7 +403,9 @@
               {/if}
             </span>
             <div class="text selectable">
+              {@render quote(l)}
               {#if l.type === 'action'}{@render nickBtn(l.nick, l.self)}{' '}{/if}{@render body(l)}
+              {@render extras(l)}
             </div>
           {:else}
             <div class="text selectable">
@@ -288,9 +416,12 @@
                   <span class="head-time" title={formatFull(l.time)}>{clock(l.time)}</span>
                 </div>
               {/if}
+              {@render quote(l)}
               {#if l.type === 'action'}<span class="glyph">*</span>{' '}{@render nickBtn(l.nick, l.self)}{' '}{/if}{@render body(l)}
+              {@render extras(l)}
             </div>
           {/if}
+          {@render tools(l)}
         </div>
       {:else if l.type === 'whois' && l.data}
         {@const w = l.data}
@@ -325,7 +456,7 @@
           </details>
         </div>
       {:else}
-        <div class="row event {l.type}" class:hl={l.highlight}>
+        <div class="row event {l.type}" class:hl={l.highlight} class:flash={flash === l.id} data-line={l.id}>
           <time title={formatFull(l.time)}>{clock(l.time)}</time>
           <span class="who"><span class="glyph">{glyph[l.type] ?? '·'}</span></span>
           <div class="text selectable">{@render event(l)}</div>
@@ -471,6 +602,149 @@
 
   .hl:hover {
     background: color-mix(in oklab, var(--mention) 100%, var(--bg-hover));
+  }
+
+  .flash {
+    animation: flash 1.8s var(--ease);
+  }
+
+  @keyframes flash {
+    0%,
+    30% {
+      background: var(--accent-soft);
+    }
+  }
+
+  /* Hover tools */
+  .tools {
+    position: absolute;
+    right: 16px;
+    top: -14px;
+    display: none;
+    align-items: center;
+    gap: 1px;
+    padding: 2px;
+    border-radius: 7px;
+    background: var(--bg-raised);
+    box-shadow: var(--shadow);
+    z-index: 3;
+  }
+
+  .row.msg:hover .tools,
+  .tools.open {
+    display: flex;
+  }
+
+  .tools button {
+    height: 24px;
+    min-width: 26px;
+    display: grid;
+    place-items: center;
+    border-radius: 5px;
+    color: var(--text-3);
+  }
+
+  .tools button:hover,
+  .tools button.on {
+    background: var(--bg-active);
+    color: var(--text);
+  }
+
+  .tools .danger:hover {
+    color: var(--danger);
+  }
+
+  .tools .wide {
+    padding: 0 8px;
+    font-size: 12px;
+    color: var(--danger);
+  }
+
+  .emoji {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    display: flex;
+    gap: 2px;
+    padding: 4px;
+    border-radius: 8px;
+    background: var(--bg-raised);
+    box-shadow: var(--shadow);
+  }
+
+  .emoji button {
+    font-size: 16px;
+    width: 30px;
+    height: 30px;
+  }
+
+  /* Replies and reactions */
+  .reply-quote {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    max-width: 100%;
+    margin: 1px 0 1px;
+    font-size: 0.86em;
+    color: var(--text-3);
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .reply-quote:not(:disabled):hover .reply-snip {
+    color: var(--text-2);
+  }
+
+  .reply-arrow {
+    color: var(--text-4);
+  }
+
+  .reply-nick {
+    font-weight: 600;
+    color: oklch(var(--nick-l) var(--nick-c) var(--h));
+  }
+
+  :global(.no-nick-colors) .reply-nick {
+    color: var(--text-2);
+  }
+
+  .reply-snip {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .reactions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 3px 0 2px;
+  }
+
+  .chip {
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 7px;
+    border-radius: 11px;
+    font-size: 13px;
+    box-shadow: 0 0 0 1px var(--line-strong) inset;
+  }
+
+  .chip span {
+    font-size: 11.5px;
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .chip.mine {
+    background: var(--accent-soft);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 50%, transparent) inset;
+  }
+
+  .chip:not(:disabled):hover {
+    background: var(--bg-active);
   }
 
   /* Events: joins, modes, topics … */

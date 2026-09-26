@@ -51,7 +51,7 @@
 
   function onKey(e: KeyboardEvent) {
     const mod = navigator.userAgent.includes('Mac') ? e.metaKey : e.ctrlKey;
-    if (mod && e.key.toLowerCase() === 'f') {
+    if (mod && !e.shiftKey && e.key.toLowerCase() === 'f') {
       e.preventDefault();
       if (!filterOpen) toggleFilter();
       else filterEl?.select();
