@@ -432,6 +432,10 @@ impl State<'_> {
 
     /// Returns Err to tear the session down.
     fn handle(&mut self, mut msg: Message) -> Result<()> {
+        // Stamp arrival time once so the UI and the local log agree on it.
+        if !msg.tags.contains_key("time") {
+            msg.tags.insert("time".into(), format_ms(now_ms()));
+        }
         // Route messages that belong to a batch.
         if let Some(batch) = msg.tag("batch").map(str::to_string) {
             match self.batches.get(&batch).cloned() {

@@ -35,13 +35,17 @@ export interface ServerConfig {
   username: string;
   realname: string;
   password: string;
-  sasl: 'none' | 'plain';
+  sasl: 'none' | 'plain' | 'external';
   saslUsername: string;
   saslPassword: string;
   autoconnect: boolean;
   autojoin: string[];
   perform: string[];
+  /** PEM file with a client certificate and key (SASL EXTERNAL / CertFP). */
+  clientCert: string;
 }
+
+export type NotifyLevel = 'all' | 'mentions' | 'none';
 
 export interface Config {
   servers: ServerConfig[];
@@ -63,6 +67,19 @@ export interface Settings {
   sendTyping: boolean;
   showTyping: boolean;
   sidebarWidth: number;
+  /** Keep a local copy of messages (enables offline scrollback and search). */
+  storeLogs: boolean;
+  /** Fetch link and image previews (through the backend, never the webview). */
+  linkPreviews: boolean;
+  closeToTray: boolean;
+  /** Mark away after this many minutes with the window in the background; 0 disables. */
+  autoAwayMinutes: number;
+  /** nick or nick!user@host masks, `*` and `?` wildcards. */
+  ignores: string[];
+  /** Per-buffer notification level, keyed by `Buffer.prefKey`. Absent means the default. */
+  bufferNotify: Record<string, NotifyLevel>;
+  /** Nicks to watch with MONITOR, keyed by `Conn.prefKey`. */
+  watch: Record<string, string[]>;
 }
 
 export type LineType =
@@ -95,6 +112,37 @@ export interface Line {
   account?: string;
   redacted?: boolean;
   data?: Record<string, string>;
+  /** msgid of the message this one replies to (+draft/reply). */
+  replyTo?: string;
+  /** emoji → nicks who reacted (+draft/react). */
+  reactions?: Record<string, string[]>;
+}
+
+export interface SavedBuffer {
+  name: string;
+  kind: 'channel' | 'query';
+  key: string;
+}
+
+export interface SearchHit {
+  network: string;
+  target: string;
+  msg: IrcMessage;
+}
+
+export interface Preview {
+  url: string;
+  kind: 'image' | 'page';
+  title: string | null;
+  description: string | null;
+  site: string | null;
+  image: string | null;
+}
+
+export interface CertInfo {
+  path: string;
+  sha256: string;
+  sha512: string;
 }
 
 export const defaultServer = (): ServerConfig => ({
@@ -116,6 +164,7 @@ export const defaultServer = (): ServerConfig => ({
   autoconnect: true,
   autojoin: [],
   perform: [],
+  clientCert: '',
 });
 
 export const defaultSettings = (): Settings => ({
@@ -133,4 +182,11 @@ export const defaultSettings = (): Settings => ({
   sendTyping: true,
   showTyping: true,
   sidebarWidth: 248,
+  storeLogs: true,
+  linkPreviews: false,
+  closeToTray: false,
+  autoAwayMinutes: 0,
+  ignores: [],
+  bufferNotify: {},
+  watch: {},
 });

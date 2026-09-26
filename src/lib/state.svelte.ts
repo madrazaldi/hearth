@@ -1,8 +1,10 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { api, onIrc } from './api';
-import { casefold, isoTime, msgTime, parseAttrs, parseCtcp, parsePrefix, splitMessage, type PrefixMap } from './irc';
-import { mentions, stripFormatting } from './format';
+import { casefold, escapeTag, isoTime, parsePrefix, splitMessage, escapeAttr, type PrefixMap } from './irc';
+import { isIgnored, normalizeMask } from './ignore';
+import { stripFormatting } from './format';
 import { notify } from './notify';
+import { handleMessage, historyLine } from './incoming';
 import {
   defaultSettings,
   type ConnStatus,
@@ -10,8 +12,12 @@ import {
   type IrcMessage,
   type Line,
   type LineType,
+  type NotifyLevel,
+  type Preview,
+  type SearchHit,
   type ServerConfig,
   type Settings,
+  type Source,
 } from './types';
 
 let seq = 0;
@@ -30,8 +36,18 @@ export interface Member {
   realname?: string;
 }
 
+export interface ChannelInfo {
+  name: string;
+  users: number;
+  topic: string;
+}
+
 export function mkLine(p: Partial<Line> & Pick<Line, 'type'>): Line {
   return { id: ++seq, time: Date.now(), nick: '', text: '', self: false, highlight: false, ...p };
+}
+
+export function nextSeq(): number {
+  return ++seq;
 }
 
 function lineKey(l: Line): string {
@@ -53,9 +69,15 @@ export class Buffer {
   divider = $state(0);
   history = $state<'idle' | 'loading' | 'done'>('idle');
   typing = new SvelteMap<string, number>();
+  /** The message the composer is replying to. */
+  replyTo = $state<Line | null>(null);
+  /** A line to scroll to and flash, set by search and reply quotes. */
+  focus = $state<{ time: number; msgid?: string; seq: number } | null>(null);
 
   // Non-reactive UI memory.
   wantJoined = false;
+  /** Channel key, remembered for rejoining. */
+  joinKey = '';
   draft = '';
   scrollTop: number | null = null;
   namesAcc: Map<string, Member> | null = null;
@@ -77,6 +99,13 @@ export class Buffer {
     return `${this.conn.id}\u0000${this.key}`;
   }
 
+  /** Stable across restarts; used for saved preferences. */
+  get prefKey(): string {
+    return `${this.conn.prefKey}|${this.key}`;
+  }
+
+  level = $derived.by((): NotifyLevel | 'default' => this.conn.app.settings.bufferNotify[this.prefKey] ?? 'default');
+
   unread = $derived.by(() => {
     let n = 0;
     for (let i = this.messages.length - 1; i >= 0; i--) {
@@ -88,11 +117,13 @@ export class Buffer {
   });
 
   highlights = $derived.by(() => {
+    if (this.level === 'none') return 0;
+    const everything = this.kind === 'query' || this.level === 'all';
     let n = 0;
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const l = this.messages[i];
       if (l.time <= this.readMarker) break;
-      if (!l.self && (l.highlight || (this.kind === 'query' && COUNTED.includes(l.type)))) n++;
+      if (!l.self && (l.highlight || (everything && COUNTED.includes(l.type)))) n++;
     }
     return n;
   });
@@ -101,6 +132,12 @@ export class Buffer {
     const rank = this.conn.prefix.symbols;
     const r = (m: Member) => (m.prefix ? rank.indexOf(m.prefix[0]) : rank.length);
     return [...this.members.values()].sort((a, b) => r(a) - r(b) || this.conn.fold(a.nick).localeCompare(this.conn.fold(b.nick)));
+  });
+
+  byMsgid = $derived.by(() => {
+    const m = new Map<string, Line>();
+    for (const l of this.messages) if (l.msgid) m.set(l.msgid, l);
+    return m;
   });
 
   push(line: Line) {
@@ -116,12 +153,41 @@ export class Buffer {
     this.messages = next;
   }
 
+  /** Add lines from history, skipping ones already present. */
   merge(lines: Line[]) {
     if (!lines.length) return;
     const seen = new Set(this.messages.map(lineKey));
-    const fresh = lines.filter((l) => !seen.has(lineKey(l)));
+    // Lines without a msgid can differ by a few ms between the live copy and
+    // the logged one (our own messages without echo-message), so also match
+    // same-content lines that are close in time.
+    const loose = new Map<string, number[]>();
+    for (const l of this.messages) {
+      if (l.msgid) continue;
+      const k = `${l.type}|${l.nick}|${l.text}`;
+      const times = loose.get(k);
+      if (times) times.push(l.time);
+      else loose.set(k, [l.time]);
+    }
+    const fresh = lines.filter((l) => {
+      if (seen.has(lineKey(l))) return false;
+      if (l.msgid) return true;
+      const times = loose.get(`${l.type}|${l.nick}|${l.text}`);
+      return !times?.some((t) => Math.abs(t - l.time) < 3000);
+    });
     if (!fresh.length) return;
     this.messages = [...this.messages, ...fresh].sort((a, b) => a.time - b.time || a.id - b.id);
+  }
+
+  /** Record a +draft/react on the message with `msgid`. */
+  react(msgid: string, emoji: string, nick: string) {
+    const i = this.messages.findIndex((l) => l.msgid === msgid);
+    if (i < 0) return;
+    const l = this.messages[i];
+    const who = l.reactions?.[emoji] ?? [];
+    if (who.some((n) => this.conn.fold(n) === this.conn.fold(nick))) return;
+    const next = [...this.messages];
+    next[i] = { ...l, reactions: { ...(l.reactions ?? {}), [emoji]: [...who, nick] } };
+    this.messages = next;
   }
 
   member(nick: string): Member | undefined {
@@ -154,10 +220,23 @@ export class Conn {
   networks = new SvelteMap<string, Record<string, string>>();
   away = $state(false);
   collapsed = $state(false);
+  /** MONITOR state: case-folded nick → online. */
+  online = new SvelteMap<string, boolean>();
+  channelList = $state.raw<{ loading: boolean; items: ChannelInfo[]; at: number } | null>(null);
 
   whois: Record<string, Record<string, string>> = {};
   motd: string[] = [];
-  lastChannelList = 0;
+  listAcc: ChannelInfo[] | null = null;
+  /** We sent AWAY because the window sat in the background. */
+  autoAway = false;
+  /** Saved buffers have been restored, so saving won't clobber them. */
+  buffersLoaded = false;
+  /** Channel keys from /join, applied when the JOIN comes back. */
+  pendingKeys = new Map<string, string>();
+  /** labeled-response: label → buffer that issued the command. */
+  labels = new Map<string, Buffer>();
+  ctcpTimes: number[] = [];
+  ctcpWarned = 0;
 
   constructor(app: App, id: string, serverId: string, parentId: string | null, netid: string | null) {
     this.app = app;
@@ -170,6 +249,10 @@ export class Conn {
 
   get config(): ServerConfig | undefined {
     return this.app.servers.find((s) => s.id === this.serverId);
+  }
+
+  get prefKey(): string {
+    return `${this.serverId}|${this.netid ?? ''}`;
   }
 
   get casemapping() {
@@ -201,6 +284,15 @@ export class Conn {
     return [...chans, ...queries];
   });
 
+  /** Nicks explicitly watched with MONITOR. */
+  get watched(): string[] {
+    return this.app.settings.watch[this.prefKey] ?? [];
+  }
+
+  get canMonitor(): boolean {
+    return 'MONITOR' in this.isupport && !this.isControl;
+  }
+
   isChannel(name: string): boolean {
     const types = this.isupport.CHANTYPES ?? '#&';
     return name.length > 0 && types.includes(name[0]);
@@ -219,6 +311,10 @@ export class Conn {
     if (existing) return existing;
     const b = new Buffer(this, kind ?? (this.isChannel(name) ? 'channel' : 'query'), name);
     this.buffers.set(this.fold(name), b);
+    if (b.kind === 'query') {
+      this.app.saveBuffersSoon(this);
+      if (this.canMonitor && this.status === 'connected') this.send(`MONITOR + ${name}`);
+    }
     return b;
   }
 
@@ -227,7 +323,16 @@ export class Conn {
   }
 
   send(...lines: string[]) {
-    return api.send(this.id, lines).catch((e) => this.server.push(mkLine({ type: 'error', text: String(e) })));
+    return api.send(this.id, lines).catch((e) => this.app.here(this).push(mkLine({ type: 'error', text: String(e) })));
+  }
+
+  /** Send a command whose replies should land in `buf` (via labeled-response). */
+  sendFrom(buf: Buffer, line: string) {
+    if (!this.caps.has('labeled-response') || line.startsWith('@')) return this.send(line);
+    const label = `f${nextSeq()}`;
+    this.labels.set(label, buf);
+    if (this.labels.size > 200) this.labels.delete(this.labels.keys().next().value!);
+    return this.send(`@label=${label} ${line}`);
   }
 
   has(cap: string) {
@@ -253,12 +358,18 @@ export class App {
   ready = $state(false);
   atBottom = $state(true);
   switcherOpen = $state(false);
+  searchOpen = $state(false);
+  browserConn = $state<Conn | null>(null);
   settingsOpen = $state<null | { tab: string; serverId?: string }>(null);
   toasts = $state<Toast[]>([]);
   inputHistory: string[] = [];
 
-  private pendingActive = new Map<string, string>();
+  /** conn id → folded channel to open when our JOIN arrives. */
+  pendingActive = new Map<string, string>();
   private restoreKey: string | null = null;
+  private blurredAt = Date.now();
+  private saveBufferTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private previews = new Map<string, Promise<Preview | null>>();
 
   async init() {
     const cfg = await api.getConfig();
@@ -272,6 +383,7 @@ export class App {
     for (const s of this.servers) if (s.autoconnect) await api.connect(s.id);
     this.ready = true;
     setInterval(() => this.pruneTyping(), 2000);
+    setInterval(() => this.checkAutoAway(), 30_000);
   }
 
   toast(text: string, kind: Toast['kind'] = 'info') {
@@ -342,7 +454,36 @@ export class App {
     const list = this.allBuffers;
     const i = list.indexOf(buf);
     buf.conn.buffers.delete(buf.key);
+    if (buf.kind === 'query' && buf.conn.canMonitor && !this.isWatched(buf.conn, buf.name)) {
+      buf.conn.send(`MONITOR - ${buf.name}`);
+    }
+    this.saveBuffersSoon(buf.conn);
     if (this.active === buf) this.open(list[i - 1] ?? list[i + 1] ?? null);
+  }
+
+  /** Open `buf` and scroll to a message, loading history around it if needed. */
+  async jumpTo(buf: Buffer, time: number, msgid?: string) {
+    this.open(buf);
+    const present = buf.messages.some((l) => (msgid ? l.msgid === msgid : l.time === time));
+    if (!present) {
+      try {
+        let msgs: IrcMessage[] = [];
+        if (buf.conn.has('draft/chathistory') && buf.conn.status === 'connected') {
+          const at = msgid ? `msgid=${msgid}` : `timestamp=${isoTime(time)}`;
+          msgs = await api.history(buf.conn.id, 'messages', buf.name, `CHATHISTORY AROUND ${buf.name} ${at} 100`);
+        } else if (this.settings.storeLogs) {
+          const [before, after] = await Promise.all([
+            api.localHistory(buf.conn.id, buf.key, { before: time + 1, limit: 60 }),
+            api.localHistory(buf.conn.id, buf.key, { after: time, limit: 60 }),
+          ]);
+          msgs = [...before, ...after];
+        }
+        this.applyHistory(buf, msgs);
+      } catch (e) {
+        console.warn('jump', e);
+      }
+    }
+    buf.focus = { time, msgid, seq: ++seq };
   }
 
   // ─── Settings & servers ─────────────────────────────────────
@@ -379,16 +520,147 @@ export class App {
     if (this.active?.conn === c) this.open(this.allBuffers[0] ?? null);
   }
 
+  setNotify(buf: Buffer, level: NotifyLevel | 'default') {
+    const next = { ...this.settings.bufferNotify };
+    if (level === 'default') delete next[buf.prefKey];
+    else next[buf.prefKey] = level;
+    this.updateSettings({ bufferNotify: next });
+  }
+
+  // ─── Ignore & watch ─────────────────────────────────────────
+
+  isIgnored(conn: Conn, src: Source | null | undefined): boolean {
+    if (!src || conn.isMe(src.nick)) return false;
+    return isIgnored(this.settings.ignores, src, (s) => conn.fold(s));
+  }
+
+  ignore(mask: string) {
+    const m = normalizeMask(mask);
+    if (!m || this.settings.ignores.includes(m)) return;
+    this.updateSettings({ ignores: [...this.settings.ignores, m] });
+  }
+
+  unignore(mask: string): boolean {
+    const m = normalizeMask(mask);
+    const next = this.settings.ignores.filter((x) => x !== m && x !== mask);
+    if (next.length === this.settings.ignores.length) return false;
+    this.updateSettings({ ignores: next });
+    return true;
+  }
+
+  isWatched(conn: Conn, nick: string): boolean {
+    return conn.watched.some((n) => conn.fold(n) === conn.fold(nick));
+  }
+
+  watch(conn: Conn, nick: string) {
+    if (this.isWatched(conn, nick)) return;
+    this.updateSettings({ watch: { ...this.settings.watch, [conn.prefKey]: [...conn.watched, nick] } });
+    if (conn.canMonitor) conn.send(`MONITOR + ${nick}`);
+  }
+
+  unwatch(conn: Conn, nick: string) {
+    const rest = conn.watched.filter((n) => conn.fold(n) !== conn.fold(nick));
+    this.updateSettings({ watch: { ...this.settings.watch, [conn.prefKey]: rest } });
+    if (conn.canMonitor && !conn.buffer(nick)) {
+      conn.send(`MONITOR - ${nick}`);
+      conn.online.delete(conn.fold(nick));
+    }
+  }
+
+  /** Subscribe to presence for watched nicks and open conversations. */
+  private syncMonitor(conn: Conn) {
+    if (!conn.canMonitor) return;
+    const limit = parseInt(conn.isupport.MONITOR) || Infinity;
+    const nicks = new Map<string, string>();
+    for (const n of conn.watched) nicks.set(conn.fold(n), n);
+    for (const b of conn.buffers.values()) if (b.kind === 'query') nicks.set(conn.fold(b.name), b.name);
+    conn.online.clear();
+    const list = [...nicks.values()].slice(0, limit);
+    let chunk: string[] = [];
+    const flush = () => {
+      if (chunk.length) conn.send(`MONITOR + ${chunk.join(',')}`);
+      chunk = [];
+    };
+    for (const n of list) {
+      if (chunk.join(',').length + n.length > 400) flush();
+      chunk.push(n);
+    }
+    flush();
+  }
+
+  // ─── Presence ───────────────────────────────────────────────
+
+  setFocused(focused: boolean) {
+    this.focused = focused;
+    if (!focused) {
+      this.blurredAt = Date.now();
+      return;
+    }
+    for (const c of this.conns.values()) {
+      if (c.autoAway) {
+        c.autoAway = false;
+        if (c.away && c.status === 'connected') c.send('AWAY');
+      }
+    }
+  }
+
+  private checkAutoAway() {
+    const mins = this.settings.autoAwayMinutes;
+    if (!mins || this.focused || Date.now() - this.blurredAt < mins * 60_000) return;
+    for (const c of this.conns.values()) {
+      if (c.status !== 'connected' || c.isControl || c.away || c.autoAway) continue;
+      c.autoAway = true;
+      c.send('AWAY :Away from keyboard');
+    }
+  }
+
+  // ─── Saved buffers ──────────────────────────────────────────
+
+  saveBuffersSoon(conn: Conn) {
+    if (!conn.buffersLoaded || conn.isControl) return;
+    clearTimeout(this.saveBufferTimers.get(conn.id));
+    this.saveBufferTimers.set(
+      conn.id,
+      setTimeout(() => {
+        const list = [...conn.buffers.values()]
+          .filter((b) => b.kind === 'query' || (b.kind === 'channel' && b.wantJoined))
+          .map((b) => ({ name: b.name, kind: b.kind as 'channel' | 'query', key: b.joinKey }));
+        api.saveBuffers(conn.id, list).catch((e) => console.warn('save buffers', e));
+      }, 500),
+    );
+  }
+
+  private async restoreBuffers(conn: Conn) {
+    try {
+      const saved = await api.loadBuffers(conn.id);
+      for (const s of saved) {
+        // Bouncers keep their own channel list; only restore conversations there.
+        if (s.kind === 'channel' && conn.netid) continue;
+        const b = conn.ensure(s.name, s.kind);
+        if (s.kind === 'channel') {
+          b.wantJoined = true;
+          b.joinKey = s.key;
+        } else if (!b.messages.length) this.fetchHistory(b, 'latest');
+        this.maybeRestoreActive(conn, b.key);
+      }
+    } catch (e) {
+      console.warn('restore buffers', e);
+    }
+    conn.buffersLoaded = true;
+  }
+
   // ─── Outgoing ────────────────────────────────────────────────
 
-  sendMessage(buf: Buffer, text: string, kind: 'PRIVMSG' | 'NOTICE' = 'PRIVMSG', action = false) {
+  sendMessage(buf: Buffer, text: string, kind: 'PRIVMSG' | 'NOTICE' = 'PRIVMSG', action = false, replyTo?: string) {
     const conn = buf.conn;
     const target = buf.name;
+    const reply = replyTo && conn.canTag('draft/reply') ? replyTo : undefined;
     // Leave room for ":nick!user@host CMD target :" plus CTCP wrapping.
     const budget = 510 - (conn.nick.length + 100 + kind.length + target.length + (action ? 9 : 0));
-    for (const part of splitMessage(text, Math.max(budget, 60))) {
+    splitMessage(text, Math.max(budget, 60)).forEach((part, i) => {
       const body = action ? `\x01ACTION ${part}\x01` : part;
-      conn.send(`${kind} ${target} :${body}`);
+      const tags = reply && i === 0 ? `@+draft/reply=${escapeTag(reply)} ` : '';
+      conn.send(`${tags}${kind} ${target} :${body}`);
       if (!conn.has('echo-message')) {
         buf.push(
           mkLine({
@@ -396,10 +668,11 @@ export class App {
             nick: conn.nick,
             text: part,
             self: true,
+            replyTo: i === 0 ? reply : undefined,
           }),
         );
       }
-    }
+    });
     buf.lastTypingSent = 0;
   }
 
@@ -412,8 +685,33 @@ export class App {
     buf.conn.send(`@+typing=${state} TAGMSG ${buf.name}`);
   }
 
+  canReact(buf: Buffer, line: Line): boolean {
+    return !!line.msgid && buf.kind !== 'server' && buf.conn.canTag('draft/react') && buf.conn.canTag('draft/reply');
+  }
+
+  react(buf: Buffer, line: Line, emoji: string) {
+    if (!line.msgid) return;
+    const conn = buf.conn;
+    if (line.reactions?.[emoji]?.some((n) => conn.isMe(n))) return;
+    conn.send(`@+draft/react=${escapeTag(emoji)};+draft/reply=${escapeTag(line.msgid)} TAGMSG ${buf.name}`);
+    if (!conn.has('echo-message')) buf.react(line.msgid, emoji, conn.nick);
+  }
+
+  canRedact(buf: Buffer, line: Line): boolean {
+    if (!line.msgid || !buf.conn.has('draft/message-redaction')) return false;
+    if (line.self) return true;
+    const me = buf.member(buf.conn.nick);
+    const op = buf.conn.prefix.symbols.indexOf('@');
+    return !!me?.prefix && op >= 0 && buf.conn.prefix.symbols.indexOf(me.prefix[0]) <= op;
+  }
+
+  redact(buf: Buffer, line: Line) {
+    if (line.msgid) buf.conn.send(`REDACT ${buf.name} ${line.msgid}`);
+  }
+
   join(conn: Conn, channel: string, key?: string) {
     this.pendingActive.set(conn.id, conn.fold(channel));
+    if (key) conn.pendingKeys.set(conn.fold(channel), key);
     const existing = conn.buffer(channel);
     if (existing?.joined) {
       this.open(existing);
@@ -428,34 +726,76 @@ export class App {
     return b;
   }
 
-  // ─── History ────────────────────────────────────────────────
+  browseChannels(conn: Conn) {
+    this.browserConn = conn;
+    const stale = !conn.channelList || (!conn.channelList.loading && Date.now() - conn.channelList.at > 10 * 60_000);
+    if (stale && conn.status === 'connected') {
+      conn.channelList = { loading: true, items: conn.channelList?.items ?? [], at: Date.now() };
+      conn.send('LIST');
+    }
+  }
+
+  // ─── Link previews ──────────────────────────────────────────
+
+  preview(url: string): Promise<Preview | null> {
+    let p = this.previews.get(url);
+    if (!p) {
+      p = api.linkPreview(url).catch(() => null);
+      this.previews.set(url, p);
+      if (this.previews.size > 500) this.previews.delete(this.previews.keys().next().value!);
+    }
+    return p;
+  }
+
+  // ─── History & search ──────────────────────────────────────
 
   async fetchHistory(buf: Buffer, mode: 'latest' | 'before' | 'after') {
     const conn = buf.conn;
-    if (buf.kind === 'server' || !conn.has('draft/chathistory') || conn.status !== 'connected') return;
+    if (buf.kind === 'server') return;
+    const remote = conn.has('draft/chathistory') && conn.status === 'connected';
+    // The local log only fills gaps before what we have: anything newer
+    // arrived live in this session.
+    if (!remote && (!this.settings.storeLogs || mode === 'after')) return;
     if (buf.history === 'loading' || (mode === 'before' && buf.history === 'done')) return;
     const max = parseInt(conn.isupport.CHATHISTORY || '100') || 100;
     const first = buf.messages[0];
     const last = buf.messages[buf.messages.length - 1];
-    let line: string;
     let limit = Math.min(100, max);
-    if (mode === 'after' && last) {
-      limit = Math.min(1000, max);
-      line = `CHATHISTORY AFTER ${buf.name} timestamp=${isoTime(last.time)} ${limit}`;
-    } else if (mode === 'before' && first) {
-      line = `CHATHISTORY BEFORE ${buf.name} timestamp=${isoTime(first.time)} ${limit}`;
-    } else {
-      line = `CHATHISTORY LATEST ${buf.name} * ${limit}`;
-    }
     buf.history = 'loading';
     try {
-      const msgs = await api.history(conn.id, 'messages', buf.name, line);
-      const lines = msgs.map((m) => this.historyLine(conn, buf, m)).filter((l): l is Line => !!l);
-      buf.merge(lines);
+      let msgs: IrcMessage[];
+      if (remote) {
+        let line: string;
+        if (mode === 'after' && last) {
+          limit = Math.min(1000, max);
+          line = `CHATHISTORY AFTER ${buf.name} timestamp=${isoTime(last.time)} ${limit}`;
+        } else if (mode === 'before' && first) {
+          line = `CHATHISTORY BEFORE ${buf.name} timestamp=${isoTime(first.time)} ${limit}`;
+        } else {
+          line = `CHATHISTORY LATEST ${buf.name} * ${limit}`;
+        }
+        msgs = await api.history(conn.id, 'messages', buf.name, line);
+      } else {
+        limit = 100;
+        msgs = await api.localHistory(conn.id, buf.key, { before: mode === 'before' ? first?.time : undefined, limit });
+      }
+      this.applyHistory(buf, msgs);
       buf.history = mode !== 'after' && msgs.length < limit ? 'done' : 'idle';
     } catch (e) {
       buf.history = 'idle';
       console.warn('history', buf.name, e);
+    }
+  }
+
+  private applyHistory(buf: Buffer, msgs: IrcMessage[]) {
+    const lines = msgs.map((m) => historyLine(this, buf.conn, m)).filter((l): l is Line => !!l);
+    buf.merge(lines);
+    for (const m of msgs) {
+      const emoji = m.tags['+draft/react'];
+      const parent = m.tags['+draft/reply'];
+      if (m.command === 'TAGMSG' && emoji && parent && m.source && !this.isIgnored(buf.conn, m.source)) {
+        buf.react(parent, emoji, m.source.nick);
+      }
     }
   }
 
@@ -474,6 +814,46 @@ export class App {
     } catch (e) {
       console.warn('targets', e);
     }
+  }
+
+  /** Search the local log and, where supported, the bouncer. Newest first. */
+  async search(query: string, scope: { conn?: Conn; buf?: Buffer }): Promise<SearchHit[]> {
+    const q = query.trim();
+    if (!q) return [];
+    const target = scope.buf && scope.buf.kind !== 'server' ? scope.buf : undefined;
+    const tasks: Promise<SearchHit[]>[] = [];
+    if (this.settings.storeLogs) {
+      tasks.push(api.search(q, scope.conn?.id ?? null, target?.key ?? null, 200).catch(() => []));
+    }
+    const remote = scope.conn ? [scope.conn] : [...this.conns.values()];
+    for (const c of remote) {
+      if (!c.has('soju.im/search') || c.status !== 'connected' || c.isControl) continue;
+      let attrs = `text=${escapeAttr(q)};limit=100`;
+      if (target) attrs += `;in=${escapeAttr(target.name)}`;
+      tasks.push(
+        api
+          .history(c.id, 'search', '*', `SEARCH ${attrs}`)
+          .then((msgs) =>
+            msgs.map((msg) => {
+              const to = msg.params[0] ?? '';
+              const peer = c.isChannel(to) || !msg.source || c.isMe(msg.source.nick) ? to : msg.source.nick;
+              return { network: c.id, target: c.fold(peer), msg };
+            }),
+          )
+          .catch(() => []),
+      );
+    }
+    const all = (await Promise.all(tasks)).flat();
+    const seen = new Set<string>();
+    const out: SearchHit[] = [];
+    for (const h of all) {
+      const k = h.msg.tags.msgid ? `${h.network}|${h.msg.tags.msgid}` : `${h.network}|${h.target}|${h.msg.tags.time}|${h.msg.params[1]}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(h);
+    }
+    const t = (h: SearchHit) => Date.parse(h.msg.tags.time ?? '') || 0;
+    return out.sort((a, b) => t(b) - t(a));
   }
 
   // ─── Incoming ────────────────────────────────────────────────
@@ -508,6 +888,7 @@ export class App {
             b.members.clear();
             b.typing.clear();
           }
+          conn.online.clear();
           if (was === 'connected' || ev.error) {
             conn.server.push(
               mkLine({
@@ -531,557 +912,68 @@ export class App {
         conn.isupport = ev.isupport;
         break;
       case 'message':
-        this.live(conn, ev.msg);
+        handleMessage(this, conn, ev.msg);
         break;
     }
   }
 
-  private onConnected(conn: Conn) {
+  private async onConnected(conn: Conn) {
     conn.error = null;
+    conn.autoAway = false;
     this.maybeRestoreActive(conn, '');
     if (!this.active) this.open(conn.server);
+    if (conn.isControl) return;
+    if (!conn.buffersLoaded) await this.restoreBuffers(conn);
     // Rejoin channels on direct connections; bouncers restore them on their own.
     if (!conn.netid) {
-      const rejoin = [...conn.buffers.values()].filter((b) => b.kind === 'channel' && b.wantJoined).map((b) => b.name);
       const auto = new Set((conn.config?.autojoin ?? []).map((c) => conn.fold(c.trim())));
-      const missing = rejoin.filter((c) => !auto.has(conn.fold(c)));
-      if (missing.length) setTimeout(() => conn.send(`JOIN ${missing.join(',')}`), 1500);
+      const rejoin = [...conn.buffers.values()].filter((b) => b.kind === 'channel' && b.wantJoined && !auto.has(b.key));
+      if (rejoin.length) setTimeout(() => this.rejoin(conn, rejoin), 1500);
     }
+    this.syncMonitor(conn);
     setTimeout(() => this.fetchTargets(conn), 800);
   }
 
-  private maybeRestoreActive(conn: Conn, key: string) {
+  private rejoin(conn: Conn, chans: Buffer[]) {
+    for (let i = 0; i < chans.length; i += 10) {
+      const group = chans.slice(i, i + 10);
+      // Keyed channels must come first so keys line up by position.
+      const keyed = group.filter((b) => b.joinKey);
+      const names = [...keyed, ...group.filter((b) => !b.joinKey)].map((b) => b.name).join(',');
+      conn.send(keyed.length ? `JOIN ${names} ${keyed.map((b) => b.joinKey).join(',')}` : `JOIN ${names}`);
+    }
+  }
+
+  maybeRestoreActive(conn: Conn, key: string) {
     if (!this.restoreKey) return;
     if (this.restoreKey === `${conn.serverId}|${conn.netid ?? ''}|${key}`) {
       this.restoreKey = null;
-      this.open(key ? conn.buffer(key) ?? conn.server : conn.server);
+      this.open(key ? (conn.buffer(key) ?? conn.server) : conn.server);
     }
   }
 
-  /** Where replies and errors go: the active buffer if it's on this connection. */
-  private here(conn: Conn): Buffer {
+  /**
+   * Where replies and errors go: the buffer that sent the command (by label),
+   * else the active buffer if it's on this connection, else the server buffer.
+   */
+  here(conn: Conn, label?: string): Buffer {
+    const byLabel = label ? conn.labels.get(label) : undefined;
+    if (byLabel && (byLabel.kind === 'server' || conn.buffers.get(byLabel.key) === byLabel)) return byLabel;
     return this.active?.conn === conn ? this.active : conn.server;
   }
 
-  private highlightWords(conn: Conn): string[] {
+  highlightWords(conn: Conn): string[] {
     return [conn.nick, ...this.settings.highlightWords];
   }
 
-  /** Build a line for a message replayed from history into `buf`. */
-  private historyLine(conn: Conn, buf: Buffer, m: IrcMessage): Line | null {
-    const nick = m.source?.nick ?? '';
-    const time = msgTime(m.tags);
-    const self = conn.isMe(nick);
-    const base = { time, nick, self, msgid: m.tags.msgid, account: m.tags.account };
-    switch (m.command) {
-      case 'PRIVMSG':
-      case 'NOTICE': {
-        const { type, text } = this.messageBody(m);
-        if (type === null) return null;
-        return mkLine({ ...base, type, text, highlight: !self && mentions(text, this.highlightWords(conn)) });
-      }
-      case 'JOIN':
-        return mkLine({ ...base, type: 'join', data: { host: `${m.source?.user ?? ''}@${m.source?.host ?? ''}` } });
-      case 'PART':
-        return mkLine({ ...base, type: 'part', text: m.params[1] ?? '' });
-      case 'QUIT':
-        return mkLine({ ...base, type: 'quit', text: m.params[0] ?? '' });
-      case 'KICK':
-        return mkLine({ ...base, type: 'kick', target: m.params[1], text: m.params[2] ?? '' });
-      case 'NICK':
-        return mkLine({ ...base, type: 'nick', target: m.params[0] });
-      case 'TOPIC':
-        return mkLine({ ...base, type: 'topic', text: m.params[1] ?? '' });
-      case 'MODE':
-        return mkLine({ ...base, type: 'mode', text: m.params.slice(1).join(' ') });
-      default:
-        void buf;
-        return null;
-    }
-  }
-
-  private messageBody(m: IrcMessage): { type: LineType | null; text: string } {
-    const raw = m.params[1] ?? '';
-    const ctcp = parseCtcp(raw);
-    if (ctcp) {
-      if (ctcp.command === 'ACTION') return { type: 'action', text: ctcp.args };
-      return { type: null, text: '' };
-    }
-    return { type: m.command === 'NOTICE' ? 'notice' : 'privmsg', text: raw };
-  }
-
-  private live(conn: Conn, m: IrcMessage) {
-    const src = m.source;
-    const nick = src?.nick ?? '';
-    const time = msgTime(m.tags);
-    const self = conn.isMe(nick);
-    const p = m.params;
-    const base = { time, nick, self, msgid: m.tags.msgid, account: m.tags.account };
-
-    switch (m.command) {
-      case 'PRIVMSG':
-      case 'NOTICE':
-        return this.onMessage(conn, m, base);
-
-      case 'TAGMSG': {
-        const typing = m.tags['+typing'];
-        if (!typing || self || !this.settings.showTyping) return;
-        const target = p[0];
-        const buf = conn.isChannel(target) ? conn.buffer(target) : conn.buffer(nick);
-        if (!buf) return;
-        if (typing === 'done') buf.typing.delete(nick);
-        else buf.typing.set(nick, Date.now() + (typing === 'active' ? 6000 : 30000));
-        return;
-      }
-
-      case 'JOIN': {
-        const chan = p[0];
-        const buf = conn.ensure(chan, 'channel');
-        if (self) {
-          buf.joined = true;
-          buf.wantJoined = true;
-          buf.members.clear();
-          if (this.pendingActive.get(conn.id) === conn.fold(chan)) {
-            this.pendingActive.delete(conn.id);
-            this.open(buf);
-          } else this.maybeRestoreActive(conn, buf.key);
-          this.fetchHistory(buf, buf.messages.length ? 'after' : 'latest');
-          return;
-        }
-        buf.setMember({
-          nick,
-          prefix: '',
-          away: false,
-          user: src?.user,
-          host: src?.host,
-          account: conn.has('extended-join') && p[1] !== '*' ? p[1] : undefined,
-          realname: p[2],
-        });
-        buf.push(mkLine({ ...base, type: 'join', data: { host: `${src?.user ?? ''}@${src?.host ?? ''}` } }));
-        return;
-      }
-
-      case 'PART': {
-        const buf = conn.buffer(p[0]);
-        if (!buf) return;
-        if (self) {
-          buf.joined = false;
-          buf.members.clear();
-        } else buf.removeMember(nick);
-        buf.push(mkLine({ ...base, type: 'part', text: p[1] ?? '' }));
-        return;
-      }
-
-      case 'KICK': {
-        const buf = conn.buffer(p[0]);
-        if (!buf) return;
-        const victim = p[1];
-        if (conn.isMe(victim)) {
-          buf.joined = false;
-          buf.members.clear();
-        } else buf.removeMember(victim);
-        buf.push(mkLine({ ...base, type: 'kick', target: victim, text: p[2] ?? '', highlight: conn.isMe(victim) }));
-        return;
-      }
-
-      case 'QUIT': {
-        for (const buf of conn.buffers.values()) {
-          if (buf.removeMember(nick) || (buf.kind === 'query' && conn.fold(buf.name) === conn.fold(nick))) {
-            buf.push(mkLine({ ...base, type: 'quit', text: p[0] ?? '' }));
-            buf.typing.delete(nick);
-          }
-        }
-        return;
-      }
-
-      case 'NICK': {
-        const next = p[0];
-        if (self) conn.nick = next;
-        for (const buf of conn.buffers.values()) {
-          const mem = buf.member(nick);
-          const isQuery = buf.kind === 'query' && conn.fold(buf.name) === conn.fold(nick);
-          if (mem) {
-            buf.removeMember(nick);
-            buf.setMember({ ...mem, nick: next });
-          }
-          if (mem || isQuery || (self && buf.kind === 'query')) buf.push(mkLine({ ...base, type: 'nick', target: next }));
-          if (isQuery && !conn.buffer(next)) {
-            conn.buffers.delete(buf.key);
-            buf.name = next;
-            conn.buffers.set(conn.fold(next), buf);
-          }
-        }
-        if (self) conn.server.push(mkLine({ ...base, type: 'nick', target: next }));
-        return;
-      }
-
-      case 'MODE':
-        return this.onMode(conn, m, base);
-
-      case 'TOPIC': {
-        const buf = conn.buffer(p[0]);
-        if (!buf) return;
-        buf.topic = p[1] ?? '';
-        buf.topicBy = nick;
-        buf.topicTime = time;
-        buf.push(mkLine({ ...base, type: 'topic', text: p[1] ?? '' }));
-        return;
-      }
-
-      case 'INVITE': {
-        const text = `invited ${conn.isMe(p[0]) ? 'you' : p[0]} to ${p[1]}`;
-        this.here(conn).push(mkLine({ ...base, type: 'invite', target: p[1], text, highlight: conn.isMe(p[0]) }));
-        return;
-      }
-
-      case 'AWAY': {
-        const away = !!p[0];
-        for (const buf of conn.buffers.values()) {
-          const mem = buf.member(nick);
-          if (mem && mem.away !== away) buf.setMember({ ...mem, away });
-        }
-        if (self) conn.away = away;
-        return;
-      }
-
-      case 'ACCOUNT':
-        return this.updateMember(conn, nick, { account: p[0] === '*' ? undefined : p[0] });
-      case 'CHGHOST':
-        return this.updateMember(conn, nick, { user: p[0], host: p[1] });
-      case 'SETNAME':
-        return this.updateMember(conn, nick, { realname: p[0] });
-
-      case 'MARKREAD': {
-        const buf = conn.buffer(p[0]);
-        const ts = p[1]?.startsWith('timestamp=') ? Date.parse(p[1].slice(10)) : NaN;
-        if (buf && !Number.isNaN(ts) && ts > buf.readMarker) buf.readMarker = ts;
-        return;
-      }
-
-      case 'BOUNCER': {
-        if (p[0] === 'NETWORK' && conn.isControl) {
-          if (p[2] === '*') conn.networks.delete(p[1]);
-          else conn.networks.set(p[1], { ...(conn.networks.get(p[1]) ?? {}), ...parseAttrs(p[2]) });
-        }
-        return;
-      }
-
-      case 'REDACT': {
-        const buf = conn.isChannel(p[0]) ? conn.buffer(p[0]) : conn.buffer(self ? p[0] : nick);
-        if (!buf) return;
-        buf.messages = buf.messages.map((l) => (l.msgid === p[1] ? { ...l, redacted: true } : l));
-        return;
-      }
-
-      case 'ERROR':
-        conn.server.push(mkLine({ ...base, nick: '', type: 'error', text: p[0] ?? 'Connection error' }));
-        return;
-
-      case 'FAIL':
-      case 'WARN':
-      case 'NOTE': {
-        const text = p[p.length - 1] ?? '';
-        const target = m.command === 'NOTE' ? conn.server : this.here(conn);
-        if (p[0] === 'CHATHISTORY' || p[0] === 'MARKREAD') return;
-        target.push(mkLine({ ...base, nick: '', type: m.command === 'NOTE' ? 'info' : 'error', text: `${p[0]}: ${text}` }));
-        return;
-      }
-
-      case 'PING':
-      case 'PONG':
-      case 'CAP':
-      case 'AUTHENTICATE':
-      case 'BATCH':
-        return;
-    }
-
-    if (/^\d{3}$/.test(m.command)) this.onNumeric(conn, m, time);
-  }
-
-  private onMessage(conn: Conn, m: IrcMessage, base: Pick<Line, 'time' | 'nick' | 'self' | 'msgid' | 'account'>) {
-    const p = m.params;
-    const nick = base.nick;
-    const src = m.source;
-    const statusmsg = conn.isupport.STATUSMSG ?? '';
-    let target = p[0] ?? '';
-    while (target && statusmsg.includes(target[0]) && conn.isChannel(target.slice(1))) target = target.slice(1);
-    const raw = p[1] ?? '';
-    const ctcp = parseCtcp(raw);
-    const isNotice = m.command === 'NOTICE';
-
-    // Server-originated notices: no source, a server name as source, or pre-registration.
-    const fromServer = !src || target === '*' || (!src.user && (src.nick.includes('.') || !conn.nick));
-    if (fromServer && !conn.isChannel(target)) {
-      conn.server.push(mkLine({ ...base, type: 'notice', text: raw }));
-      return;
-    }
-
-    if (ctcp && ctcp.command !== 'ACTION') {
-      if (!isNotice && !base.self) {
-        const reply = this.ctcpReply(ctcp.command, ctcp.args);
-        if (reply !== null) conn.send(`NOTICE ${nick} :\x01${ctcp.command}${reply ? ' ' + reply : ''}\x01`);
-        this.here(conn).push(
-          mkLine({ ...base, type: 'info', text: `CTCP ${ctcp.command} request from ${nick}` }),
-        );
-      } else if (isNotice) {
-        this.here(conn).push(mkLine({ ...base, type: 'info', text: `CTCP ${ctcp.command} reply from ${nick}: ${ctcp.args}` }));
-      }
-      return;
-    }
-
-    const type: LineType = ctcp ? 'action' : isNotice ? 'notice' : 'privmsg';
-    const text = ctcp ? ctcp.args : raw;
-    const isChan = conn.isChannel(target);
-    let buf: Buffer;
-    if (isChan) buf = conn.ensure(target, 'channel');
-    else {
-      const peer = base.self ? target : nick;
-      const existing = conn.buffer(peer);
-      if (isNotice && !existing) {
-        // Private notices without a conversation land where the user is looking.
-        const here = this.here(conn);
-        here.push(mkLine({ ...base, type, text, target: base.self ? target : undefined, highlight: !base.self }));
-        if (!base.self) this.maybeNotify(conn, here, nick, text, true);
-        return;
-      }
-      buf = existing ?? conn.ensure(peer, 'query');
-    }
-
-    const highlight = !base.self && mentions(text, this.highlightWords(conn));
-    buf.typing.delete(nick);
-    if (!isChan) {
-      const mem = buf.member(nick);
-      if (!mem && !base.self) buf.setMember({ nick, prefix: '', away: false, user: src?.user, host: src?.host });
-    }
-    buf.push(mkLine({ ...base, type, text, highlight }));
-    if (!base.self) this.maybeNotify(conn, buf, nick, text, highlight || !isChan);
-  }
-
-  private ctcpReply(cmd: string, args: string): string | null {
-    switch (cmd) {
-      case 'VERSION':
-        return 'Hearth — a modern IRC client';
-      case 'PING':
-        return args;
-      case 'TIME':
-        return new Date().toString();
-      case 'CLIENTINFO':
-        return 'ACTION CLIENTINFO PING TIME VERSION';
-      default:
-        return null;
-    }
-  }
-
-  private maybeNotify(conn: Conn, buf: Buffer, nick: string, text: string, important: boolean) {
-    if (!important) return;
+  maybeNotify(conn: Conn, buf: Buffer, nick: string, text: string, important: boolean) {
+    const level = buf.level;
+    if (level === 'none' || (!important && level !== 'all')) return;
     const isQuery = buf.kind === 'query';
-    if (isQuery ? !this.settings.notifyPrivate : !this.settings.notifyHighlights) return;
+    if (level === 'default' && (isQuery ? !this.settings.notifyPrivate : !this.settings.notifyHighlights)) return;
     if (this.focused && this.active === buf) return;
     const where = isQuery ? nick : `${nick} in ${buf.name}`;
     notify(`${where} · ${conn.name}`, stripFormatting(text));
-  }
-
-  private updateMember(conn: Conn, nick: string, patch: Partial<Member>) {
-    for (const buf of conn.buffers.values()) {
-      const mem = buf.member(nick);
-      if (mem) buf.setMember({ ...mem, ...patch });
-    }
-  }
-
-  private onMode(conn: Conn, m: IrcMessage, base: Pick<Line, 'time' | 'nick' | 'self' | 'msgid' | 'account'>) {
-    const [target, modestr = '', ...args] = m.params;
-    if (!conn.isChannel(target)) {
-      if (conn.isMe(target)) conn.server.push(mkLine({ ...base, type: 'mode', text: [modestr, ...args].join(' ') }));
-      return;
-    }
-    const buf = conn.buffer(target);
-    if (!buf) return;
-    const [a = '', b = '', c = ''] = (conn.isupport.CHANMODES ?? 'beI,k,l,imnpst').split(',');
-    const { modes: pmodes, symbols } = conn.prefix;
-    let adding = true;
-    let ai = 0;
-    for (const ch of modestr) {
-      if (ch === '+' || ch === '-') {
-        adding = ch === '+';
-        continue;
-      }
-      const pi = pmodes.indexOf(ch);
-      if (pi >= 0) {
-        const who = args[ai++];
-        const mem = who ? buf.member(who) : undefined;
-        if (mem) {
-          const sym = symbols[pi];
-          let prefix = mem.prefix.replace(sym, '');
-          if (adding) prefix = [...(prefix + sym)].sort((x, y) => symbols.indexOf(x) - symbols.indexOf(y)).join('');
-          buf.setMember({ ...mem, prefix });
-        }
-      } else if (a.includes(ch) || b.includes(ch) || (c.includes(ch) && adding)) ai++;
-    }
-    buf.push(mkLine({ ...base, type: 'mode', text: [modestr, ...args].join(' ') }));
-  }
-
-  private onNumeric(conn: Conn, m: IrcMessage, time: number) {
-    const p = m.params;
-    const rest = p.slice(1);
-    const trailing = p[p.length - 1] ?? '';
-    const info = (text: string, buf: Buffer = conn.server, type: LineType = 'info') =>
-      buf.push(mkLine({ time, type, text }));
-
-    switch (m.command) {
-      case '001':
-        return info(trailing);
-      case '002':
-      case '003':
-      case '004':
-      case '005':
-      case '250':
-      case '251':
-      case '252':
-      case '253':
-      case '254':
-      case '255':
-      case '265':
-      case '266':
-      case '396':
-        return;
-      case '375':
-        conn.motd = [];
-        return;
-      case '372':
-        conn.motd.push(trailing.replace(/^- ?/, ''));
-        return;
-      case '376': {
-        if (conn.motd.length) conn.server.push(mkLine({ time, type: 'info', text: '', data: { motd: conn.motd.join('\n') } }));
-        conn.motd = [];
-        return;
-      }
-      case '422':
-        return;
-      case '221':
-        return info(`Your user modes: ${p[1]}`);
-      case '324': {
-        const buf = conn.buffer(p[1]);
-        if (buf) buf.modes = p.slice(2).join(' ');
-        return;
-      }
-      case '329':
-        return;
-      case '331': {
-        const buf = conn.buffer(p[1]);
-        if (buf) buf.topic = '';
-        return;
-      }
-      case '332': {
-        const buf = conn.buffer(p[1]);
-        if (buf) buf.topic = trailing;
-        return;
-      }
-      case '333': {
-        const buf = conn.buffer(p[1]);
-        if (buf) {
-          buf.topicBy = (p[2] ?? '').split('!')[0];
-          buf.topicTime = parseInt(p[3] ?? '0') * 1000;
-        }
-        return;
-      }
-      case '353': {
-        const buf = conn.buffer(p[2]);
-        if (!buf) return;
-        buf.namesAcc ??= new Map();
-        const syms = conn.prefix.symbols;
-        for (const entry of trailing.split(' ')) {
-          if (!entry) continue;
-          let i = 0;
-          while (i < entry.length && syms.includes(entry[i])) i++;
-          const prefix = entry.slice(0, i);
-          const [nickUser, host] = entry.slice(i).split('@');
-          const [nick, user] = nickUser.split('!');
-          const prev = buf.member(nick);
-          buf.namesAcc.set(conn.fold(nick), { nick, prefix, away: prev?.away ?? false, user, host, account: prev?.account });
-        }
-        return;
-      }
-      case '366': {
-        const buf = conn.buffer(p[1]);
-        if (!buf?.namesAcc) return;
-        buf.members.clear();
-        for (const [k, v] of buf.namesAcc) buf.members.set(k, v);
-        buf.namesAcc = null;
-        return;
-      }
-      case '301': {
-        const nick = p[1];
-        const w = conn.whois[conn.fold(nick)];
-        if (w) w.away = trailing;
-        else {
-          const buf = conn.buffer(nick);
-          if (buf) info(`${nick} is away: ${trailing}`, buf);
-        }
-        return;
-      }
-      case '305':
-        conn.away = false;
-        return info('You are no longer marked as away', this.here(conn));
-      case '306':
-        conn.away = true;
-        return info('You have been marked as away', this.here(conn));
-      case '311':
-      case '314': {
-        const nick = p[1];
-        conn.whois[conn.fold(nick)] = { nick, user: p[2], host: p[3], realname: trailing };
-        return;
-      }
-      case '312':
-      case '313':
-      case '317':
-      case '319':
-      case '320':
-      case '330':
-      case '338':
-      case '378':
-      case '379':
-      case '671':
-      case '276': {
-        const w = conn.whois[conn.fold(p[1])];
-        if (!w) return info(rest.join(' '), this.here(conn));
-        if (m.command === '312') w.server = `${p[2]} — ${trailing}`;
-        else if (m.command === '313') w.oper = trailing;
-        else if (m.command === '317') {
-          w.idle = p[2];
-          if (p[3] && /^\d+$/.test(p[3])) w.signon = p[3];
-        } else if (m.command === '319') w.channels = ((w.channels ?? '') + ' ' + trailing).trim();
-        else if (m.command === '330') w.account = p[2];
-        else if (m.command === '671' || m.command === '276') w.secure = trailing;
-        else if (m.command === '338') w.actual = p.slice(2, -1).join(' ');
-        else w[`extra${m.command}`] = trailing;
-        return;
-      }
-      case '318':
-      case '369': {
-        const key = conn.fold(p[1]);
-        const w = conn.whois[key];
-        delete conn.whois[key];
-        if (w) this.here(conn).push(mkLine({ time, type: 'whois', nick: w.nick, text: '', data: w }));
-        return;
-      }
-      case '341':
-        return info(`Invited ${p[1]} to ${p[2]}`, conn.buffer(p[2]) ?? this.here(conn));
-      case '900':
-        return info(trailing);
-      case '903':
-        return;
-      case '904':
-      case '905':
-      case '906':
-      case '902':
-        return info(`SASL: ${trailing}`, conn.server, 'error');
-      case '433':
-        return info(`Nickname ${p[1]} is already in use`, this.here(conn), 'error');
-    }
-
-    const code = parseInt(m.command);
-    if (code >= 400 && code < 600) return info(rest.filter((x, i) => i < rest.length - 1 || x).join(' '), this.here(conn), 'error');
-    info(rest.join(' '));
   }
 
   private pruneTyping() {

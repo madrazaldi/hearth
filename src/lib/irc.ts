@@ -78,3 +78,15 @@ export function parseAttrs(s: string): Record<string, string> {
 export function escapeAttr(v: string): string {
   return v.replace(/\\/g, '\\\\').replace(/;/g, '\\:').replace(/ /g, '\\s');
 }
+
+/** Escape an IRCv3 message-tag value. */
+export function escapeTag(v: string): string {
+  return v.replace(/\\/g, '\\\\').replace(/;/g, '\\:').replace(/ /g, '\\s').replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+}
+
+/** Split "nick!user@host" into its parts. */
+export function parseMask(s: string): { nick: string; user?: string; host?: string } {
+  const [nickUser, host] = s.split('@');
+  const [nick, user] = nickUser.split('!');
+  return { nick, user, host };
+}
