@@ -118,7 +118,7 @@ func explainError(_ raw: String, host: String, port: Int, tls: Bool, sasl: Bool)
   if has(/registration timed out/) {
     return Friendly(title: "The server never finished logging you in", hint: "It may be busy. Try again in a moment.")
   }
-  if has(/\b[kgzd]-?line|banned|\bban\b/) {
+  if has(/\b[kgzd]-?line|\bbanned\b|\bban\b/) {
     return Friendly(
       title: "This network is refusing connections from your address", hint: "This is set by the network, not Hearth.")
   }
