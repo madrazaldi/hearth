@@ -68,10 +68,10 @@ pnpm tauri dev      # run the app
 pnpm check          # svelte-check + tsc
 pnpm test           # Vitest: state and message handling
 cd src-tauri && cargo test && cargo clippy   # unit tests + actor tests against a scripted server
-pnpm tauri build    # release bundle
+pnpm tauri build    # release bundle (needs TAURI_SIGNING_PRIVATE_KEY, see Releasing)
 ```
 
-When `pnpm dev` runs in a plain browser instead of inside Tauri, Hearth replays a scripted IRC session from `src/lib/mock.ts`. This lets you work on the UI without a server. Query parameters control the preview: `?theme=light`, `?layout=compact`, `?view=settings`, `?view=switcher`, `?view=search`, `?view=channels`, `?tab=privacy` (open a Settings tab; add `&server=<id>` to edit a server) and `?empty` (first-run screen).
+When `pnpm dev` runs in a plain browser instead of inside Tauri, Hearth replays a scripted IRC session from `src/lib/mock.ts`. This lets you work on the UI without a server. Query parameters control the preview: `?theme=light`, `?layout=compact`, `?view=settings`, `?view=switcher`, `?view=search`, `?view=channels`, `?tab=privacy` (open a Settings tab; add `&server=<id>` to edit a server), `?update=none` (the mock updater reports no update; by default it offers 0.2.0) and `?empty` (first-run screen).
 
 CI (`.github/workflows/ci.yml`) runs the checks and tests on Linux, macOS and Windows.
 
@@ -81,6 +81,29 @@ To smoke-test the backend headlessly:
 cd src-tauri
 HEARTH_HOST=irc.libera.chat HEARTH_NICK=someone cargo run --example probe
 ```
+
+## Releasing
+
+1. Bump `version` in `src-tauri/tauri.conf.json` (and `src-tauri/Cargo.toml`), commit, then tag and push: `git tag v0.2.0 && git push origin v0.2.0`. The tag must match the version.
+2. `.github/workflows/release.yml` builds macOS (universal), Windows and Linux bundles into a **draft** GitHub Release, together with `latest.json` for the updater. It can also be started by hand from the Actions tab.
+3. Check the draft and publish it. The in-app updater polls `https://github.com/madrazaldi/hearth/releases/latest/download/latest.json`, which only sees published releases.
+
+Updates are verified against the public key in `tauri.conf.json` (`plugins.updater.pubkey`). The matching private key lives outside the repo at `~/.tauri/hearth-updater.key` (no password). Back it up: if it is lost, installed copies can no longer be updated. For a local `pnpm tauri build`, export it first: `TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/hearth-updater.key)`.
+
+Repository secrets (Settings > Secrets and variables > Actions). Each group is optional. Without it the workflow still builds, just unsigned:
+
+| Secret | Purpose |
+| --- | --- |
+| `TAURI_SIGNING_PRIVATE_KEY` | Contents of `~/.tauri/hearth-updater.key`. Required for updater artifacts and `latest.json`. |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Key password. Leave unset, since the key has none. |
+| `APPLE_CERTIFICATE` | Base64 of the exported Developer ID Application `.p12`. |
+| `APPLE_CERTIFICATE_PASSWORD` | Password of that `.p12`. |
+| `APPLE_SIGNING_IDENTITY` | For example `Developer ID Application: Name (TEAMID)`. |
+| `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | Notarization: Apple ID, an app-specific password and the team ID. |
+| `WINDOWS_CERTIFICATE` | Base64 of the code-signing `.pfx`. |
+| `WINDOWS_CERTIFICATE_PASSWORD` | Password of that `.pfx`. |
+
+Without Apple secrets the macOS app is ad-hoc signed, so Gatekeeper asks users to allow it in System Settings. Without Windows secrets SmartScreen warns on first run.
 
 ## Architecture
 

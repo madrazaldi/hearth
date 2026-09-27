@@ -72,6 +72,8 @@ export interface Settings {
   /** Fetch link and image previews (through the backend, never the webview). */
   linkPreviews: boolean;
   closeToTray: boolean;
+  /** Check the release feed on launch and every few hours. */
+  checkUpdates: boolean;
   /** Mark away after this many minutes with the window in the background; 0 disables. */
   autoAwayMinutes: number;
   /** nick or nick!user@host masks, `*` and `?` wildcards. */
@@ -185,6 +187,7 @@ export const defaultSettings = (): Settings => ({
   storeLogs: true,
   linkPreviews: false,
   closeToTray: false,
+  checkUpdates: true,
   autoAwayMinutes: 0,
   ignores: [],
   bufferNotify: {},

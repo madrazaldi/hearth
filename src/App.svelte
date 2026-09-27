@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { app } from './lib/state.svelte';
+  import { updater } from './lib/updater.svelte';
   import Sidebar from './lib/components/Sidebar.svelte';
   import BufferView from './lib/components/BufferView.svelte';
   import QuickSwitcher from './lib/components/QuickSwitcher.svelte';
@@ -42,7 +43,10 @@
     const onBlur = () => app.setFocused(false);
     window.addEventListener('focus', onFocus);
     window.addEventListener('blur', onBlur);
-    app.init().catch((e) => (bootError = String(e)));
+    app
+      .init()
+      .then(() => updater.start())
+      .catch((e) => (bootError = String(e)));
     return () => {
       mq.removeEventListener('change', onScheme);
       window.removeEventListener('focus', onFocus);

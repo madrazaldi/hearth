@@ -10,6 +10,8 @@
     "core:window:allow-request-user-attention",
     "core:window:allow-is-focused",
     "notification:default",
-    "opener:allow-open-url"
+    "opener:allow-open-url",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

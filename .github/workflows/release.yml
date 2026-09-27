@@ -1,0 +1,175 @@
+name: Release
+
+# Builds installers for every platform into a draft GitHub Release, together
+# with the updater's latest.json. Publish the draft to ship it: the in-app
+# updater reads releases/latest, which never points at a draft.
+#
+# Signing is opt-in per secret group, so forks and fresh clones still get
+# (unsigned) builds:
+#   updater:  TAURI_SIGNING_PRIVATE_KEY [+ TAURI_SIGNING_PRIVATE_KEY_PASSWORD]
+#   macOS:    APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY
+#             notarization additionally: APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+#   Windows:  WINDOWS_CERTIFICATE (base64 .pfx), WINDOWS_CERTIFICATE_PASSWORD
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.release.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create draft release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(jq -r .version src-tauri/tauri.conf.json)
+          tag="v$version"
+          if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "$tag" ]; then
+            echo "::error::Tag $REF_NAME does not match version $version in tauri.conf.json"
+            exit 1
+          fi
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" -f name="Hearth $version" \
+            -F draft=true -F generate_release_notes=true --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: --target universal-apple-darwin
+          # Oldest supported runner, so the AppImage and .deb link against an older glibc.
+          - os: ubuntu-22.04
+            args: ''
+          - os: windows-latest
+            args: ''
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+
+      # Secrets that are unset expand to empty strings, and the Tauri bundler
+      # treats an empty-but-present variable as "sign with this", so only export
+      # the groups that are complete.
+      - name: Configure signing
+        id: signing
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          put() {
+            local d="EOF_$RANDOM$RANDOM"
+            { echo "$1<<$d"; printf '%s\n' "$2"; echo "$d"; } >> "$GITHUB_ENV"
+          }
+
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            put TAURI_SIGNING_PRIVATE_KEY "$TAURI_SIGNING_PRIVATE_KEY"
+            put TAURI_SIGNING_PRIVATE_KEY_PASSWORD "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            echo "updater=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY not set: building without updater artifacts"
+            # Without the key the bundler refuses to build updater artifacts at all.
+            node -e 'const f="src-tauri/tauri.conf.json",fs=require("fs"),c=JSON.parse(fs.readFileSync(f));c.bundle.createUpdaterArtifacts=false;fs.writeFileSync(f,JSON.stringify(c,null,2))'
+            echo "updater=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$RUNNER_OS" = macOS ]; then
+            if [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+              put APPLE_CERTIFICATE "$APPLE_CERTIFICATE"
+              put APPLE_CERTIFICATE_PASSWORD "$APPLE_CERTIFICATE_PASSWORD"
+              put APPLE_SIGNING_IDENTITY "$APPLE_SIGNING_IDENTITY"
+              if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+                put APPLE_ID "$APPLE_ID"
+                put APPLE_PASSWORD "$APPLE_PASSWORD"
+                put APPLE_TEAM_ID "$APPLE_TEAM_ID"
+              else
+                echo "::warning::Apple notarization secrets not set: the app will be signed but not notarized"
+              fi
+            else
+              # Ad-hoc signature: Apple Silicon refuses to run unsigned code at all.
+              echo "::warning::Apple signing secrets not set: building an ad-hoc signed app"
+              put APPLE_SIGNING_IDENTITY "-"
+            fi
+          fi
+
+          if [ "$RUNNER_OS" = Windows ]; then
+            if [ -n "$WINDOWS_CERTIFICATE" ]; then
+              echo "wincert=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "::warning::Windows signing secrets not set: building unsigned installers"
+            fi
+          fi
+
+      - name: Import Windows certificate
+        if: steps.signing.outputs.wincert == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'cert.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Remove-Item $pfx
+          # Merged over tauri.conf.json automatically on Windows builds.
+          @{ bundle = @{ windows = @{
+            certificateThumbprint = $cert.Thumbprint
+            digestAlgorithm = 'sha256'
+            timestampUrl = 'http://timestamp.digicert.com'
+          } } } | ConvertTo-Json -Depth 5 | Set-Content src-tauri/tauri.windows.conf.json
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          releaseId: ${{ needs.create-release.outputs.id }}
+          args: ${{ matrix.args }}
+          includeUpdaterJson: ${{ steps.signing.outputs.updater == 'true' }}
