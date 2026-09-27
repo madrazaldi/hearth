@@ -37,6 +37,11 @@ CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. MS
 **Frontend (`src/lib`)**
 - `state.svelte.ts`: the `App`, `Conn` and `Buffer` classes using `$state` runes, a single `app` instance.
 - `incoming.ts`: turns each server message into state changes (`handleMessage`, `historyLine`).
+- `history.ts`: CHATHISTORY paging with the local-log fallback, and `mergeLines` (history dedupe).
+- `search.ts`: search across the local FTS log and `soju.im/search`, deduped and newest first.
+- `saved.ts`: saving and restoring the buffer list, and rejoin commands.
+- `monitor.ts`: MONITOR subscriptions and the watch list.
+- `unread.ts`: unread and highlight counts, and read markers.
 - `commands.ts`: slash commands (`runInput`).
 - `api.ts`: typed `invoke` wrappers.
 - `types.ts`: types shared with Rust (serde `camelCase`).

@@ -99,8 +99,13 @@ HEARTH_HOST=irc.libera.chat HEARTH_NICK=someone cargo run --example probe
 
 ### Frontend (`src/lib`)
 
-- `state.svelte.ts` holds all client state (connections, buffers, members, unread counts, history, search) using Svelte 5 runes.
+- `state.svelte.ts` holds all client state (connections, buffers, members) using Svelte 5 runes.
 - `incoming.ts` turns server messages into state changes.
+- `history.ts` loads chathistory, falls back to the local log and dedupes merged lines.
+- `search.ts` searches the local log and the bouncer.
+- `saved.ts` saves and restores open buffers.
+- `monitor.ts` tracks watched nicks with MONITOR.
+- `unread.ts` counts unread messages and highlights and syncs read markers.
 - `ignore.ts` matches ignore masks.
 - `*.test.ts` are Vitest suites. `test-utils.ts` feeds raw IRC lines into a mocked backend.
 - `commands.ts` implements slash commands.

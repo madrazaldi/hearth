@@ -1,17 +1,21 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { api, onIrc } from './api';
-import { casefold, escapeTag, isoTime, parsePrefix, splitMessage, escapeAttr, type PrefixMap } from './irc';
+import { casefold, escapeTag, parsePrefix, splitMessage, type PrefixMap } from './irc';
 import { isIgnored, normalizeMask } from './ignore';
 import { stripFormatting } from './format';
 import { notify } from './notify';
-import { handleMessage, historyLine } from './incoming';
+import { handleMessage } from './incoming';
+import { fetchHistory, fetchTargets, loadAround, mergeLines } from './history';
+import { search } from './search';
+import { isWatched, syncMonitor, unwatch, watch } from './monitor';
+import { rejoinCommands, restoreBuffers, saveBuffersSoon } from './saved';
+import { countHighlights, countUnread, markRead } from './unread';
 import {
   defaultSettings,
   type ConnStatus,
   type IrcEvent,
   type IrcMessage,
   type Line,
-  type LineType,
   type NotifyLevel,
   type Preview,
   type SearchHit,
@@ -22,7 +26,6 @@ import {
 
 let seq = 0;
 const MAX_LINES = 4000;
-const COUNTED: LineType[] = ['privmsg', 'action', 'notice'];
 
 export type BufferKind = 'server' | 'channel' | 'query';
 
@@ -48,10 +51,6 @@ export function mkLine(p: Partial<Line> & Pick<Line, 'type'>): Line {
 
 export function nextSeq(): number {
   return ++seq;
-}
-
-function lineKey(l: Line): string {
-  return l.msgid ?? `${l.time}|${l.type}|${l.nick}|${l.text}`;
 }
 
 export class Buffer {
@@ -106,26 +105,11 @@ export class Buffer {
 
   level = $derived.by((): NotifyLevel | 'default' => this.conn.app.settings.bufferNotify[this.prefKey] ?? 'default');
 
-  unread = $derived.by(() => {
-    let n = 0;
-    for (let i = this.messages.length - 1; i >= 0; i--) {
-      const l = this.messages[i];
-      if (l.time <= this.readMarker) break;
-      if (!l.self && COUNTED.includes(l.type)) n++;
-    }
-    return n;
-  });
+  unread = $derived.by(() => countUnread(this.messages, this.readMarker));
 
   highlights = $derived.by(() => {
     if (this.level === 'none') return 0;
-    const everything = this.kind === 'query' || this.level === 'all';
-    let n = 0;
-    for (let i = this.messages.length - 1; i >= 0; i--) {
-      const l = this.messages[i];
-      if (l.time <= this.readMarker) break;
-      if (!l.self && (l.highlight || (everything && COUNTED.includes(l.type)))) n++;
-    }
-    return n;
+    return countHighlights(this.messages, this.readMarker, this.kind === 'query' || this.level === 'all');
   });
 
   sortedMembers = $derived.by(() => {
@@ -155,27 +139,8 @@ export class Buffer {
 
   /** Add lines from history, skipping ones already present. */
   merge(lines: Line[]) {
-    if (!lines.length) return;
-    const seen = new Set(this.messages.map(lineKey));
-    // Lines without a msgid can differ by a few ms between the live copy and
-    // the logged one (our own messages without echo-message), so also match
-    // same-content lines that are close in time.
-    const loose = new Map<string, number[]>();
-    for (const l of this.messages) {
-      if (l.msgid) continue;
-      const k = `${l.type}|${l.nick}|${l.text}`;
-      const times = loose.get(k);
-      if (times) times.push(l.time);
-      else loose.set(k, [l.time]);
-    }
-    const fresh = lines.filter((l) => {
-      if (seen.has(lineKey(l))) return false;
-      if (l.msgid) return true;
-      const times = loose.get(`${l.type}|${l.nick}|${l.text}`);
-      return !times?.some((t) => Math.abs(t - l.time) < 3000);
-    });
-    if (!fresh.length) return;
-    this.messages = [...this.messages, ...fresh].sort((a, b) => a.time - b.time || a.id - b.id);
+    const next = mergeLines(this.messages, lines);
+    if (next) this.messages = next;
   }
 
   /** Record a +draft/react on the message with `msgid`. */
@@ -437,15 +402,7 @@ export class App {
   }
 
   markRead(buf: Buffer) {
-    const last = buf.messages[buf.messages.length - 1];
-    if (!last || last.time <= buf.readMarker) return;
-    buf.readMarker = last.time;
-    if (buf.kind === 'server' || !buf.conn.has('draft/read-marker')) return;
-    if (buf.markTimer) clearTimeout(buf.markTimer);
-    buf.markTimer = setTimeout(() => {
-      buf.markTimer = null;
-      buf.conn.send(`MARKREAD ${buf.name} timestamp=${isoTime(buf.readMarker)}`);
-    }, 400);
+    markRead(buf);
   }
 
   closeBuffer(buf: Buffer) {
@@ -466,25 +423,8 @@ export class App {
   async jumpTo(buf: Buffer, time: number, msgid?: string) {
     this.open(buf);
     const present = buf.messages.some((l) => (msgid ? l.msgid === msgid : l.time === time));
-    if (!present) {
-      try {
-        let msgs: IrcMessage[] = [];
-        if (buf.conn.has('draft/chathistory') && buf.conn.status === 'connected') {
-          const at = msgid ? `msgid=${msgid}` : `timestamp=${isoTime(time)}`;
-          msgs = await api.history(buf.conn.id, 'messages', buf.name, `CHATHISTORY AROUND ${buf.name} ${at} 100`);
-        } else if (this.settings.storeLogs) {
-          const [before, after] = await Promise.all([
-            api.localHistory(buf.conn.id, buf.key, { before: time + 1, limit: 60 }),
-            api.localHistory(buf.conn.id, buf.key, { after: time, limit: 60 }),
-          ]);
-          msgs = [...before, ...after];
-        }
-        this.applyHistory(buf, msgs);
-      } catch (e) {
-        console.warn('jump', e);
-      }
-    }
-    buf.focus = { time, msgid, seq: ++seq };
+    if (!present) await loadAround(this, buf, time, msgid);
+    buf.focus = { time, msgid, seq: nextSeq() };
   }
 
   // ─── Settings & servers ─────────────────────────────────────
@@ -550,43 +490,15 @@ export class App {
   }
 
   isWatched(conn: Conn, nick: string): boolean {
-    return conn.watched.some((n) => conn.fold(n) === conn.fold(nick));
+    return isWatched(conn, nick);
   }
 
   watch(conn: Conn, nick: string) {
-    if (this.isWatched(conn, nick)) return;
-    this.updateSettings({ watch: { ...this.settings.watch, [conn.prefKey]: [...conn.watched, nick] } });
-    if (conn.canMonitor) conn.send(`MONITOR + ${nick}`);
+    watch(this, conn, nick);
   }
 
   unwatch(conn: Conn, nick: string) {
-    const rest = conn.watched.filter((n) => conn.fold(n) !== conn.fold(nick));
-    this.updateSettings({ watch: { ...this.settings.watch, [conn.prefKey]: rest } });
-    if (conn.canMonitor && !conn.buffer(nick)) {
-      conn.send(`MONITOR - ${nick}`);
-      conn.online.delete(conn.fold(nick));
-    }
-  }
-
-  /** Subscribe to presence for watched nicks and open conversations. */
-  private syncMonitor(conn: Conn) {
-    if (!conn.canMonitor) return;
-    const limit = parseInt(conn.isupport.MONITOR) || Infinity;
-    const nicks = new Map<string, string>();
-    for (const n of conn.watched) nicks.set(conn.fold(n), n);
-    for (const b of conn.buffers.values()) if (b.kind === 'query') nicks.set(conn.fold(b.name), b.name);
-    conn.online.clear();
-    const list = [...nicks.values()].slice(0, limit);
-    let chunk: string[] = [];
-    const flush = () => {
-      if (chunk.length) conn.send(`MONITOR + ${chunk.join(',')}`);
-      chunk = [];
-    };
-    for (const n of list) {
-      if (chunk.join(',').length + n.length > 400) flush();
-      chunk.push(n);
-    }
-    flush();
+    unwatch(this, conn, nick);
   }
 
   // ─── Presence ───────────────────────────────────────────────
@@ -618,36 +530,7 @@ export class App {
   // ─── Saved buffers ──────────────────────────────────────────
 
   saveBuffersSoon(conn: Conn) {
-    if (!conn.buffersLoaded || conn.isControl) return;
-    clearTimeout(this.saveBufferTimers.get(conn.id));
-    this.saveBufferTimers.set(
-      conn.id,
-      setTimeout(() => {
-        const list = [...conn.buffers.values()]
-          .filter((b) => b.kind === 'query' || (b.kind === 'channel' && b.wantJoined))
-          .map((b) => ({ name: b.name, kind: b.kind as 'channel' | 'query', key: b.joinKey }));
-        api.saveBuffers(conn.id, list).catch((e) => console.warn('save buffers', e));
-      }, 500),
-    );
-  }
-
-  private async restoreBuffers(conn: Conn) {
-    try {
-      const saved = await api.loadBuffers(conn.id);
-      for (const s of saved) {
-        // Bouncers keep their own channel list; only restore conversations there.
-        if (s.kind === 'channel' && conn.netid) continue;
-        const b = conn.ensure(s.name, s.kind);
-        if (s.kind === 'channel') {
-          b.wantJoined = true;
-          b.joinKey = s.key;
-        } else if (!b.messages.length) this.fetchHistory(b, 'latest');
-        this.maybeRestoreActive(conn, b.key);
-      }
-    } catch (e) {
-      console.warn('restore buffers', e);
-    }
-    conn.buffersLoaded = true;
+    saveBuffersSoon(conn, this.saveBufferTimers);
   }
 
   // ─── Outgoing ────────────────────────────────────────────────
@@ -750,111 +633,13 @@ export class App {
 
   // ─── History & search ──────────────────────────────────────
 
-  async fetchHistory(buf: Buffer, mode: 'latest' | 'before' | 'after') {
-    const conn = buf.conn;
-    if (buf.kind === 'server') return;
-    const remote = conn.has('draft/chathistory') && conn.status === 'connected';
-    // The local log only fills gaps before what we have: anything newer
-    // arrived live in this session.
-    if (!remote && (!this.settings.storeLogs || mode === 'after')) return;
-    if (buf.history === 'loading' || (mode === 'before' && buf.history === 'done')) return;
-    const max = parseInt(conn.isupport.CHATHISTORY || '100') || 100;
-    const first = buf.messages[0];
-    const last = buf.messages[buf.messages.length - 1];
-    let limit = Math.min(100, max);
-    buf.history = 'loading';
-    try {
-      let msgs: IrcMessage[];
-      if (remote) {
-        let line: string;
-        if (mode === 'after' && last) {
-          limit = Math.min(1000, max);
-          line = `CHATHISTORY AFTER ${buf.name} timestamp=${isoTime(last.time)} ${limit}`;
-        } else if (mode === 'before' && first) {
-          line = `CHATHISTORY BEFORE ${buf.name} timestamp=${isoTime(first.time)} ${limit}`;
-        } else {
-          line = `CHATHISTORY LATEST ${buf.name} * ${limit}`;
-        }
-        msgs = await api.history(conn.id, 'messages', buf.name, line);
-      } else {
-        limit = 100;
-        msgs = await api.localHistory(conn.id, buf.key, { before: mode === 'before' ? first?.time : undefined, limit });
-      }
-      this.applyHistory(buf, msgs);
-      buf.history = mode !== 'after' && msgs.length < limit ? 'done' : 'idle';
-    } catch (e) {
-      buf.history = 'idle';
-      console.warn('history', buf.name, e);
-    }
-  }
-
-  private applyHistory(buf: Buffer, msgs: IrcMessage[]) {
-    const lines = msgs.map((m) => historyLine(this, buf.conn, m)).filter((l): l is Line => !!l);
-    buf.merge(lines);
-    for (const m of msgs) {
-      const emoji = m.tags['+draft/react'];
-      const parent = m.tags['+draft/reply'];
-      if (m.command === 'TAGMSG' && emoji && parent && m.source && !this.isIgnored(buf.conn, m.source)) {
-        buf.react(parent, emoji, m.source.nick);
-      }
-    }
-  }
-
-  private async fetchTargets(conn: Conn) {
-    if (!conn.has('draft/chathistory') || conn.isControl) return;
-    const now = Date.now();
-    const line = `CHATHISTORY TARGETS timestamp=${isoTime(now + 60000)} timestamp=${isoTime(now - 14 * 86400000)} 50`;
-    try {
-      const msgs = await api.history(conn.id, 'targets', '*', line);
-      for (const m of msgs) {
-        const target = m.params[1];
-        if (!target || conn.isChannel(target) || conn.isMe(target)) continue;
-        const b = conn.ensure(target, 'query');
-        if (!b.messages.length) this.fetchHistory(b, 'latest');
-      }
-    } catch (e) {
-      console.warn('targets', e);
-    }
+  fetchHistory(buf: Buffer, mode: 'latest' | 'before' | 'after'): Promise<void> {
+    return fetchHistory(this, buf, mode);
   }
 
   /** Search the local log and, where supported, the bouncer. Newest first. */
-  async search(query: string, scope: { conn?: Conn; buf?: Buffer }): Promise<SearchHit[]> {
-    const q = query.trim();
-    if (!q) return [];
-    const target = scope.buf && scope.buf.kind !== 'server' ? scope.buf : undefined;
-    const tasks: Promise<SearchHit[]>[] = [];
-    if (this.settings.storeLogs) {
-      tasks.push(api.search(q, scope.conn?.id ?? null, target?.key ?? null, 200).catch(() => []));
-    }
-    const remote = scope.conn ? [scope.conn] : [...this.conns.values()];
-    for (const c of remote) {
-      if (!c.has('soju.im/search') || c.status !== 'connected' || c.isControl) continue;
-      let attrs = `text=${escapeAttr(q)};limit=100`;
-      if (target) attrs += `;in=${escapeAttr(target.name)}`;
-      tasks.push(
-        api
-          .history(c.id, 'search', '*', `SEARCH ${attrs}`)
-          .then((msgs) =>
-            msgs.map((msg) => {
-              const to = msg.params[0] ?? '';
-              const peer = c.isChannel(to) || !msg.source || c.isMe(msg.source.nick) ? to : msg.source.nick;
-              return { network: c.id, target: c.fold(peer), msg };
-            }),
-          )
-          .catch(() => []),
-      );
-    }
-    const all = (await Promise.all(tasks)).flat();
-    const seen = new Set<string>();
-    const out: SearchHit[] = [];
-    for (const h of all) {
-      const k = h.msg.tags.msgid ? `${h.network}|${h.msg.tags.msgid}` : `${h.network}|${h.target}|${h.msg.tags.time}|${h.msg.params[1]}`;
-      if (seen.has(k)) continue;
-      seen.add(k);
-      out.push(h);
-    }
-    const t = (h: SearchHit) => Date.parse(h.msg.tags.time ?? '') || 0;
-    return out.sort((a, b) => t(b) - t(a));
+  search(query: string, scope: { conn?: Conn; buf?: Buffer }): Promise<SearchHit[]> {
+    return search(this, query, scope);
   }
 
   // ─── Incoming ────────────────────────────────────────────────
@@ -924,25 +709,15 @@ export class App {
     this.maybeRestoreActive(conn, '');
     if (!this.active) this.open(conn.server);
     if (conn.isControl) return;
-    if (!conn.buffersLoaded) await this.restoreBuffers(conn);
+    if (!conn.buffersLoaded) await restoreBuffers(this, conn);
     // Rejoin channels on direct connections; bouncers restore them on their own.
     if (!conn.netid) {
       const auto = new Set((conn.config?.autojoin ?? []).map((c) => conn.fold(c.trim())));
       const rejoin = [...conn.buffers.values()].filter((b) => b.kind === 'channel' && b.wantJoined && !auto.has(b.key));
-      if (rejoin.length) setTimeout(() => this.rejoin(conn, rejoin), 1500);
+      if (rejoin.length) setTimeout(() => rejoinCommands(rejoin).forEach((l) => conn.send(l)), 1500);
     }
-    this.syncMonitor(conn);
-    setTimeout(() => this.fetchTargets(conn), 800);
-  }
-
-  private rejoin(conn: Conn, chans: Buffer[]) {
-    for (let i = 0; i < chans.length; i += 10) {
-      const group = chans.slice(i, i + 10);
-      // Keyed channels must come first so keys line up by position.
-      const keyed = group.filter((b) => b.joinKey);
-      const names = [...keyed, ...group.filter((b) => !b.joinKey)].map((b) => b.name).join(',');
-      conn.send(keyed.length ? `JOIN ${names} ${keyed.map((b) => b.joinKey).join(',')}` : `JOIN ${names}`);
-    }
+    syncMonitor(conn);
+    setTimeout(() => fetchTargets(this, conn), 800);
   }
 
   maybeRestoreActive(conn: Conn, key: string) {
