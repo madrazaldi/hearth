@@ -15,8 +15,9 @@ use base64::Engine;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::Instant;
 
 const WANTED_CAPS: &[&str] = &[
     "account-notify",
@@ -175,6 +176,9 @@ struct Pending {
 enum Route {
     /// Collected as the reply to a pending request.
     Collect(u64),
+    /// A batch nested inside a collected one (e.g. multiline): its messages
+    /// belong to the same reply, but its end doesn't complete it.
+    Nested(u64),
     /// A labeled-response wrapper around the reply to a pending request.
     Wrap(u64),
     /// A labeled response to a line the frontend sent; its messages carry
@@ -439,7 +443,7 @@ impl State<'_> {
         // Route messages that belong to a batch.
         if let Some(batch) = msg.tag("batch").map(str::to_string) {
             match self.batches.get(&batch).cloned() {
-                Some(Route::Collect(id)) | Some(Route::Wrap(id)) if msg.command != "BATCH" => {
+                Some(Route::Collect(id) | Route::Nested(id) | Route::Wrap(id)) if msg.command != "BATCH" => {
                     if msg.command == "FAIL" {
                         self.complete(id, Err(msg.params.last().cloned().unwrap_or_default()));
                     } else if let Some(p) = self.pending.iter_mut().find(|p| p.id == id) {
@@ -517,8 +521,7 @@ impl State<'_> {
                 self.on_welcome();
             }
             "433" | "432" if !self.registered => {
-                let next = format!("{}_", self.nick);
-                self.nick = next.chars().take(30).collect();
+                self.nick = fallback_nick(&self.nick);
                 self.send(format!("NICK {}", self.nick));
             }
             "NICK" => {
@@ -706,6 +709,7 @@ impl State<'_> {
                         Route::Collect(id)
                     }
                     (None, Some(Route::Label(l))) => Route::Label(l),
+                    (None, Some(Route::Collect(id) | Route::Nested(id))) => Route::Nested(id),
                     _ => Route::Other,
                 }
             };
@@ -818,6 +822,21 @@ fn loggable(msg: &Message) -> bool {
         "JOIN" | "PART" | "KICK" | "TOPIC" | "MODE" => true,
         _ => false,
     }
+}
+
+/// The nick to try when ours is taken: ours with '_' appended, or, at the
+/// 30-character cap where appending changes nothing, with its last
+/// character cycled so the same nick isn't retried forever.
+fn fallback_nick(nick: &str) -> String {
+    let next: String = format!("{nick}_").chars().take(30).collect();
+    if next != nick {
+        return next;
+    }
+    const CYCLE: &str = "_0123456789";
+    let mut chars: Vec<char> = nick.chars().collect();
+    let i = chars.pop().and_then(|c| CYCLE.find(c)).map_or(0, |i| (i + 1) % CYCLE.len());
+    chars.push(CYCLE.as_bytes()[i] as char);
+    chars.into_iter().collect()
 }
 
 fn unescape_isupport(v: &str) -> String {
