@@ -71,7 +71,7 @@ cd src-tauri && cargo test && cargo clippy   # unit tests + actor tests against 
 pnpm tauri build    # release bundle
 ```
 
-When `pnpm dev` runs in a plain browser instead of inside Tauri, Hearth replays a scripted IRC session from `src/lib/mock.ts`. This lets you work on the UI without a server. Query parameters control the preview: `?theme=light`, `?layout=compact`, `?view=settings`, `?view=switcher`, `?view=search`, `?view=channels`, `?tab=privacy` (open a Settings tab; add `&server=<id>` to edit a server) and `?empty` (first-run screen).
+When `pnpm dev` runs in a plain browser instead of inside Tauri, Hearth replays a scripted IRC session from `src/lib/mock.ts`. This lets you work on the UI without a server. Query parameters control the preview: `?theme=light`, `?layout=compact`, `?view=settings`, `?view=switcher`, `?view=search`, `?view=channels`, `?tab=privacy` (open a Settings tab; add `&server=<id>` to edit a server), `?empty` (first-run screen) and `?stress` (a `#stress` channel with about 10k lines of scrollback and 5k members, for performance work; `?stress=live` adds a new line every 3 seconds).
 
 CI (`.github/workflows/ci.yml`) runs the checks and tests on Linux, macOS and Windows.
 

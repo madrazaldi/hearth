@@ -1,22 +1,33 @@
+<script lang="ts" module>
+  import type { Preview } from '../types';
+
+  // Settled previews, so a row the message list re-mounts while scrolling
+  // renders at its full height straight away instead of growing a frame later.
+  const settled = new Map<string, Preview | null>();
+</script>
+
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { app } from '../state.svelte';
-  import type { Preview } from '../types';
 
   let { url }: { url: string } = $props();
 
   let el = $state<HTMLElement>();
-  let preview = $state<Preview | null>(null);
+  // The url never changes for a mounted preview (rows are keyed by line).
+  // svelte-ignore state_referenced_locally
+  let preview = $state<Preview | null>(settled.get(url) ?? null);
 
   onMount(() => {
-    if (!el) return;
+    if (!el || settled.has(url)) return;
     // Only fetch once the message scrolls into view.
     const io = new IntersectionObserver(
       (entries) => {
         if (!entries.some((e) => e.isIntersecting)) return;
         io.disconnect();
         app.preview(url).then(async (p) => {
+          settled.set(url, p);
+          if (settled.size > 500) settled.delete(settled.keys().next().value!);
           preview = p;
           await tick();
           grew();
