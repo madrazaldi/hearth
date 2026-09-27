@@ -80,19 +80,20 @@
     return seen;
   }
 
-  function complete(backwards: boolean) {
-    if (!ta) return;
+  /** Tab completion; false when there's nothing to complete, so Tab can move focus instead. */
+  function complete(backwards: boolean): boolean {
+    if (!ta) return false;
     if (completion && ta.selectionStart === completion.end) {
       const c = completion;
       c.index = (c.index + (backwards ? -1 : 1) + c.options.length) % c.options.length;
       apply(c);
-      return;
+      return true;
     }
     const caret = ta.selectionStart;
     const before = text.slice(0, caret);
     const start = before.search(/\S*$/);
     const word = before.slice(start);
-    if (!word) return;
+    if (!word) return false;
     const lw = word.toLowerCase();
     let options: string[] = [];
     let suffix = ' ';
@@ -110,9 +111,10 @@
       options = [...new Set(pool)].filter((n) => n.toLowerCase().startsWith(lw) && !conn.isMe(n));
       if (start === 0) suffix = ': ';
     }
-    if (!options.length) return;
+    if (!options.length) return false;
     completion = { start, end: caret, options, index: backwards ? options.length - 1 : 0, suffix };
     apply(completion);
+    return true;
   }
 
   function apply(c: NonNullable<typeof completion>) {
@@ -135,8 +137,7 @@
       return;
     }
     if (e.key === 'Tab') {
-      e.preventDefault();
-      complete(e.shiftKey);
+      if (complete(e.shiftKey)) e.preventDefault();
       return;
     }
     completion = null;
@@ -233,7 +234,7 @@
     const refocus = (e: KeyboardEvent) => {
       // Typing anywhere lands in the composer.
       const t = e.target;
-      if (!(t instanceof Element) || t.closest('input, textarea, [contenteditable]') || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.defaultPrevented || !(t instanceof Element) || t.closest('input, textarea, [contenteditable]') || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key.length === 1) ta?.focus({ preventScroll: true });
     };
     const onInsert = (e: Event) => {
@@ -256,7 +257,7 @@
 
 <div class="composer" class:dragging>
   {#if cmdMatches.length}
-    <div class="suggest" role="listbox">
+    <div class="suggest" role="listbox" aria-label="Commands">
       {#each cmdMatches as c, i (c.name)}
         <button
           class:sel={i === cmdIndex}
@@ -280,16 +281,17 @@
       <Icon name="reply" size={13} />
       <span>Replying to <b class="nick" style="--h:{nickHue(r.nick)}">{r.nick}</b></span>
       <span class="snip">{stripFormatting(r.text)}</span>
-      <button class="icon-btn" title="Cancel reply (Esc)" onclick={() => (buf.replyTo = null)}><Icon name="x" size={13} /></button>
+      <button class="icon-btn" title="Cancel reply (Esc)" aria-label="Cancel reply" onclick={() => (buf.replyTo = null)}><Icon name="x" size={13} /></button>
     </div>
   {/if}
   <div class="box" class:with-reply={!!buf.replyTo}>
-    <button class="nickname mono" title="Change nickname" onclick={() => (text = `/nick ${conn.nick}`)}>{conn.nick || '…'}</button>
+    <button class="nickname mono" title="Change nickname" aria-label="Your nickname, {conn.nick}. Change nickname" onclick={() => (text = `/nick ${conn.nick}`)}>{conn.nick || '…'}</button>
     <textarea
       bind:this={ta}
       bind:value={text}
       rows="1"
       {placeholder}
+      aria-label={placeholder}
       spellcheck={app.settings.spellcheck}
       autocomplete="off"
       {...{ autocorrect: 'off' }}
@@ -299,10 +301,10 @@
       onpaste={onPaste}
     ></textarea>
     {#if uploading}
-      <span class="uploading" title="Uploading"></span>
+      <span class="uploading" title="Uploading" role="status" aria-label="Uploading"></span>
     {/if}
     {#if filehost && buf.kind !== 'server'}
-      <button class="icon-btn" title="Attach file" onclick={() => fileInput?.click()}><Icon name="clip" /></button>
+      <button class="icon-btn" title="Attach file" aria-label="Attach file" onclick={() => fileInput?.click()}><Icon name="clip" /></button>
       <input
         type="file"
         hidden

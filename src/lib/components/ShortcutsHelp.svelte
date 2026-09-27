@@ -2,16 +2,15 @@
   import { app } from '../state.svelte';
   import Icon from './Icon.svelte';
   import ShortcutList from './ShortcutList.svelte';
+  import { modal } from '../a11y';
 
   const close = () => (app.shortcutsOpen = false);
 </script>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && close()} />
-
 <div class="scrim" onclick={close} role="presentation">
-  <div class="card" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Keyboard shortcuts" tabindex="-1" onkeydown={() => {}}>
+  <div class="card" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="shortcuts-title" tabindex="-1" onkeydown={() => {}} use:modal={{ onclose: close }}>
     <header>
-      <h2>Keyboard shortcuts</h2>
+      <h2 id="shortcuts-title">Keyboard shortcuts</h2>
       <button class="icon-btn" onclick={close} aria-label="Close"><Icon name="x" /></button>
     </header>
     <ShortcutList />

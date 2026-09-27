@@ -11,6 +11,7 @@
   import AliasEditor from './AliasEditor.svelte';
   import ShortcutList from './ShortcutList.svelte';
   import { updater } from '../updater.svelte';
+  import { modal } from '../a11y';
 
   const tabs = [
     { id: 'servers', label: 'Servers', icon: 'server' },
@@ -77,14 +78,21 @@
   }
 </script>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && close()} />
-
 <div class="scrim" onclick={close} role="presentation">
-  <div class="sheet" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Settings" tabindex="-1" onkeydown={() => {}}>
-    <nav>
-      <p class="eyebrow">Settings</p>
+  <div
+    class="sheet"
+    onclick={(e) => e.stopPropagation()}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Settings"
+    tabindex="-1"
+    onkeydown={() => {}}
+    use:modal={{ onclose: close }}
+  >
+    <nav aria-label="Settings sections">
+      <p class="eyebrow" aria-hidden="true">Settings</p>
       {#each tabs as t (t.id)}
-        <button class:on={tab === t.id} onclick={() => go(t.id)}>
+        <button class:on={tab === t.id} aria-current={tab === t.id ? 'page' : undefined} data-autofocus={tab === t.id || undefined} onclick={() => go(t.id)}>
           <Icon name={t.icon} size={15} />{t.label}
         </button>
       {/each}
@@ -160,7 +168,7 @@
               <div class="label">Mark me away</div>
               <div class="hint">When Hearth has been in the background this long. You're marked back when you return.</div>
             </div>
-            <Segmented
+            <Segmented label="Mark me away after"
               bind:value={autoAway.get, autoAway.set}
               options={[
                 { value: 0, label: 'Never' },
@@ -255,13 +263,13 @@
                 {#each app.settings.ignores as mask (mask)}
                   <div class="ignore">
                     <span class="mono">{mask}</span>
-                    <button class="icon-btn" title="Stop ignoring" onclick={() => app.unignore(mask)}><Icon name="x" size={13} /></button>
+                    <button class="icon-btn" title="Stop ignoring" aria-label="Stop ignoring {mask}" onclick={() => app.unignore(mask)}><Icon name="x" size={13} /></button>
                   </div>
                 {/each}
               </div>
             {/if}
             <form class="add-ignore" onsubmit={addIgnore}>
-              <input class="input mono" bind:value={newIgnore} placeholder="nick or nick!user@host" spellcheck="false" />
+              <input class="input mono" bind:value={newIgnore} placeholder="nick or nick!user@host" aria-label="Nick or mask to ignore" spellcheck="false" />
               <button class="btn" type="submit" disabled={!newIgnore.trim()}>Ignore</button>
             </form>
             <small>Hides their messages, notices, invites and reactions everywhere. <code>*</code> and <code>?</code> are wildcards.</small>
@@ -272,7 +280,7 @@
         <div class="rows">
           <div class="row">
             <div><div class="label">Theme</div></div>
-            <Segmented
+            <Segmented label="Theme"
               bind:value={theme.get, theme.set}
               options={[
                 { value: 'system', label: 'System' },
@@ -286,7 +294,7 @@
               <div class="label">Message layout</div>
               <div class="hint">Columns aligns nicks in a gutter; compact stacks them above messages.</div>
             </div>
-            <Segmented
+            <Segmented label="Message layout"
               bind:value={layout.get, layout.set}
               options={[
                 { value: 'columns', label: 'Columns' },
@@ -296,7 +304,7 @@
           </div>
           <div class="row">
             <div><div class="label">Text size</div></div>
-            <Segmented
+            <Segmented label="Text size"
               bind:value={fontSize.get, fontSize.set}
               options={[
                 { value: 13, label: 'S' },
@@ -308,7 +316,7 @@
           </div>
           <div class="row">
             <div><div class="label">Clock</div></div>
-            <Segmented
+            <Segmented label="Clock"
               bind:value={clock.get, clock.set}
               options={[
                 { value: '24h', label: '24-hour' },
@@ -321,7 +329,7 @@
               <div class="label">Joins, parts and quits</div>
               <div class="hint">Collapse folds consecutive events into one line.</div>
             </div>
-            <Segmented
+            <Segmented label="Joins, parts and quits"
               bind:value={membership.get, membership.set}
               options={[
                 { value: 'show', label: 'Show' },

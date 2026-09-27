@@ -1,8 +1,11 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { app, type Buffer } from '../state.svelte';
   import { stripFormatting } from '../format';
+  import { announcements, lineLabel } from '../a11y';
+  import { formatClock } from '../time';
+  import type { Line } from '../types';
   import { buildItems, itemIndexOf, MEMBERSHIP, type Item } from '../timeline';
   import { Estimates, indexAt, offsets as prefixSums, rangeFor } from '../virtual';
   import Icon from './Icon.svelte';
@@ -10,7 +13,7 @@
   import EventRow from './EventRow.svelte';
   import EventRun from './EventRun.svelte';
   import MessageRow from './MessageRow.svelte';
-  import { closeMenus } from './MessageTools.svelte';
+  import { askDelete, canReply, closeMenus, copyLine, openReact, startReply } from './MessageTools.svelte';
   import MotdBlock from './MotdBlock.svelte';
   import WhoisCard from './WhoisCard.svelte';
 
@@ -163,11 +166,17 @@
   // settled put the anchor back. Runs before paint, so corrections don't flicker.
   $effect(() => {
     void visible;
+    void stray;
     void offs;
     void buf.history;
     untrack(() => {
       if (measure()) hv++;
       else restore();
+      syncTabStops();
+      if (holdFocus && focusKey) {
+        if (!index.has(focusKey) && items.length) focusKey = items[anchorIndex({ key: focusKey, time: focusTime, delta: 0 })].key;
+        if (!document.activeElement || document.activeElement === document.body) rowEl(focusKey)?.focus({ preventScroll: true });
+      }
     });
   });
 
@@ -235,8 +244,191 @@
     if (el.scrollHeight - el.scrollTop - el.clientHeight > el.clientHeight) {
       pinned = true;
       restore();
-    } else el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    } else el.scrollTo({ top: el.scrollHeight, behavior: reducedMotion() ? 'auto' : 'smooth' });
   }
+
+  const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ── Keyboard navigation ──────────────────────────────────────
+  // Rows use a roving tabindex: the list itself is the tab stop until a row
+  // has been focused, then that row is. The focused row is always rendered,
+  // even scrolled out of the window, so focus isn't dropped.
+  let focusKey = $state<string | null>(null);
+  /** Its time, to land nearby if the row goes away (a run or day key changes on prepend). */
+  let focusTime = 0;
+  const focusIndex = $derived(focusKey === null ? -1 : (index.get(focusKey) ?? -1));
+  /** The focused row, when it's outside the rendered window. */
+  const stray = $derived(focusIndex >= 0 && (focusIndex < start || focusIndex >= end) ? items[focusIndex] : null);
+  /** Row shortcuts (r, e, c, Delete) only after keyboard focus, so typing after a click still reaches the composer. */
+  let viaKeyboard = false;
+  /** Focus was on a row; if that row re-mounts, give it focus back. */
+  let holdFocus = false;
+
+  const talk = (it: Item): Line | null =>
+    it.kind === 'line' && (it.line.type === 'privmsg' || it.line.type === 'notice' || it.line.type === 'action') ? it.line : null;
+
+  function rowLabel(it: Item): string | undefined {
+    const l = talk(it);
+    if (!l) return undefined;
+    const parent = l.replyTo && !l.redacted ? buf.byMsgid.get(l.replyTo) : undefined;
+    return lineLabel(l, formatClock(l.time, s), parent?.nick);
+  }
+
+  /**
+   * Links, nicks and buttons inside rows are only tab stops in the focused
+   * row, so Tab crosses the list in one step instead of through every nick.
+   */
+  function syncTabStops() {
+    if (!el) return;
+    for (const row of el.querySelectorAll<HTMLElement>('[role="article"]')) {
+      const on = row.dataset.key === focusKey;
+      for (const c of row.querySelectorAll<HTMLElement>('a[href], button, input, summary, [data-rove]')) {
+        if (on && c.hasAttribute('data-rove')) {
+          c.removeAttribute('tabindex');
+          c.removeAttribute('data-rove');
+        } else if (!on && !c.hasAttribute('tabindex')) {
+          c.tabIndex = -1;
+          c.setAttribute('data-rove', '');
+        }
+      }
+    }
+  }
+
+  $effect(() => {
+    void focusKey;
+    tick().then(syncTabStops);
+  });
+
+  const rowEl = (key: string) => el?.querySelector<HTMLElement>(`[role="article"][data-key="${CSS.escape(key)}"]`);
+
+  /** Scroll just enough to show item `i`. */
+  function reveal(i: number) {
+    if (!el) return;
+    const top = base + offs[i];
+    const bottom = base + offs[i + 1];
+    if (top < el.scrollTop) scrollTo(top - 8);
+    else if (bottom > el.scrollTop + el.clientHeight) scrollTo(Math.min(top - 8, bottom - el.clientHeight + 8));
+    else return;
+    // Settle the anchor and window now rather than on the scroll event, so
+    // restore() doesn't pull us back and the row mounts once in its final place.
+    pinned = isAtBottom();
+    if (pinned) anchor = null;
+    else capture();
+    atBottom = pinned;
+    app.atBottom = atBottom;
+    viewTop = el.scrollTop;
+  }
+
+  async function focusItem(i: number) {
+    if (i < 0 || i >= items.length) return;
+    focusKey = items[i].key;
+    focusTime = items[i].time;
+    viaKeyboard = true;
+    reveal(i);
+    await tick();
+    rowEl(items[i].key)?.focus({ preventScroll: true });
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (!el || e.metaKey || e.ctrlKey || e.altKey || !items.length) return;
+    const t = e.target as HTMLElement;
+    const onRow = t.getAttribute('role') === 'article';
+    if (t !== el && !onRow) {
+      // A control inside a row: Escape goes back to the row.
+      if (e.key === 'Escape' && !e.defaultPrevented) {
+        const row = t.closest<HTMLElement>('[role="article"]');
+        if (row) {
+          e.preventDefault();
+          row.focus();
+        }
+      }
+      return;
+    }
+    const i = onRow ? (index.get(t.dataset.key ?? '') ?? -1) : -1;
+    const top = el.scrollTop - base;
+    let to: number | null = null;
+    switch (e.key) {
+      case 'ArrowDown':
+        to = i < 0 ? indexAt(offs, top) : i + 1;
+        break;
+      case 'ArrowUp':
+        to = i < 0 ? indexAt(offs, top + el.clientHeight - 1) : i - 1;
+        break;
+      case 'Home':
+        to = 0;
+        break;
+      case 'End':
+        to = items.length - 1;
+        break;
+      case 'PageDown':
+      case 'PageUp':
+        if (i < 0) return;
+        to = indexAt(offs, offs[i] + (e.key === 'PageDown' ? 1 : -1) * el.clientHeight * 0.8);
+        break;
+    }
+    if (to !== null) {
+      e.preventDefault();
+      focusItem(Math.max(0, Math.min(items.length - 1, to)));
+      return;
+    }
+    if (!onRow || !viaKeyboard) return;
+    const it = items[i];
+    if (it.kind === 'run' && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      toggleRun(it.key);
+      return;
+    }
+    const l = talk(it);
+    if (!l) return;
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    if (key === 'r' && canReply(buf, l)) startReply(buf, l);
+    else if (key === 'e' && app.canReact(buf, l)) openReact(l);
+    else if (key === 'c' && !l.redacted) copyLine(l);
+    else if (key === 'Delete' && app.canRedact(buf, l) && !l.redacted) {
+      askDelete(l);
+      tick().then(() => rowEl(it.key)?.querySelector<HTMLElement>('.tools .wide')?.focus());
+    } else return;
+    e.preventDefault();
+  }
+
+  function onFocusIn(e: FocusEvent) {
+    const t = e.target as HTMLElement;
+    if (t.getAttribute('role') !== 'article') return;
+    focusKey = t.dataset.key ?? null;
+    focusTime = items[index.get(focusKey ?? '') ?? -1]?.time ?? focusTime;
+    // Programmatic focus from our own key handling counts as keyboard too.
+    viaKeyboard ||= t.matches(':focus-visible');
+    holdFocus = true;
+  }
+
+  function onFocusOut(e: FocusEvent) {
+    const t = e.target as HTMLElement;
+    const to = e.relatedTarget as Node | null;
+    if (to && el?.contains(to)) return;
+    // A row that unmounts (virtualization) drops focus without the user
+    // asking; anything else is them moving on.
+    queueMicrotask(() => {
+      if (t.isConnected) holdFocus = false;
+    });
+  }
+
+  // ── Screen reader announcements ──────────────────────────────
+  // The rows are virtualized, so they can't be a live region themselves:
+  // scrolling would announce every row it mounts. New live lines are
+  // echoed into a separate log instead, only while following the bottom.
+  let lastSeen = untrack(() => buf.messages[buf.messages.length - 1]);
+  let spoken = $state<{ id: number; text: string }[]>([]);
+  let spokenSeq = 0;
+  $effect(() => {
+    const lines = buf.messages;
+    untrack(() => {
+      const prev = lastSeen;
+      lastSeen = lines[lines.length - 1];
+      if (!atBottom || filter) return;
+      const said = announcements(lines, prev, Date.now());
+      if (said.length) spoken = [...spoken, ...said.map((text) => ({ id: ++spokenSeq, text }))].slice(-5);
+    });
+  });
 
   /** Observe rows for size changes we didn't cause: previews, images, expanded runs. */
   let rowObserver: ResizeObserver | undefined;
@@ -291,7 +483,43 @@
 
 <svelte:window onclick={closeMenus} />
 
-<div class="scroller layout-{s.layout}" bind:this={el} onscroll={onScroll}>
+{#snippet row(it: Item)}
+  {#if it.kind === 'day'}
+    <Divider label={it.label} />
+  {:else if it.kind === 'unread'}
+    <Divider />
+  {:else if it.kind === 'run'}
+    <EventRun lines={it.lines} {buf} open={expanded.has(it.key)} {onnick} ontoggle={() => toggleRun(it.key)} />
+  {:else}
+    {@const l = it.line}
+    {#if l.type === 'privmsg' || l.type === 'notice' || l.type === 'action'}
+      <MessageRow {l} cont={it.cont} {buf} flash={flash === l.id} {onnick} />
+    {:else if l.type === 'whois' && l.data}
+      <WhoisCard {l} {onnick} />
+    {:else if l.data?.motd !== undefined}
+      <MotdBlock {l} open={l.data.title !== undefined || buf.messages.length < 40} />
+    {:else}
+      <EventRow {l} {buf} flash={flash === l.id} {onnick} />
+    {/if}
+  {/if}
+{/snippet}
+
+<!-- The WAI-ARIA feed pattern: a focusable feed of focusable articles, which
+     svelte's linter doesn't know are interactive. -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+<div
+  class="scroller layout-{s.layout}"
+  bind:this={el}
+  onscroll={onScroll}
+  onkeydown={onKey}
+  onfocusin={onFocusIn}
+  onfocusout={onFocusOut}
+  onpointerdown={() => (viaKeyboard = false)}
+  role="feed"
+  aria-label="Messages in {buf.kind === 'server' ? buf.conn.name : buf.name}"
+  aria-busy={buf.history === 'loading'}
+  tabindex={focusIndex >= 0 ? -1 : 0}
+>
   <div class="spacer"></div>
   {#if buf.history === 'loading'}
     <div class="loading"><span></span>Loading history</div>
@@ -303,30 +531,42 @@
   {/if}
 
   <div class="items" bind:this={list} style="padding-top:{offs[start]}px;padding-bottom:{offs[items.length] - offs[end]}px">
-    {#each visible as it (it.key)}
-      <div class="item" data-key={it.key} use:observe>
-        {#if it.kind === 'day'}
-          <Divider label={it.label} />
-        {:else if it.kind === 'unread'}
-          <Divider />
-        {:else if it.kind === 'run'}
-          <EventRun lines={it.lines} {buf} open={expanded.has(it.key)} {onnick} ontoggle={() => toggleRun(it.key)} />
-        {:else}
-          {@const l = it.line}
-          {#if l.type === 'privmsg' || l.type === 'notice' || l.type === 'action'}
-            <MessageRow {l} cont={it.cont} {buf} flash={flash === l.id} {onnick} />
-          {:else if l.type === 'whois' && l.data}
-            <WhoisCard {l} {onnick} />
-          {:else if l.data?.motd !== undefined}
-            <MotdBlock {l} open={l.data.title !== undefined || buf.messages.length < 40} />
-          {:else}
-            <EventRow {l} {buf} flash={flash === l.id} {onnick} />
-          {/if}
-        {/if}
+    {#each visible as it, j (it.key)}
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <div
+        class="item focus-inset"
+        data-key={it.key}
+        role="article"
+        aria-label={rowLabel(it)}
+        aria-posinset={start + j + 1}
+        aria-setsize={buf.history === 'done' ? items.length : -1}
+        tabindex={it.key === focusKey ? 0 : -1}
+        use:observe
+      >
+        {@render row(it)}
       </div>
     {/each}
   </div>
+  {#if stray}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <div
+      class="item stray focus-inset"
+      style="top:{base + offs[focusIndex]}px"
+      data-key={stray.key}
+      role="article"
+      aria-label={rowLabel(stray)}
+      aria-posinset={focusIndex + 1}
+      aria-setsize={buf.history === 'done' ? items.length : -1}
+      tabindex="0"
+    >
+      {@render row(stray)}
+    </div>
+  {/if}
   <div class="end"></div>
+</div>
+
+<div class="sr-only" role="log" aria-live="polite" aria-label="New messages">
+  {#each spoken as m (m.id)}<p>{m.text}</p>{/each}
 </div>
 
 {#if !atBottom}
@@ -359,6 +599,12 @@
   /* Own formatting context, so row margins count toward the measured height. */
   .item {
     display: flow-root;
+  }
+
+  .item.stray {
+    position: absolute;
+    left: 0;
+    right: 0;
   }
 
   :global(html) .scroller {

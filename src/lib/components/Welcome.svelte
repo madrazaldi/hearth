@@ -174,7 +174,7 @@
 </script>
 
 <div class="welcome" data-tauri-drag-region>
-  <div class="col">
+  <main class="col">
     <img class="mark" src={logo} width="48" height="48" alt="" />
     <h1>Hearth</h1>
     <p class="lede">A quiet place for IRC. Pick a network to begin — you can add more, or a bouncer, any time.</p>
@@ -386,7 +386,7 @@
         {/if}
       </section>
     {/key}
-  </div>
+  </main>
 </div>
 
 {#snippet actions(label: string)}

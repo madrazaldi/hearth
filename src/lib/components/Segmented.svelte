@@ -1,10 +1,28 @@
 <script lang="ts" generics="T extends string | number">
-  let { value = $bindable(), options }: { value: T; options: { value: T; label: string }[] } = $props();
+  let { value = $bindable(), options, label }: { value: T; options: { value: T; label: string }[]; label?: string } = $props();
+
+  const at = $derived(options.findIndex((o) => o.value === value));
+
+  // Radio-group keys: arrows move the choice, and focus goes with it.
+  function onKey(e: KeyboardEvent) {
+    const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+    if (!d) return;
+    e.preventDefault();
+    const i = (Math.max(at, 0) + d + options.length) % options.length;
+    value = options[i].value;
+    ((e.currentTarget as HTMLElement).children[i] as HTMLElement | undefined)?.focus();
+  }
 </script>
 
-<div class="seg" role="radiogroup">
-  {#each options as o (o.value)}
-    <button role="radio" aria-checked={value === o.value} class:on={value === o.value} onclick={() => (value = o.value)}>
+<div class="seg" role="radiogroup" aria-label={label} tabindex="-1" onkeydown={onKey}>
+  {#each options as o, i (o.value)}
+    <button
+      role="radio"
+      aria-checked={value === o.value}
+      tabindex={i === (at < 0 ? 0 : at) ? 0 : -1}
+      class:on={value === o.value}
+      onclick={() => (value = o.value)}
+    >
       {o.label}
     </button>
   {/each}

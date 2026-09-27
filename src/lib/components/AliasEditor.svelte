@@ -39,12 +39,12 @@
     <div class="list">
       {#each entries as [n, b] (n)}
         <div class="alias">
-          <button class="main" title="Edit" onclick={() => edit(n)}>
+          <button class="main" title="Edit" aria-label="Edit alias /{n}: {b}" onclick={() => edit(n)}>
             <span class="mono name">/{n}</span>
             <span class="mono body">{b}</span>
           </button>
           {#if isBuiltin(n)}<span class="warn" title="Replaces the built-in /{n}">replaces built-in</span>{/if}
-          <button class="icon-btn" title="Delete alias" onclick={() => remove(n)}><Icon name="x" size={13} /></button>
+          <button class="icon-btn" title="Delete alias" aria-label="Delete alias /{n}" onclick={() => remove(n)}><Icon name="x" size={13} /></button>
         </div>
       {/each}
     </div>

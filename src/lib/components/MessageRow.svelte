@@ -9,6 +9,7 @@
   import LinkPreview from './LinkPreview.svelte';
   import MessageTools from './MessageTools.svelte';
   import Nick from './Nick.svelte';
+  import Avatar from './Avatar.svelte';
 
   let {
     l,
@@ -20,6 +21,7 @@
 
   const s = $derived(app.settings);
   const clock = $derived(formatClock(l.time, s));
+  const displayName = $derived(buf.conn.profile(l.nick).displayName);
   const url = $derived(s.linkPreviews && !l.redacted && buf.kind !== 'server' ? firstLink(l.text) : null);
 </script>
 
@@ -86,7 +88,9 @@
   {:else}
     <div class="text selectable">
       {#if !cont && l.type !== 'action'}
-        <div class="head">
+        <div class="head" title={displayName && displayName !== l.nick ? `${displayName} (${l.nick})` : undefined}>
+          <!-- Always the same size, image or initial, so row heights don't shift. -->
+          {#if s.loadAvatars}<Avatar conn={buf.conn} nick={l.nick} size={18} />{/if}
           <Nick nick={l.nick} self={l.self} {onnick} />
           {#if l.type === 'notice'}<span class="tag">notice</span>{/if}
           <span class="head-time" title={formatFull(l.time)}>{clock}</span>
@@ -108,6 +112,10 @@
   .notice-mark {
     color: var(--text-4);
     margin-right: 4px;
+  }
+
+  .head :global(.avatar) {
+    align-self: center;
   }
 
   .head-time {

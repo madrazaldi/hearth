@@ -9,6 +9,6 @@
 
 <div class="row event {l.type}" class:hl={l.highlight} class:flash data-line={l.id}>
   <time title={formatFull(l.time)}>{formatClock(l.time, app.settings)}</time>
-  <span class="who"><span class="glyph">{GLYPH[l.type] ?? '·'}</span></span>
+  <span class="who"><span class="glyph" aria-hidden="true">{GLYPH[l.type] ?? '·'}</span></span>
   <div class="text selectable"><EventText {l} {buf} {onnick} /></div>
 </div>

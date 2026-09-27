@@ -71,6 +71,24 @@ describe('messages', () => {
   });
 });
 
+describe('line cap', () => {
+  it('trims the oldest lines in a chunk once past the cap', async () => {
+    const { mkLine } = await import('./state.svelte');
+    connect(app);
+    feed(app, ':me!u@h JOIN #big');
+    const buf = conn().buffer('#big')!;
+    const t = Date.now();
+    buf.messages = Array.from({ length: 20_000 }, (_, i) => mkLine({ type: 'privmsg', nick: 'a', text: String(i), time: t + i }));
+    buf.history = 'done';
+    buf.push(mkLine({ type: 'privmsg', nick: 'a', text: 'last', time: t + 20_000 }));
+    expect(buf.messages.length).toBe(18_000);
+    expect(buf.messages[0].text).toBe('2001');
+    expect(buf.messages.at(-1)!.text).toBe('last');
+    // Older lines can be fetched again.
+    expect(buf.history).toBe('idle');
+  });
+});
+
 describe('routing', () => {
   it('sends labeled replies to the buffer that asked', () => {
     connect(app, { caps: ['labeled-response'] });
