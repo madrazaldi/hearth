@@ -101,6 +101,10 @@ function scene(): IrcEvent[] {
   m(L, msg('wren!wren@user/wren', 'TAGMSG', [chan], { '+draft/react': '🎉', '+draft/reply': 'rn1' }));
   m(L, msg('mira!mira@user/mira', 'TAGMSG', [chan], { '+draft/react': '👀', '+draft/reply': 'rn1' }));
   m(L, { ...say('sable', chan, 'the typing indicator is subtle in a good way', 1), tags: { time: at(0), msgid: 'ty1', '+draft/reply': 'ws1' } });
+  m(L, say('oskar', chan, 'new sidebar spacing, before/after: https://files.hearth.example/uploads/k3x9/sidebar.png', 2));
+  m(L, say('wren', chan, 'kettle status https://media.example/kettle.gif', 1));
+  m(L, say('lin_', chan, 'screen recording of the reconnect flow https://files.hearth.example/uploads/p2q1/reconnect-demo.mp4', 1));
+  m(L, say('quill', chan, 'nsfw (not really, just a very tall screenshot) https://img.example/tall.jpg', 1));
   m(L, msg('irc.libera.chat', '730', ['ember', 'mira!mira@user/mira']));
 
   m(L, say('mira', 'ember', 'hey, can you review #42 when you have a minute?', 3));
@@ -171,6 +175,8 @@ function stressLines(i: number): IrcMessage[] {
   let text = Array.from({ length: 3 + Math.floor(r() * (r() < 0.1 ? 90 : 18)) }, () => WORDS[Math.floor(r() * WORDS.length)]).join(' ');
   if (r() < 0.03) text = 'ember: ' + text;
   if (r() < 0.02) text += ' https://hearth.example/notes/' + i;
+  // Not drawn from r(), so the rest of the line stays as it was.
+  if (i % 41 === 7) text += ` https://img.example/s/${i}.png`;
   if (r() < 0.03) tags['+draft/reply'] = `s${i + 1 + Math.floor(r() * 4)}`;
   const out = [msg(src, k < 0.08 ? 'NOTICE' : 'PRIVMSG', ['#stress', k < 0.12 && k >= 0.08 ? `\x01ACTION ${text}\x01` : `#${i} ${text}`], tags)];
   if (r() < 0.02) out.push(msg(`${STRESS_NICKS[7]}!x@y`, 'TAGMSG', ['#stress'], { '+draft/react': '👍', '+draft/reply': `s${i}` }));
@@ -199,6 +205,61 @@ function history(target: string): IrcMessage[] {
     say('lin_', target, 'monospace only for timestamps and raw protocol stuff?', 3),
     say('mira', target, 'exactly. Plex Sans for prose, Plex Mono for machine text', 1),
   ];
+}
+
+// ── Link previews ───────────────────────────────────────────
+// Images are drawn on a canvas; what the backend would send as a data URL.
+
+const GIF = 'data:image/gif;base64,R0lGODlhyAB4APcfMd9vOv7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3/7y3yH/C05FVFNDQVBFMi4wAwEAAAAh+QQEFAAfACwAAAAAyAB4AAAI/wABCBxIsKDBgwgTKlzIsKHDhxAjSpxIsaLFixgzatzIsaPHjyBDihxJsqTJkyhTqlzJsqXLlzBjypxJs6bNmzhz6tzJs6fPn0CDCh1KtKjR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';
+const drawn = new Map<string, string>();
+
+function draw(w: number, h: number, hue: number): string {
+  const key = `${w}x${h}@${hue}`;
+  let url = drawn.get(key);
+  if (!url) {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const g = c.getContext('2d')!;
+    const grad = g.createLinearGradient(0, 0, w, h);
+    grad.addColorStop(0, `hsl(${hue} 55% 38%)`);
+    grad.addColorStop(1, `hsl(${(hue + 50) % 360} 60% 62%)`);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, w, h);
+    g.fillStyle = 'rgb(255 255 255 / 0.85)';
+    for (let i = 0; i < 5; i++) g.fillRect(w * 0.08, h * (0.12 + i * 0.16), w * (0.3 + ((i * 37) % 50) / 100), h * 0.07);
+    g.font = `600 ${Math.round(Math.min(w, h) / 10)}px sans-serif`;
+    g.fillText(`${w}×${h}`, w * 0.08, h * 0.95);
+    url = c.toDataURL('image/png');
+    drawn.set(key, url);
+  }
+  return url;
+}
+
+function mockPreview(url: string) {
+  const base = { url, title: null, description: null, site: null, image: null, width: null, height: null, animated: false, mime: null, size: null };
+  const image = (w: number, h: number, hue: number, mime = 'image/png') => ({ ...base, kind: 'image', image: draw(w, h, hue), width: w, height: h, mime, size: w * h });
+  if (url.includes('hearth.example/notes'))
+    return {
+      ...base,
+      kind: 'page',
+      title: 'Hearth 0.1 release notes',
+      description: 'Local search, saved scrollback, replies and reactions, link previews, and a channel browser.',
+      site: 'hearth.example',
+      image: draw(240, 240, 20),
+      width: 240,
+      height: 240,
+    };
+  if (url.endsWith('sidebar.png')) return image(1600, 900, 24);
+  if (url.endsWith('tall.jpg')) return image(700, 1400, 200, 'image/jpeg');
+  if (url.endsWith('kettle.gif')) return { ...base, kind: 'image', image: GIF, width: 200, height: 120, animated: true, mime: 'image/gif', size: 2809 };
+  if (url.endsWith('.mp4')) return { ...base, kind: 'media', mime: 'video/mp4', size: 18_400_000 };
+  const s = url.match(/img\.example\/s\/(\d+)/);
+  if (s) {
+    const n = Number(s[1]);
+    return image([320, 800, 1200, 500][n % 4], [480, 600, 300, 500][n % 4], (n * 47) % 360);
+  }
+  throw new Error('no preview');
 }
 
 // First-run flow (`?empty`): a scripted connection for the server just saved.
@@ -271,15 +332,8 @@ mockIPC(
           .map((x) => ({ network: 'soju/1', target: x.params[0], msg: x }));
       }
       case 'link_preview':
-        if (!String(a.url).includes('hearth.example')) throw new Error('no preview');
-        return {
-          url: a.url,
-          kind: 'page',
-          title: 'Hearth 0.1 release notes',
-          description: 'Local search, saved scrollback, replies and reactions, link previews, and a channel browser.',
-          site: 'hearth.example',
-          image: null,
-        };
+        await new Promise((r) => setTimeout(r, 120));
+        return mockPreview(String(a.url));
       case 'avatar': {
         // A stand-in for the backend's fetched image: initials on the nick's hue.
         const nick = String(a.url).replace(/^.*\/|\.png$/g, '');

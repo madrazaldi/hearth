@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app, type Buffer } from '../state.svelte';
   import { firstLink, stripFormatting } from '../format';
+  import { isNsfw } from '../media';
   import { nickHue } from '../nickcolor';
   import { formatClock, formatFull } from '../time';
   import type { Line } from '../types';
@@ -65,7 +66,7 @@
       {/each}
     </div>
   {/if}
-  {#if url}<LinkPreview {url} />{/if}
+  {#if url}<LinkPreview {url} nsfw={isNsfw(l.text)} />{/if}
 {/snippet}
 
 <div class="row msg {l.type}" class:cont={cont && !l.replyTo} class:hl={l.highlight} class:self={l.self} class:flash data-line={l.id}>

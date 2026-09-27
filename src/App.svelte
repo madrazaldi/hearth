@@ -11,6 +11,7 @@
   import Settings from './lib/components/Settings.svelte';
   import Welcome from './lib/components/Welcome.svelte';
   import ShortcutsHelp from './lib/components/ShortcutsHelp.svelte';
+  import Lightbox from './lib/components/Lightbox.svelte';
 
   const isMac = navigator.userAgent.includes('Mac');
   let systemDark = $state(window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -138,6 +139,8 @@
 {#if app.shortcutsOpen}
   <ShortcutsHelp />
 {/if}
+
+<Lightbox />
 
 <div class="toasts" aria-live="polite">
   {#each app.toasts as t (t.id)}

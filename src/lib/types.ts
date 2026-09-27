@@ -73,6 +73,10 @@ export interface Settings {
   linkPreviews: boolean;
   /** Fetch avatars people set with draft/metadata-2 (through the backend). */
   loadAvatars: boolean;
+  /** With link previews on, show direct image links as images under the message. */
+  inlineImages: boolean;
+  /** Play animated images without hovering (still off under prefers-reduced-motion). */
+  autoplayAnimations: boolean;
   closeToTray: boolean;
   /** Check the release feed on launch and every few hours. */
   checkUpdates: boolean;
@@ -149,11 +153,19 @@ export interface SearchHit {
 
 export interface Preview {
   url: string;
-  kind: 'image' | 'page';
+  /** `media` is a video or audio link, described but never loaded. */
+  kind: 'image' | 'page' | 'media';
   title: string | null;
   description: string | null;
   site: string | null;
+  /** A data: URL. */
   image: string | null;
+  /** Pixel size of `image`. */
+  width: number | null;
+  height: number | null;
+  animated: boolean;
+  mime: string | null;
+  size: number | null;
 }
 
 export interface CertInfo {
@@ -202,6 +214,8 @@ export const defaultSettings = (): Settings => ({
   storeLogs: true,
   linkPreviews: false,
   loadAvatars: false,
+  inlineImages: true,
+  autoplayAnimations: false,
   closeToTray: false,
   checkUpdates: true,
   autoAwayMinutes: 0,

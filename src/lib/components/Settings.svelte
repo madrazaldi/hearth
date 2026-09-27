@@ -236,6 +236,18 @@
             label="Show profile pictures"
             hint="People can publish an avatar on servers that support it. Hearth fetches the image itself, so its host sees your IP address."
           />
+          {#if app.settings.linkPreviews}
+            <Switch
+              bind:checked={() => app.settings.inlineImages, (v) => app.updateSettings({ inlineImages: v })}
+              label="Show inline images"
+              hint="Image links appear under the message. Images in messages that mention NSFW stay blurred until clicked. Video and audio are only described."
+            />
+            <Switch
+              bind:checked={() => app.settings.autoplayAnimations, (v) => app.updateSettings({ autoplayAnimations: v })}
+              label="Play animations automatically"
+              hint="Otherwise animated images play while the pointer is over them. Never when your system asks for reduced motion."
+            />
+          {/if}
           <div class="field">
             <span>Ignored people</span>
             {#if app.settings.ignores.length}

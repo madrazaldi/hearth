@@ -723,6 +723,9 @@ export class App {
     if (!p) {
       p = api.linkPreview(url).catch(() => null);
       this.previews.set(url, p);
+      // Only in-flight dedupe for big images; the preview component keeps
+      // its own byte-bounded cache of settled ones.
+      p.then((r) => (r?.image?.length ?? 0) > 256 * 1024 && this.previews.get(url) === p && this.previews.delete(url));
       if (this.previews.size > 500) this.previews.delete(this.previews.keys().next().value!);
     }
     return p;
