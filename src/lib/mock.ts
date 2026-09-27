@@ -103,6 +103,33 @@ function history(target: string): IrcMessage[] {
   ];
 }
 
+// First-run flow (`?empty`): a scripted connection for the server just saved.
+// Host containing "nowhere" fails DNS, SASL password "wrong" is rejected, nick "taken" collides.
+let lastSaved: ServerConfig | null = null;
+function firstRun(id: string) {
+  const s = lastSaved!;
+  const send = (ev: IrcEvent[], ms: number) => setTimeout(() => emit('irc', ev), ms);
+  send([{ type: 'conn-added', conn: id, server: id, parent: null, netid: null }, { type: 'status', conn: id, status: 'connecting', error: null, retryIn: null }], 20);
+  if (s.host.includes('nowhere')) {
+    const error = `could not reach ${s.host}:${s.port}: failed to lookup address information: nodename nor servname provided`;
+    return send([{ type: 'status', conn: id, status: 'disconnected', error, retryIn: 2 }], 900);
+  }
+  send([{ type: 'status', conn: id, status: 'registering', error: null, retryIn: null }], 700);
+  if (s.sasl === 'plain' && s.saslPassword === 'wrong') {
+    send([{ type: 'message', conn: id, msg: msg(s.host, '904', [s.nick, 'SASL authentication failed'], { time: new Date().toISOString() }) }], 1300);
+    return send([{ type: 'status', conn: id, status: 'disconnected', error: 'Closing Link: (SASL authentication failed)', retryIn: 2 }], 1500);
+  }
+  const nick = s.nick === 'taken' ? 'taken_' : s.nick;
+  send(
+    [
+      { type: 'registered', conn: id, nick, caps: ['server-time', 'message-tags'] },
+      { type: 'message', conn: id, msg: msg(s.host, '001', [nick, `Welcome to ${s.name || s.host}, ${nick}`]) },
+      { type: 'status', conn: id, status: 'connected', error: null, retryIn: null },
+    ],
+    1800,
+  );
+}
+
 mockWindows('main');
 mockIPC(
   async (cmd, args) => {
@@ -114,6 +141,10 @@ mockIPC(
           settings: { theme: params.get('theme') ?? 'dark', layout: params.get('layout') ?? 'columns', linkPreviews: true },
         };
       case 'connect':
+        if (lastSaved && a.server === lastSaved.id) {
+          firstRun(lastSaved.id);
+          return null;
+        }
         setTimeout(() => emit('irc', scene()), 30);
         return null;
       case 'history':
@@ -143,7 +174,7 @@ mockIPC(
       case 'cert_info':
         throw new Error('file not found');
       case 'save_server':
-        return { ...(a.server as ServerConfig), id: 'new' };
+        return (lastSaved = { ...(a.server as ServerConfig), id: 'new' });
       default:
         return null;
     }

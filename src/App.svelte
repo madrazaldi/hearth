@@ -13,6 +13,12 @@
   const isMac = navigator.userAgent.includes('Mac');
   let systemDark = $state(window.matchMedia('(prefers-color-scheme: dark)').matches);
   let bootError = $state<string | null>(null);
+  // Latched so the welcome flow can show connection progress after the first
+  // server is saved, until the user moves on.
+  let onboarding = $state(false);
+  $effect(() => {
+    if (app.ready && app.servers.length === 0) onboarding = true;
+  });
 
   const theme = $derived(app.settings.theme === 'system' ? (systemDark ? 'dark' : 'light') : app.settings.theme);
 
@@ -87,8 +93,8 @@
     <p class="eyebrow">Hearth failed to start</p>
     <pre class="mono selectable">{bootError}</pre>
   </div>
-{:else if app.ready && app.servers.length === 0}
-  <Welcome />
+{:else if app.ready && (app.servers.length === 0 || onboarding)}
+  <Welcome ondone={() => (onboarding = false)} />
 {:else}
   <div class="shell">
     <Sidebar />
