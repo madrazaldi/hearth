@@ -97,7 +97,6 @@ struct SearchPanel: View {
         Button("Change in Settings…") {
           close()
           app.settingsRoute = SettingsRoute(tab: .privacy, serverId: nil)
-          openSettings()
         }
         .buttonStyle(.link)
       }

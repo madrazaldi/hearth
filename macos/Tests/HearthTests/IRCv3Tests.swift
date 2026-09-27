@@ -24,7 +24,10 @@ extension Harness {
     sent.map { $0.replacing(/ml\d+/, with: "ML").replacing(/label=f\d+/, with: "label=L") }
   }
 
-  func label(_ i: Int = 0) -> String? { sent[i].firstMatch(of: /label=(f\d+)/).map { String($0.output.1) } }
+  func label(_ i: Int = 0) -> String? {
+    guard sent.indices.contains(i) else { return nil }
+    return sent[i].firstMatch(of: /label=(f\d+)/).map { String($0.output.1) }
+  }
 }
 
 @MainActor @Suite("draft/multiline")

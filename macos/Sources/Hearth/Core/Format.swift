@@ -186,7 +186,7 @@ private func linkify(_ seg: Segment) -> [Segment] {
 // ─── Highlight rules ─────────────────────────────────────────────
 
 private let regexRule = try! NSRegularExpression(pattern: #"^/(.+)/([a-z]*)$"#, options: [.dotMatchesLineSeparators])
-private var ruleCache: [String: NSRegularExpression?] = [:]
+private let ruleCache = Memo<NSRegularExpression?>(limit: 500)
 
 /// `/pattern/flags` rules as (pattern, flags); nil for a plain word.
 private func regexParts(_ rule: String) -> (String, String)? {
@@ -214,17 +214,13 @@ private func options(_ flags: String) throws -> NSRegularExpression.Options {
 }
 
 private func compileRule(_ rule: String) -> NSRegularExpression? {
-  if let cached = ruleCache[rule] { return cached }
-  var re: NSRegularExpression?
-  if let (pattern, flags) = regexParts(rule) {
-    re = try? NSRegularExpression(pattern: pattern, options: options(flags))
-  } else {
+  ruleCache.value(rule) {
+    if let (pattern, flags) = regexParts(rule) {
+      return try? NSRegularExpression(pattern: pattern, options: options(flags))
+    }
     let escaped = NSRegularExpression.escapedPattern(for: rule)
-    re = try? NSRegularExpression(pattern: "(^|[^\\w-])\(escaped)($|[^\\w-])", options: [.caseInsensitive])
+    return try? NSRegularExpression(pattern: "(^|[^\\w-])\(escaped)($|[^\\w-])", options: [.caseInsensitive])
   }
-  if ruleCache.count > 500 { ruleCache.removeAll() }
-  ruleCache[rule] = re
-  return re
 }
 
 /// Why a highlight rule is invalid, or nil. `/pattern/flags` rules are regexes; anything else is a word.

@@ -5,6 +5,7 @@ import SwiftUI
 
 struct RootView: View {
   @Environment(AppModel.self) private var app
+  @Environment(\.openSettings) private var openSettings
 
   var body: some View {
     @Bindable var app = app
@@ -23,7 +24,12 @@ struct RootView: View {
     .sheet(isPresented: $app.shortcutsOpen) { ShortcutsHelp().environment(app).themed() }
     .sheet(item: $app.browserConn) { conn in ChannelBrowser(conn: conn).environment(app).themed() }
     .overlay(alignment: .bottom) { ToastStack() }
-    .onChange(of: app.settingsRoute) { if app.settingsRoute != nil { openSettings() } }
+    // showSettingsWindow: no longer opens a SwiftUI Settings scene on macOS 14.
+    .onChange(of: app.settingsRoute) {
+      guard app.settingsRoute != nil else { return }
+      NSApp.activate(ignoringOtherApps: true)
+      openSettings()
+    }
   }
 }
 

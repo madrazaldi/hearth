@@ -3,6 +3,26 @@
 
 import Foundation
 
+/// A string-keyed memo behind a lock: these helpers are called from views and
+/// from tests that run off the main actor.
+final class Memo<Value>: @unchecked Sendable {
+  private var store: [String: Value] = [:]
+  private let lock = NSLock()
+  private let limit: Int
+
+  init(limit: Int = .max) { self.limit = limit }
+
+  func value(_ key: String, _ make: () -> Value) -> Value {
+    lock.withLock {
+      if let v = store[key] { return v }
+      let v = make()
+      if store.count >= limit { store.removeAll() }
+      store[key] = v
+      return v
+    }
+  }
+}
+
 // ─── Ignore masks (ignore.ts) ────────────────────────────────────
 
 /// Expand shorthand into a full nick!user@host mask.
@@ -14,21 +34,20 @@ func normalizeMask(_ input: String) -> String {
   return "\(m)!*@*"
 }
 
-private var maskCache: [String: NSRegularExpression] = [:]
+private let maskCache = Memo<NSRegularExpression>()
 
 private func maskRegex(_ mask: String) -> NSRegularExpression {
-  if let re = maskCache[mask] { return re }
-  var body = ""
-  for c in mask {
-    switch c {
-    case "*": body += ".*"
-    case "?": body += "."
-    default: body += NSRegularExpression.escapedPattern(for: String(c))
+  maskCache.value(mask) {
+    var body = ""
+    for c in mask {
+      switch c {
+      case "*": body += ".*"
+      case "?": body += "."
+      default: body += NSRegularExpression.escapedPattern(for: String(c))
+      }
     }
+    return try! NSRegularExpression(pattern: "^\(body)$", options: [.dotMatchesLineSeparators])
   }
-  let re = try! NSRegularExpression(pattern: "^\(body)$", options: [.dotMatchesLineSeparators])
-  maskCache[mask] = re
-  return re
 }
 
 /// Whether `source` matches any mask. `fold` case-folds per the server's casemapping.
@@ -192,22 +211,21 @@ func aliasError(name: String, body: String) -> String? {
 
 // ─── Nick colours (nickcolor.ts) ─────────────────────────────────
 
-private var hueCache: [String: Double] = [:]
+private let hueCache = Memo<Double>()
 
 /// A stable hue in degrees for a nick; lightness and chroma come from the theme.
 func nickHue(_ nick: String) -> Double {
   var key = nick.lowercased()
   while let l = key.last, "_`|^".contains(l) { key.removeLast() }
-  if let h = hueCache[key] { return h }
-  // FNV-1a over UTF-16 code units, as in the Svelte app, so colours match.
-  var hash: UInt32 = 2_166_136_261
-  for u in key.utf16 {
-    hash ^= UInt32(u)
-    hash = hash &* 16_777_619
+  return hueCache.value(key) {
+    // FNV-1a over UTF-16 code units, as in the Svelte app, so colours match.
+    var hash: UInt32 = 2_166_136_261
+    for u in key.utf16 {
+      hash ^= UInt32(u)
+      hash = hash &* 16_777_619
+    }
+    return Double(hash % 360)
   }
-  let h = Double(hash % 360)
-  hueCache[key] = h
-  return h
 }
 
 // ─── Time (time.ts) ──────────────────────────────────────────────

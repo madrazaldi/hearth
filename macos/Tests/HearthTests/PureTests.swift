@@ -383,6 +383,12 @@ struct OnboardingTests {
     #expect(title("timed out connecting to irc.example:6697").contains("didn't answer"))
   }
 
+  @Test("explainError recognises bans without mistaking \"deadline\" for a D-line")
+  func bans() {
+    #expect(title("Closing Link: irc.example (K-Lined)").contains("refusing"))
+    #expect(title("deadline has elapsed") == "Couldn't connect")
+  }
+
   @Test("explainError tells SASL-required networks apart from bad credentials")
   func sasl() {
     #expect(title("Closing Link: (SASL access only)").contains("log in first"))

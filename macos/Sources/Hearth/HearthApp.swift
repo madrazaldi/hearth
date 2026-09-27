@@ -202,10 +202,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
 struct HearthCommands: Commands {
   let app: AppModel
+  @Environment(\.openSettings) private var openSettings
 
   var body: some Commands {
     CommandGroup(replacing: .newItem) {
-      Button("Add Server…") { app.settingsRoute = SettingsRoute(tab: .servers, serverId: nil); openSettings() }
+      Button("Add Server…") {
+        app.settingsRoute = SettingsRoute(tab: .servers, serverId: nil)
+        // The main window, and RootView's observer, may be closed to the tray.
+        NSApp.activate(ignoringOtherApps: true)
+        openSettings()
+      }
     }
     CommandGroup(after: .textEditing) {
       Divider()
@@ -246,10 +252,4 @@ struct HearthCommands: Commands {
       Button("Keyboard Shortcuts") { app.shortcutsOpen.toggle() }.keyboardShortcut("/")
     }
   }
-}
-
-/// Opens the Settings scene from outside a view (menus, toasts).
-@MainActor func openSettings() {
-  NSApp.activate(ignoringOtherApps: true)
-  NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
 }
