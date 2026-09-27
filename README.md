@@ -19,9 +19,13 @@ A modern IRC client built with Rust, Tauri 2 and Svelte 5.
 - **Tray:** optionally keep running in the menu bar or system tray when the window closes, and mark yourself away after a period in the background.
 - **Unread state:** read markers sync between devices, the sidebar shows unread counts and mention badges, a "New" divider marks where you left off, and the dock badge counts mentions.
 - **Desktop notifications** for mentions, highlight words and private messages.
+- **Highlight rules:** global highlight words, plus per-server words and `/regex/flags` patterns with a live test field, and "never highlight" nicks or masks for bots and relays.
+- **Aliases:** your own slash commands, set up under Settings → Aliases. For example `/ns` → `/msg NickServ $*`. They support `$1`…`$9`, `$2-`, `$*`, `$nick`, `$channel` and `$network`, and several commands separated by `;`. An alias can replace a built-in command and still call it.
+- **Commands on connect:** raw lines to send after each connection, per server (Advanced section of the server form).
 - **Composer:**
-  - Tab completion for nicks (most recent speakers first), channels and commands.
-  - Command suggestions as you type.
+  - Tab completion for nicks (most recent speakers first), channels, commands and aliases.
+  - Command and alias suggestions as you type.
+  - Spellcheck, which can be turned off. Autocorrect and auto-capitalization stay off.
   - Input history.
   - Multi-line sends.
   - Long messages split on word boundaries.
@@ -45,7 +49,7 @@ A modern IRC client built with Rust, Tauri 2 and Svelte 5.
 
 ## Commands
 
-Type `/help` in the app for the full list. The main ones are `/join`, `/part`, `/msg`, `/query`, `/me`, `/notice`, `/nick`, `/topic`, `/whois`, `/away`, `/back`, `/invite`, `/kick`, `/ban`, `/unban`, `/op`, `/deop`, `/voice`, `/devoice`, `/mode`, `/names`, `/ctcp`, `/raw`, `/clear`, `/close`, `/reconnect`, `/quit` and `/list` (opens the channel browser). Also: `/search`, `/ignore` and `/unignore` (no argument lists the ignores), `/watch` and `/unwatch` (alias `/monitor`), and `/notify all|mentions|none` (with `/mute` and `/unmute` as shortcuts). Anything else is sent to the server verbatim.
+Type `/help` in the app for the full list. The main ones are `/join`, `/part`, `/msg`, `/query`, `/me`, `/notice`, `/nick`, `/topic`, `/whois`, `/away`, `/back`, `/invite`, `/kick`, `/ban`, `/unban`, `/op`, `/deop`, `/voice`, `/devoice`, `/mode`, `/names`, `/ctcp`, `/raw`, `/clear`, `/close`, `/reconnect`, `/quit` and `/list` (opens the channel browser). Also: `/search`, `/ignore` and `/unignore` (no argument lists the ignores), `/watch` and `/unwatch` (alias `/monitor`), and `/notify all|mentions|none` (with `/mute` and `/unmute` as shortcuts). Aliases you define in Settings → Aliases work like commands and are listed in `/help`. Anything else is sent to the server verbatim.
 
 ## Shortcuts
 
@@ -59,6 +63,13 @@ Type `/help` in the app for the full list. The main ones are `/join`, `/part`, `
 | ⌘W | Close or leave the buffer |
 | ⌘⇧M | Toggle the member list |
 | ⌘, | Open Settings |
+| ⌘/ | Show all keyboard shortcuts |
+| Esc | Close a panel or cancel a reply |
+| Tab / ⇧Tab | Complete a nick, channel, command or alias |
+| ↑ / ↓ | Input history |
+| ⇧↵ | New line |
+
+On Windows and Linux, use Ctrl instead of ⌘ and Alt instead of ⌥.
 
 ## Development
 
@@ -71,7 +82,7 @@ cd src-tauri && cargo test && cargo clippy   # unit tests + actor tests against 
 pnpm tauri build    # release bundle (needs TAURI_SIGNING_PRIVATE_KEY, see Releasing)
 ```
 
-When `pnpm dev` runs in a plain browser instead of inside Tauri, Hearth replays a scripted IRC session from `src/lib/mock.ts`. This lets you work on the UI without a server. Query parameters control the preview: `?theme=light`, `?layout=compact`, `?view=settings`, `?view=switcher`, `?view=search`, `?view=channels`, `?tab=privacy` (open a Settings tab; add `&server=<id>` to edit a server), `?update=none` (the mock updater reports no update; by default it offers 0.2.0), `?empty` (first-run screen) and `?stress` (a `#stress` channel with about 10k lines of scrollback and 5k members, for performance work; `?stress=live` adds a new line every 3 seconds).
+When `pnpm dev` runs in a plain browser instead of inside Tauri, Hearth replays a scripted IRC session from `src/lib/mock.ts`. This lets you work on the UI without a server. Query parameters control the preview: `?theme=light`, `?layout=compact`, `?view=settings`, `?view=switcher`, `?view=search`, `?view=channels`, `?view=shortcuts`, `?tab=privacy` (open a Settings tab; add `&server=<id>` to edit a server), `?update=none` (the mock updater reports no update; by default it offers 0.2.0), `?empty` (first-run screen) and `?stress` (a `#stress` channel with about 10k lines of scrollback and 5k members, for performance work; `?stress=live` adds a new line every 3 seconds).
 
 CI (`.github/workflows/ci.yml`) runs the checks and tests on Linux, macOS and Windows.
 

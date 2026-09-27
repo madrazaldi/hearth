@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { firstLink, mentions, parseFormatting, stripFormatting, type Segment } from './format';
+import { firstLink, matchingRule, mentions, parseFormatting, ruleError, stripFormatting, type Segment } from './format';
 
 const B = '\x02';
 const C = '\x03';
@@ -172,5 +172,29 @@ describe('mentions', () => {
   it('ignores formatting and empty words', () => {
     expect(mentions(`${B}a${B}nn`, ['ann'])).toBe(true);
     expect(mentions('anything', [''])).toBe(false);
+  });
+});
+
+describe('highlight rules', () => {
+  it('treats /pattern/flags as a regex, matched as written', () => {
+    expect(mentions('CI failed on main', ['/\\bci (failed|broke)\\b/i'])).toBe(true);
+    expect(mentions('CI failed on main', ['/\\bci failed\\b/'])).toBe(false);
+    expect(mentions('deployed', ['/deploy(ed|ing)?/'])).toBe(true);
+    // A stateful flag must not make every other call miss.
+    const rule = '/x/g';
+    expect([1, 2, 3].map(() => mentions('x', [rule]))).toEqual([true, true, true]);
+  });
+
+  it('reports which rule matched, skipping invalid ones', () => {
+    expect(matchingRule('the build is red', ['ann', '/(unclosed/', '/build/'])).toBe('/build/');
+    expect(matchingRule(`${'\x02'}ann${'\x02'}: hi`, ['bob', 'ann'])).toBe('ann');
+    expect(matchingRule('nothing here', ['ann'])).toBeNull();
+  });
+
+  it('validates regex rules and accepts plain words', () => {
+    expect(ruleError('deploy')).toBeNull();
+    expect(ruleError('/a|b/i')).toBeNull();
+    expect(ruleError('/(unclosed/')).toMatch(/./);
+    expect(ruleError('/a/q')).toMatch(/flag/i);
   });
 });

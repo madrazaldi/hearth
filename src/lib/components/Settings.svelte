@@ -7,16 +7,17 @@
   import Segmented from './Segmented.svelte';
   import ServerForm from './ServerForm.svelte';
   import BouncerNetworks from './BouncerNetworks.svelte';
+  import NetworkHighlights from './NetworkHighlights.svelte';
+  import AliasEditor from './AliasEditor.svelte';
+  import ShortcutList from './ShortcutList.svelte';
   import { updater } from '../updater.svelte';
-
-  const isMac = navigator.userAgent.includes('Mac');
-  const mod = isMac ? '⌘' : 'Ctrl';
 
   const tabs = [
     { id: 'servers', label: 'Servers', icon: 'server' },
     { id: 'general', label: 'General', icon: 'settings' },
     { id: 'appearance', label: 'Appearance', icon: 'moon' },
     { id: 'notifications', label: 'Notifications', icon: 'bell' },
+    { id: 'aliases', label: 'Aliases', icon: 'terminal' },
     { id: 'privacy', label: 'Privacy & data', icon: 'lock' },
     { id: 'shortcuts', label: 'Shortcuts', icon: 'layers' },
   ];
@@ -118,6 +119,11 @@
           {#if bouncer?.isControl}
             <BouncerNetworks conn={bouncer} />
           {/if}
+          {#if editing !== 'new'}
+            {#key editing}
+              <NetworkHighlights serverId={editServer.id} nick={editServer.nick} />
+            {/key}
+          {/if}
         {:else}
           <h2>Servers</h2>
           <p class="lede">Networks and bouncers Hearth connects to. A soju bouncer expands into all of its networks automatically.</p>
@@ -164,6 +170,11 @@
               ]}
             />
           </div>
+          <Switch
+            bind:checked={() => app.settings.spellcheck, (v) => app.updateSettings({ spellcheck: v })}
+            label="Check spelling as I type"
+            hint="Underlines misspelled words in the message box. Autocorrect and auto-capitalization stay off."
+          />
           <Switch
             bind:checked={() => app.settings.checkUpdates, (v) => app.updateSettings({ checkUpdates: v })}
             label="Check for updates automatically"
@@ -333,25 +344,16 @@
               onchange={() => app.updateSettings({ highlightWords: words.split(',').map((w) => w.trim()).filter(Boolean) })}
               placeholder="hearth, deploy"
             />
-            <small>Comma-separated. Your nickname always counts.</small>
+            <small>Comma-separated. Your nickname always counts. Add per-server words and exceptions on each server's settings page.</small>
           </label>
         </div>
+      {:else if tab === 'aliases'}
+        <h2>Aliases</h2>
+        <p class="lede">Your own slash commands. <code>/j</code> → <code>/join $1</code>, <code>/ns</code> → <code>/msg NickServ $*</code>. They show up in command suggestions and Tab completion.</p>
+        <AliasEditor />
       {:else if tab === 'shortcuts'}
         <h2>Shortcuts</h2>
-        <dl class="keys">
-          <dt><span class="kbd">{mod} K</span></dt><dd>Jump to buffer</dd>
-          <dt><span class="kbd">⌥ ↑</span> <span class="kbd">⌥ ↓</span></dt><dd>Previous / next buffer</dd>
-          <dt><span class="kbd">⌥ ⇧ ↑</span> <span class="kbd">⌥ ⇧ ↓</span></dt><dd>Previous / next unread</dd>
-          <dt><span class="kbd">{mod} 1–9</span></dt><dd>Go to channel by position</dd>
-          <dt><span class="kbd">{mod} F</span></dt><dd>Filter messages</dd>
-          <dt><span class="kbd">{mod} ⇧ F</span></dt><dd>Search all messages</dd>
-          <dt><span class="kbd">{mod} W</span></dt><dd>Close buffer</dd>
-          <dt><span class="kbd">{mod} ⇧ M</span></dt><dd>Toggle member list</dd>
-          <dt><span class="kbd">{mod} ,</span></dt><dd>Settings</dd>
-          <dt><span class="kbd">Tab</span></dt><dd>Complete nick, channel or command</dd>
-          <dt><span class="kbd">↑</span> <span class="kbd">↓</span></dt><dd>Input history</dd>
-          <dt><span class="kbd">⇧ ↵</span></dt><dd>New line</dd>
-        </dl>
+        <div class="keys"><ShortcutList /></div>
       {/if}
     </section>
   </div>
@@ -595,20 +597,7 @@
     font-size: 11.5px;
   }
 
-  .keys {
-    display: grid;
-    grid-template-columns: 180px 1fr;
-    gap: 10px 16px;
-    font-size: 13.5px;
-  }
-
-  .keys dt {
-    display: flex;
-    gap: 4px;
-  }
-
-  .keys dd {
-    margin: 0;
-    color: var(--text-2);
+  .lede code {
+    white-space: nowrap;
   }
 </style>

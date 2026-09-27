@@ -2,7 +2,7 @@ import { SvelteMap } from 'svelte/reactivity';
 import { api, onIrc } from './api';
 import { casefold, escapeTag, parsePrefix, splitMessage, type PrefixMap } from './irc';
 import { isIgnored, normalizeMask } from './ignore';
-import { stripFormatting } from './format';
+import { mentions, stripFormatting } from './format';
 import { notify } from './notify';
 import { handleMessage } from './incoming';
 import { fetchHistory, fetchTargets, loadAround, mergeLines } from './history';
@@ -16,6 +16,7 @@ import {
   type IrcEvent,
   type IrcMessage,
   type Line,
+  type NetworkHighlights,
   type NotifyLevel,
   type Preview,
   type SearchHit,
@@ -327,6 +328,9 @@ export class App {
   searchQuery = $state('');
   browserConn = $state<Conn | null>(null);
   settingsOpen = $state<null | { tab: string; serverId?: string }>(null);
+  shortcutsOpen = $state(false);
+  /** Latched by the first-run flow so it can show connection progress after the first save. */
+  onboarding = $state(false);
   toasts = $state<Toast[]>([]);
   inputHistory: string[] = [];
 
@@ -738,8 +742,23 @@ export class App {
     return this.active?.conn === conn ? this.active : conn.server;
   }
 
+  get welcoming(): boolean {
+    return this.ready && (this.servers.length === 0 || this.onboarding);
+  }
+
+  networkHighlights(serverId: string): NetworkHighlights {
+    return this.settings.networkHighlights[serverId] ?? { words: [], never: [] };
+  }
+
   highlightWords(conn: Conn): string[] {
-    return [conn.nick, ...this.settings.highlightWords];
+    return [conn.nick, ...this.settings.highlightWords, ...this.networkHighlights(conn.serverId).words];
+  }
+
+  /** Whether a message from `src` highlights us. */
+  isHighlight(conn: Conn, src: Source | null, text: string): boolean {
+    const never = this.networkHighlights(conn.serverId).never;
+    if (src && isIgnored(never, src, (s) => conn.fold(s))) return false;
+    return mentions(text, this.highlightWords(conn));
   }
 
   maybeNotify(conn: Conn, buf: Buffer, nick: string, text: string, important: boolean) {

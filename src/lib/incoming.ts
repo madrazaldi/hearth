@@ -1,7 +1,6 @@
 // Turns IRC messages from the server into state changes and buffer lines.
 
 import { msgTime, parseCtcp, parseAttrs, parseMask } from './irc';
-import { mentions } from './format';
 import { mkLine, type App, type Buffer, type Conn, type Member } from './state.svelte';
 import type { IrcMessage, Line, LineType } from './types';
 
@@ -38,7 +37,7 @@ export function historyLine(app: App, conn: Conn, m: IrcMessage): Line | null {
       if (app.isIgnored(conn, m.source)) return null;
       const { type, text } = messageBody(m);
       if (type === null) return null;
-      return mkLine({ ...base, type, text, highlight: !base.self && mentions(text, app.highlightWords(conn)) });
+      return mkLine({ ...base, type, text, highlight: !base.self && app.isHighlight(conn, m.source, text) });
     }
     case 'JOIN':
       return mkLine({ ...base, type: 'join', data: { host: `${m.source?.user ?? ''}@${m.source?.host ?? ''}` } });
@@ -341,7 +340,7 @@ function onMessage(app: App, conn: Conn, m: IrcMessage, base: Base) {
     buf = existing ?? conn.ensure(peer, 'query');
   }
 
-  const highlight = !base.self && mentions(text, app.highlightWords(conn));
+  const highlight = !base.self && app.isHighlight(conn, src, text);
   buf.typing.delete(nick);
   if (!isChan) {
     const mem = buf.member(nick);
