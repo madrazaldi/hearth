@@ -168,7 +168,7 @@ export function explainError(raw: string, ctx: { host: string; port: number; tls
     return { title: "The server didn't answer", hint: 'Check your internet connection and the server address.' };
   if (/registration timed out/.test(e))
     return { title: 'The server never finished logging you in', hint: 'It may be busy. Try again in a moment.' };
-  if (/[kgzd]-?line|banned|ban\b/.test(e))
+  if (/\b[kgzd]-?line|\bbanned\b|\bban\b/.test(e))
     return { title: 'This network is refusing connections from your address', hint: 'This is set by the network, not Hearth.' };
   if (/too many|throttl|reconnecting too fast/.test(e))
     return { title: 'Too many connections from your address', hint: 'Wait a minute, then try again.' };

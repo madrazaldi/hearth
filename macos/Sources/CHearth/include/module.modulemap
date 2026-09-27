@@ -1,0 +1,4 @@
+module CHearth {
+  header "hearth.h"
+  export *
+}

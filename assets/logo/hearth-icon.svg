@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Hearth app icon. macOS grid: 824x824 tile at (100,100), r=185.
+       Rasterize with build.sh (AppKit's SVG renderer: no filters, so the
+       shadow is stacked translucent rects). -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2d2723"/>
+      <stop offset="1" stop-color="#161311"/>
+    </linearGradient>
+    <linearGradient id="stone" x1="0" y1="206" x2="0" y2="844" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f5efe6"/>
+      <stop offset="1" stop-color="#dacfc0"/>
+    </linearGradient>
+    <linearGradient id="flame" x1="0" y1="418" x2="0" y2="680" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffb674"/>
+      <stop offset="1" stop-color="#e5612a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="516" cy="690" r="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ef8b4f" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ef8b4f" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <g fill="#000" fill-opacity="0.022">
+    <rect x="98" y="110" width="828" height="828" rx="187"/>
+    <rect x="95.6" y="107.6" width="832.8" height="832.8" rx="189.4"/>
+    <rect x="93.2" y="105.2" width="837.6" height="837.6" rx="191.8"/>
+    <rect x="90.8" y="102.8" width="842.4" height="842.4" rx="194.2"/>
+    <rect x="88.4" y="100.4" width="847.2" height="847.2" rx="196.6"/>
+    <rect x="86" y="98" width="852" height="852" rx="199"/>
+    <rect x="83.6" y="95.6" width="856.8" height="856.8" rx="201.4"/>
+    <rect x="81.2" y="93.2" width="861.6" height="861.6" rx="203.8"/>
+    <rect x="78.8" y="90.8" width="866.4" height="866.4" rx="206.2"/>
+    <rect x="76.4" y="88.4" width="871.2" height="871.2" rx="208.6"/>
+  </g>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)"/>
+  <!-- fireplace surround, shaped as a speech bubble -->
+  <path d="M256 844V470A264 264 0 0 1 784 470V720A48 48 0 0 1 736 768H384Z" fill="url(#stone)"/>
+  <!-- firebox -->
+  <path d="M352 680V470A168 168 0 0 1 688 470V680Z" fill="#141110"/>
+  <path d="M352 680V470A168 168 0 0 1 688 470V680Z" fill="url(#glow)"/>
+  <path d="M438 602C438 540 474 500 500 466C516 446 530 436 542 418C552 478 594 526 594 602A78 78 0 0 1 438 602Z" fill="url(#flame)"/>
+  <path d="M478 642C478 610 502 588 526 558C534 592 554 612 554 642A38 38 0 0 1 478 642Z" fill="#ffe4c8"/>
+</svg>

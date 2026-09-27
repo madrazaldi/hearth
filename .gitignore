@@ -26,3 +26,11 @@ dist-ssr
 # Tauri
 src-tauri/target
 src-tauri/gen
+
+# Rust workspace
+/target
+
+# macOS app
+macos/.build
+macos/.rust
+macos/build

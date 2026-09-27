@@ -41,6 +41,11 @@ describe('explainError', () => {
     expect(explainError('timed out connecting to irc.example:6697', ctx).title).toMatch(/didn't answer/);
   });
 
+  it('recognises bans without mistaking "deadline" for a D-line', () => {
+    expect(explainError('Closing Link: irc.example (K-Lined)', ctx).title).toMatch(/refusing/);
+    expect(explainError('deadline has elapsed', ctx).title).toBe("Couldn't connect");
+  });
+
   it('tells SASL-required networks apart from bad credentials', () => {
     expect(explainError('Closing Link: (SASL access only)', ctx).title).toMatch(/log in first/);
     expect(explainError('SASL authentication failed', { ...ctx, sasl: true }).title).toMatch(/not accepted/);
