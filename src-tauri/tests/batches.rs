@@ -191,7 +191,8 @@ async fn nested_batches_inside_history_stay_in_the_reply() {
     p.send(":srv BATCH -w").await;
 
     let got = result(a).await.unwrap();
-    assert_eq!(texts(&got), ["before", "line one", "line two", "after"]);
+    assert_eq!(texts(&got), ["before", "line one\nline two", "after"], "the multiline batch reads as one message");
+    assert_eq!(got[1].tag("msgid"), Some("2"));
     p.assert_quiet().await;
     h.event(|m| m.command == "PING" && m.param(0) == "sync").await;
     assert_eq!(
@@ -201,7 +202,7 @@ async fn nested_batches_inside_history_stay_in_the_reply() {
     );
     h.db.flush();
     let logged = h.db.history("t", "#a", None, 10).unwrap();
-    assert_eq!(texts(&logged), ["before", "after"], "only messages with ids are backfilled");
+    assert_eq!(texts(&logged), ["before", "line one\nline two", "after"]);
     h.mgr.disconnect_all();
 }
 

@@ -163,6 +163,7 @@ export function handleMessage(app: App, conn: Conn, m: IrcMessage) {
     }
 
     case 'QUIT': {
+      conn.metadata.delete(conn.fold(nick));
       for (const buf of conn.buffers.values()) {
         if (buf.removeMember(nick) || (buf.kind === 'query' && conn.fold(buf.name) === conn.fold(nick))) {
           buf.push(mkLine({ ...base, type: 'quit', text: p[0] ?? '' }));
@@ -175,6 +176,11 @@ export function handleMessage(app: App, conn: Conn, m: IrcMessage) {
     case 'NICK': {
       const next = p[0];
       if (self) conn.nick = next;
+      const meta = conn.metadata.get(conn.fold(nick));
+      if (meta) {
+        conn.metadata.delete(conn.fold(nick));
+        conn.metadata.set(conn.fold(next), meta);
+      }
       // Snapshot: renaming a query re-inserts it into the map being walked.
       for (const buf of [...conn.buffers.values()]) {
         const mem = buf.member(nick);
@@ -261,14 +267,21 @@ export function handleMessage(app: App, conn: Conn, m: IrcMessage) {
 
     case 'FAIL':
     case 'WARN':
-    case 'NOTE': {
-      const text = p[p.length - 1] ?? '';
-      if (p[0] === 'CHATHISTORY' || p[0] === 'MARKREAD' || p[0] === 'SEARCH') return;
-      if (p[0] === 'BOUNCER' && m.command === 'FAIL') return app.toast(`Bouncer: ${text}`, 'error');
-      const target = m.command === 'NOTE' ? conn.server : app.here(conn, m.tags.label);
-      target.push(mkLine({ ...base, nick: '', type: m.command === 'NOTE' ? 'info' : 'error', text: `${p[0]}: ${text}` }));
+    case 'NOTE':
+      return onStandardReply(app, conn, m, base);
+
+    case 'RENAME':
+      return onRename(app, conn, m, base);
+
+    case 'METADATA': {
+      // METADATA <target> <key> <visibility> [:<value>]; no value means unset.
+      if (p.length >= 3) conn.setMetadata(p[0], p[1], p.length >= 4 ? p[3] : undefined);
       return;
     }
+
+    case 'REGISTER':
+    case 'VERIFY':
+      return onRegistration(app, conn, m, base);
 
     case 'PING':
     case 'PONG':
@@ -349,6 +362,110 @@ function onMessage(app: App, conn: Conn, m: IrcMessage, base: Base) {
   }
   buf.push(mkLine({ ...base, type, text, highlight }));
   if (!base.self) app.maybeNotify(conn, buf, nick, text, highlight || !isChan);
+}
+
+/** "ACCOUNT_REQUIRED" → "Account required", for replies without a description. */
+function humanize(code: string): string {
+  const s = code.replace(/_/g, ' ').toLowerCase();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// Commands whose failures are reported to whoever asked (history requests).
+const QUIET_REPLIES = new Set(['CHATHISTORY', 'MARKREAD', 'SEARCH']);
+
+/**
+ * IRCv3 standard replies: FAIL/WARN/NOTE <command> <code> [<context>…] :<description>.
+ * They go to the buffer that sent the command (by label), else to a buffer
+ * named in the context, else where the user is looking.
+ */
+function onStandardReply(app: App, conn: Conn, m: IrcMessage, base: Base) {
+  const p = m.params;
+  const [command = '*', code = ''] = p;
+  const context = p.slice(2, -1);
+  const desc = (p.length > 2 ? p[p.length - 1] : '') || humanize(code);
+  const kind = m.command;
+  if (QUIET_REPLIES.has(command)) return;
+  if (command === 'BOUNCER' && kind === 'FAIL') return app.toast(`Bouncer: ${desc}`, 'error');
+  if (command === 'REGISTER' || command === 'VERIFY') return onRegistration(app, conn, m, base);
+  // Our automatic metadata subscription failing is nothing the user can act on.
+  if (command === 'METADATA' && !m.tags.label && ['TOO_MANY_SUBS', 'KEY_INVALID', 'RATE_LIMITED'].includes(code)) return;
+
+  const label = m.tags.label;
+  const about = label ? undefined : context.map((c) => (c && c !== '*' ? conn.buffer(c) : undefined)).find((b) => b);
+  const where = label ? app.here(conn, label) : (about ?? (kind === 'NOTE' ? conn.server : app.here(conn)));
+  const what = command === '*' ? '' : command;
+  const text =
+    kind === 'FAIL' ? (what ? `${what} failed: ${desc}` : desc) : kind === 'WARN' ? `Warning${what ? ` (${what})` : ''}: ${desc}` : desc;
+  where.push(mkLine({ ...base, nick: '', type: kind === 'FAIL' ? 'error' : 'info', text, data: { code } }));
+}
+
+/** draft/channel-rename: RENAME <old> <new> [:<reason>]. The buffer keeps its history and state. */
+function onRename(app: App, conn: Conn, m: IrcMessage, base: Base) {
+  const [from = '', to = '', reason = ''] = m.params;
+  const buf = conn.buffer(from);
+  if (!buf || !to) return;
+  const clash = conn.buffer(to);
+  if (clash && clash !== buf) {
+    // A stale buffer under the new name (e.g. parted earlier) gives way.
+    conn.buffers.delete(clash.key);
+    if (app.active === clash) app.open(buf);
+  }
+  const oldPref = buf.prefKey;
+  conn.buffers.delete(buf.key);
+  buf.name = to;
+  conn.buffers.set(conn.fold(to), buf);
+  const level = app.settings.bufferNotify[oldPref];
+  if (level) {
+    const next = { ...app.settings.bufferNotify, [buf.prefKey]: level };
+    delete next[oldPref];
+    app.updateSettings({ bufferNotify: next });
+  }
+  if (app.active === buf) app.rememberActive();
+  app.saveBuffersSoon(conn);
+  const who = base.nick && !base.self ? `${base.nick} renamed` : 'Renamed';
+  buf.push(mkLine({ ...base, nick: '', type: 'info', text: `${who} ${from} to ${to}${reason ? ` (${reason})` : ''}` }));
+}
+
+/**
+ * draft/account-registration replies:
+ *   REGISTER SUCCESS|VERIFICATION_REQUIRED <account> :<message>
+ *   VERIFY SUCCESS <account> :<message>
+ *   FAIL REGISTER|VERIFY <code> [<account>] :<description>
+ */
+function onRegistration(app: App, conn: Conn, m: IrcMessage, base: Base) {
+  const p = m.params;
+  const fail = m.command === 'FAIL';
+  const command = fail ? p[0] : m.command;
+  const status = fail ? p[1] : p[0];
+  const account = fail ? '' : (p[1] ?? '');
+  const desc = p.length > 2 ? p[p.length - 1] : '';
+  const where = app.here(conn, m.tags.label);
+  const say = (text: string, type: LineType = 'info') => where.push(mkLine({ ...base, nick: '', type, text }));
+
+  if (fail) {
+    const what = command === 'VERIFY' ? 'Verification' : 'Registration';
+    say(`${what} failed: ${desc || humanize(status)}`, 'error');
+    // A wrong code can be retried; a refused registration is over.
+    if (command === 'REGISTER') conn.registration = null;
+    return;
+  }
+  if (status === 'VERIFICATION_REQUIRED') {
+    if (conn.registration) conn.registration.account = account;
+    say(`${desc || `Account ${account} needs verifying`} — then type /verify ${account} <code>`);
+    return;
+  }
+  if (status !== 'SUCCESS') return;
+  say(command === 'VERIFY' ? `Account ${account} verified` : `Account ${account} registered`);
+  const creds = conn.registration;
+  conn.registration = null;
+  // Offer SASL only for a server we connect to directly: a bouncer network's
+  // config is the bouncer's own login.
+  if (!creds || conn.netid || conn.isControl || !conn.config) return;
+  const name = account || creds.account;
+  app.toast(`Registered ${name}. Sign in automatically from now on?`, 'info', {
+    label: 'Save login',
+    run: () => app.saveLogin(conn, name, creds.password),
+  });
 }
 
 function ctcpReply(cmd: string, args: string): string | null {
@@ -601,6 +718,28 @@ function onNumeric(app: App, conn: Conn, m: IrcMessage, time: number) {
     }
     case '732':
     case '733':
+      return;
+
+    // draft/metadata-2
+    case '761':
+      // <client> <target> <key> <visibility> :<value>
+      conn.setMetadata(p[1], p[2], p[4] ?? '');
+      return;
+    case '766':
+      conn.setMetadata(p[1], p[2], undefined);
+      return;
+    case '774': {
+      // RPL_METADATASYNCLATER <client> <target> [<retry after>]: ask again later.
+      const target = p[1];
+      const secs = Math.min(Math.max(parseInt(p[2] ?? '') || 5, 1), 300);
+      setTimeout(() => conn.status === 'connected' && conn.send(`METADATA ${target} SYNC`), secs * 1000);
+      return;
+    }
+    case '760':
+    case '762':
+    case '770':
+    case '771':
+    case '772':
       return;
     case '734':
       return info(`Can't watch more nicknames: the server allows ${p[1]}`, conn.server, 'error');

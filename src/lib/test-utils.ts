@@ -24,6 +24,7 @@ export const mockApi = {
   saveBuffers: vi.fn(async () => {}),
   clearLogs: vi.fn(),
   linkPreview: vi.fn(),
+  avatar: vi.fn(async (url: string) => `data:image/png;base64,${btoa(url)}`),
   generateCert: vi.fn(),
   certInfo: vi.fn(),
   uploadFile: vi.fn(),
@@ -60,12 +61,12 @@ export function msg(line: string): IrcMessage {
 
 export function connect(
   app: { handleEvents: (e: IrcEvent[]) => void },
-  opts: { id?: string; caps?: string[]; isupport?: Record<string, string>; nick?: string } = {},
+  opts: { id?: string; caps?: string[]; capValues?: Record<string, string>; isupport?: Record<string, string>; nick?: string } = {},
 ) {
   const conn = opts.id ?? 'c';
   app.handleEvents([
     { type: 'conn-added', conn, server: conn, parent: null, netid: null },
-    { type: 'registered', conn, nick: opts.nick ?? 'me', caps: opts.caps ?? [] },
+    { type: 'registered', conn, nick: opts.nick ?? 'me', caps: opts.caps ?? [], capValues: opts.capValues },
     { type: 'isupport', conn, isupport: { CHANTYPES: '#', PREFIX: '(ov)@+', CASEMAPPING: 'ascii', ...(opts.isupport ?? {}) } },
     { type: 'status', conn, status: 'connected', error: null, retryIn: null },
   ]);

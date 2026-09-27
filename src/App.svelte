@@ -131,7 +131,14 @@
 
 <div class="toasts" aria-live="polite">
   {#each app.toasts as t (t.id)}
-    <div class="toast" class:error={t.kind === 'error'}>{t.text}</div>
+    <div class="toast" class:error={t.kind === 'error'} class:has-action={t.action}>
+      {t.text}
+      {#if t.action}
+        {@const action = t.action}
+        <button class="btn primary" onclick={() => (app.dismissToast(t.id), action.run())}>{action.label}</button>
+        <button class="btn ghost" onclick={() => app.dismissToast(t.id)}>Not now</button>
+      {/if}
+    </div>
   {/each}
 </div>
 
@@ -188,6 +195,13 @@
     font-size: 13px;
     color: var(--text);
     animation: rise 180ms var(--ease);
+  }
+
+  .toast.has-action {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    pointer-events: auto;
   }
 
   .toast.error {

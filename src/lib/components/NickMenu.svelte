@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app, type Buffer } from '../state.svelte';
   import { nickHue } from '../nickcolor';
+  import Avatar from './Avatar.svelte';
 
   let { buf, nick, x, y, onclose }: { buf: Buffer; nick: string; x: number; y: number; onclose: () => void } = $props();
 
@@ -17,6 +18,8 @@
   const ignored = $derived(app.isIgnored(conn, source));
   const watched = $derived(app.isWatched(conn, nick));
   const online = $derived(conn.online.get(conn.fold(nick)));
+  const profile = $derived(conn.profile(nick));
+  const showAvatar = $derived(app.settings.loadAvatars && !!profile.avatar);
 
   let el = $state<HTMLDivElement>();
   let pos = $state({ left: 0, top: 0 });
@@ -48,8 +51,10 @@
   onclick={(e) => e.stopPropagation()}
   onkeydown={(e) => e.key === 'Escape' && onclose()}
 >
-  <div class="head">
+  <div class="head" class:with-avatar={showAvatar}>
+    {#if showAvatar}<Avatar {conn} {nick} size={40} />{/if}
     <div class="name nick" style="--h:{nickHue(nick)}">{nick}</div>
+    {#if profile.displayName && profile.displayName !== nick}<div class="display">{profile.displayName}</div>{/if}
     {#if member?.user}<div class="mask mono selectable">{member.user}@{member.host}</div>{/if}
     <div class="meta">
       {#if member?.prefix}<span>{member.prefix}</span>{/if}
@@ -110,6 +115,15 @@
   .name {
     font-size: 15px;
     font-weight: 600;
+  }
+
+  .with-avatar :global(.avatar) {
+    margin-bottom: 8px;
+  }
+
+  .display {
+    font-size: 12.5px;
+    color: var(--text-2);
   }
 
   .mask {

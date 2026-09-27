@@ -66,6 +66,7 @@ pub struct LogEntry {
 enum Write {
     Log(LogEntry),
     Redact { network: String, msgid: String },
+    Rename { network: String, from: String, to: String },
     Flush(mpsc::Sender<()>),
 }
 
@@ -145,6 +146,14 @@ impl Db {
 
     pub fn redact(&self, network: &str, msgid: &str) {
         let _ = self.writes.send(Write::Redact { network: network.into(), msgid: msgid.into() });
+    }
+
+    /// Move a buffer's log to a new (case-folded) name, e.g. after a channel
+    /// rename. Queued behind pending writes so none land under the old name.
+    pub fn rename_target(&self, network: &str, from: &str, to: &str) {
+        if from != to {
+            let _ = self.writes.send(Write::Rename { network: network.into(), from: from.into(), to: to.into() });
+        }
     }
 
     /// Block until every queued write is committed.
@@ -303,6 +312,7 @@ fn apply(db: &mut Connection, batch: Vec<Write>) -> rusqlite::Result<()> {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )?;
         let mut redact = tx.prepare_cached("DELETE FROM messages WHERE network = ?1 AND msgid = ?2")?;
+        let mut rename = tx.prepare_cached("UPDATE messages SET target = ?3 WHERE network = ?1 AND target = ?2")?;
         for w in batch {
             match w {
                 Write::Log(mut e) => {
@@ -316,6 +326,9 @@ fn apply(db: &mut Connection, batch: Vec<Write>) -> rusqlite::Result<()> {
                 }
                 Write::Redact { network, msgid } => {
                     redact.execute(params![network, msgid])?;
+                }
+                Write::Rename { network, from, to } => {
+                    rename.execute(params![network, from, to])?;
                 }
                 Write::Flush(_) => {}
             }
@@ -459,6 +472,18 @@ mod tests {
         db.flush();
         assert_eq!(db.history("srv", "#a", None, 10).unwrap().len(), 1);
         assert!(db.search("hello", None, None, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn renamed_channels_keep_their_log() {
+        let db = Db::memory().unwrap();
+        log(&db, "#old", privmsg("2026-01-01T00:00:01.000Z", "ann", "#old", "before", None));
+        db.rename_target("srv", "#old", "#new");
+        log(&db, "#new", privmsg("2026-01-01T00:00:02.000Z", "ann", "#new", "after", None));
+        db.flush();
+        assert!(db.history("srv", "#old", None, 10).unwrap().is_empty());
+        let texts: Vec<_> = db.history("srv", "#new", None, 10).unwrap().iter().map(|m| m.param(1).to_string()).collect();
+        assert_eq!(texts, ["before", "after"]);
     }
 
     #[test]

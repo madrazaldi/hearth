@@ -1,6 +1,9 @@
 //! Link previews, fetched by the backend so the webview never talks to
 //! third-party hosts. Images come back as data URLs.
 //!
+//! Avatars (draft/metadata-2 `avatar` URLs) are fetched the same way, with a
+//! smaller size limit and every redirect hop checked by hand.
+//!
 //! Only public addresses are fetched: a link in a channel must not be able to
 //! make Hearth probe the user's LAN or localhost.
 
@@ -15,6 +18,9 @@ use std::time::Duration;
 const MAX_HTML: usize = 512 * 1024;
 const MAX_IMAGE: usize = 4 * 1024 * 1024;
 const CACHE: usize = 300;
+const MAX_AVATAR: usize = 1024 * 1024;
+const AVATAR_CACHE: usize = 1000;
+const MAX_REDIRECTS: usize = 4;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -29,11 +35,41 @@ pub struct Preview {
     pub image: Option<String>,
 }
 
-type Cached = Option<Arc<Preview>>;
+/// A bounded map that forgets its oldest entries. Failures are cached too,
+/// so a dead URL isn't fetched again every time it's shown.
+struct Cache<T> {
+    map: HashMap<String, Option<T>>,
+    order: VecDeque<String>,
+    cap: usize,
+}
+
+impl<T: Clone> Cache<T> {
+    fn new(cap: usize) -> Self {
+        Cache { map: HashMap::new(), order: VecDeque::new(), cap }
+    }
+
+    fn get(&self, key: &str) -> Option<Option<T>> {
+        self.map.get(key).cloned()
+    }
+
+    fn insert(&mut self, key: &str, value: Option<T>) {
+        if self.map.insert(key.to_string(), value).is_none() {
+            self.order.push_back(key.to_string());
+        }
+        while self.order.len() > self.cap {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            }
+        }
+    }
+}
 
 pub struct Previewer {
     client: reqwest::Client,
-    cache: Mutex<(HashMap<String, Cached>, VecDeque<String>)>,
+    /// Follows no redirects, so each hop can be vetted with `check_public`.
+    direct: reqwest::Client,
+    cache: Mutex<Cache<Arc<Preview>>>,
+    avatars: Mutex<Cache<Arc<String>>>,
 }
 
 impl Previewer {
@@ -55,32 +91,66 @@ impl Previewer {
                 attempt.stop()
             }
         });
-        let client = reqwest::Client::builder()
-            .redirect(policy)
-            .timeout(Duration::from_secs(8))
-            .connect_timeout(Duration::from_secs(5))
-            .user_agent("Mozilla/5.0 (compatible; Hearth link preview)")
-            .build()
-            .expect("HTTP client");
-        Previewer { client, cache: Mutex::new((HashMap::new(), VecDeque::new())) }
+        let build = |redirect| {
+            reqwest::Client::builder()
+                .redirect(redirect)
+                .timeout(Duration::from_secs(8))
+                .connect_timeout(Duration::from_secs(5))
+                .user_agent("Mozilla/5.0 (compatible; Hearth link preview)")
+                .build()
+                .expect("HTTP client")
+        };
+        Previewer {
+            client: build(policy),
+            direct: build(reqwest::redirect::Policy::none()),
+            cache: Mutex::new(Cache::new(CACHE)),
+            avatars: Mutex::new(Cache::new(AVATAR_CACHE)),
+        }
     }
 
     pub async fn preview(&self, url: &str) -> Result<Preview> {
-        if let Some(hit) = self.cache.lock().unwrap().0.get(url).cloned() {
+        if let Some(hit) = self.cache.lock().unwrap().get(url) {
             return hit.map(|p| (*p).clone()).ok_or_else(|| anyhow!("no preview"));
         }
         let result = self.fetch(url).await;
         let entry = result.as_ref().ok().map(|p| Arc::new(p.clone()));
-        let mut cache = self.cache.lock().unwrap();
-        if cache.0.insert(url.to_string(), entry).is_none() {
-            cache.1.push_back(url.to_string());
-        }
-        while cache.1.len() > CACHE {
-            if let Some(old) = cache.1.pop_front() {
-                cache.0.remove(&old);
-            }
-        }
+        self.cache.lock().unwrap().insert(url, entry);
         result
+    }
+
+    /// A user's avatar image as a data: URL.
+    pub async fn avatar(&self, url: &str) -> Result<String> {
+        if let Some(hit) = self.avatars.lock().unwrap().get(url) {
+            return hit.map(|a| (*a).clone()).ok_or_else(|| anyhow!("no avatar"));
+        }
+        let result = self.fetch_avatar(url).await;
+        let entry = result.as_ref().ok().map(|a| Arc::new(a.clone()));
+        self.avatars.lock().unwrap().insert(url, entry);
+        result
+    }
+
+    async fn fetch_avatar(&self, url: &str) -> Result<String> {
+        let mut url = reqwest::Url::parse(url).context("invalid URL")?;
+        for _ in 0..=MAX_REDIRECTS {
+            check_public(&url).await?;
+            let resp = self.direct.get(url.clone()).send().await?;
+            if resp.status().is_redirection() {
+                let next = resp
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                    .ok_or_else(|| anyhow!("redirect without a location"))?;
+                url = url.join(next).context("invalid redirect")?;
+                continue;
+            }
+            let resp = resp.error_for_status()?;
+            let ctype = content_type(&resp);
+            if !ctype.starts_with("image/") {
+                return Err(anyhow!("not an image"));
+            }
+            return image_data_url(&ctype, read_limited(resp, MAX_AVATAR).await?);
+        }
+        Err(anyhow!("too many redirects"))
     }
 
     async fn fetch(&self, url: &str) -> Result<Preview> {
@@ -391,6 +461,27 @@ mod tests {
         assert!(is_local_name("printer.local"));
         assert!(is_local_name("router"));
         assert!(!is_local_name("example.com"));
+    }
+
+    #[test]
+    fn cache_forgets_the_oldest_entries() {
+        let mut c: Cache<u32> = Cache::new(2);
+        c.insert("a", Some(1));
+        c.insert("b", None);
+        c.insert("a", Some(2));
+        assert_eq!(c.get("a"), Some(Some(2)));
+        assert_eq!(c.get("b"), Some(None), "failures are remembered");
+        c.insert("c", Some(3));
+        assert_eq!(c.get("a"), None);
+        assert_eq!(c.get("c"), Some(Some(3)));
+    }
+
+    #[tokio::test]
+    async fn avatars_refuse_private_addresses() {
+        let p = Previewer::new();
+        for url in ["http://127.0.0.1/a.png", "http://localhost/a.png", "file:///etc/passwd", "http://10.1.2.3/x.png"] {
+            assert!(p.avatar(url).await.is_err(), "{url} should be refused");
+        }
     }
 
     #[test]

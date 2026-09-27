@@ -94,18 +94,26 @@ async fn multiline_cap_ls_requests_only_wanted_caps() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn every_wanted_cap_fits_one_request() {
+async fn every_wanted_cap_is_requested_in_lines_under_the_limit() {
     let (h, mut p) = start(plain("acct", "pw")).await;
     p.expect("CAP LS").await;
-    let all = "account-notify account-tag away-notify batch cap-notify chghost draft/chathistory \
-               draft/event-playback draft/extended-monitor draft/message-redaction draft/read-marker echo-message \
+    let all = "account-notify account-tag away-notify batch cap-notify chghost draft/account-registration \
+               draft/channel-rename draft/chathistory draft/event-playback draft/extended-monitor \
+               draft/message-redaction draft/metadata-2 draft/multiline draft/read-marker echo-message \
                extended-join extended-monitor invite-notify labeled-response message-tags multi-prefix sasl \
                server-time setname soju.im/bouncer-networks soju.im/bouncer-networks-notify soju.im/search \
-               userhost-in-names";
+               standard-replies userhost-in-names";
     p.send(&format!(":srv CAP * LS :{all}")).await;
-    let req = p.expect("CAP REQ").await;
-    assert!(req.len() < 512, "{} bytes", req.len());
-    assert_eq!(caps_of(&req), all.split_whitespace().map(str::to_string).collect());
+    let want: BTreeSet<String> = all.split_whitespace().map(str::to_string).collect();
+    let mut got = BTreeSet::new();
+    let mut reqs = 0;
+    while got != want {
+        let req = p.expect("CAP REQ").await;
+        assert!(req.len() < 512, "{} bytes", req.len());
+        got.extend(caps_of(&req));
+        reqs += 1;
+    }
+    assert_eq!(reqs, 2, "the list is split, not sent one cap at a time");
     h.mgr.disconnect_all();
 }
 

@@ -10,6 +10,7 @@ import { search } from './search';
 import { isWatched, syncMonitor, unwatch, watch } from './monitor';
 import { rejoinCommands, restoreBuffers, saveBuffersSoon } from './saved';
 import { countHighlights, countUnread, markRead } from './unread';
+import { joinParts, multilineBatches, parseMultilineCap } from './multiline';
 import {
   defaultSettings,
   type ConnStatus,
@@ -37,6 +38,13 @@ export interface Member {
   user?: string;
   host?: string;
   realname?: string;
+}
+
+/** What someone has published about themselves with draft/metadata-2. */
+export interface Profile {
+  /** An image URL; load it with `App.avatar`, never directly. */
+  avatar?: string;
+  displayName?: string;
 }
 
 export interface ChannelInfo {
@@ -179,6 +187,8 @@ export class Conn {
   retryAt = $state(0);
   nick = $state('');
   caps = $state.raw(new Set<string>());
+  /** Values of enabled caps that have one, e.g. draft/multiline limits. */
+  capValues = $state.raw<Record<string, string>>({});
   isupport = $state.raw<Record<string, string>>({});
   buffers = new SvelteMap<string, Buffer>();
   server: Buffer;
@@ -188,6 +198,8 @@ export class Conn {
   /** MONITOR state: case-folded nick → online. */
   online = new SvelteMap<string, boolean>();
   channelList = $state.raw<{ loading: boolean; items: ChannelInfo[]; at: number } | null>(null);
+  /** draft/metadata-2 key/values: case-folded nick (or channel) → key → value. */
+  metadata = new SvelteMap<string, Record<string, string>>();
 
   whois: Record<string, Record<string, string>> = {};
   motd: string[] = [];
@@ -202,6 +214,11 @@ export class Conn {
   labels = new Map<string, Buffer>();
   ctcpTimes: number[] = [];
   ctcpWarned = 0;
+  /**
+   * draft/account-registration: credentials from /register, kept in memory
+   * only until the server answers, so they can be offered for SASL.
+   */
+  registration: { account: string; password: string } | null = null;
 
   constructor(app: App, id: string, serverId: string, parentId: string | null, netid: string | null) {
     this.app = app;
@@ -293,11 +310,32 @@ export class Conn {
 
   /** Send a command whose replies should land in `buf` (via labeled-response). */
   sendFrom(buf: Buffer, line: string) {
-    if (!this.caps.has('labeled-response') || line.startsWith('@')) return this.send(line);
+    const label = line.startsWith('@') ? undefined : this.labelFor(buf);
+    return this.send(label ? `@label=${label} ${line}` : line);
+  }
+
+  /** A fresh label whose replies go to `buf`, if the server supports labels. */
+  labelFor(buf: Buffer): string | undefined {
+    if (!this.caps.has('labeled-response')) return undefined;
     const label = `f${nextSeq()}`;
     this.labels.set(label, buf);
     if (this.labels.size > 200) this.labels.delete(this.labels.keys().next().value!);
-    return this.send(`@label=${label} ${line}`);
+    return label;
+  }
+
+  profile(nick: string): Profile {
+    const m = this.metadata.get(this.fold(nick));
+    return { avatar: m?.avatar || undefined, displayName: m?.['display-name'] || undefined };
+  }
+
+  /** Record a metadata key; `value` undefined means it was removed. */
+  setMetadata(target: string, key: string, value: string | undefined) {
+    const k = this.fold(target);
+    const next = { ...(this.metadata.get(k) ?? {}) };
+    if (value === undefined) delete next[key];
+    else next[key] = value;
+    if (Object.keys(next).length) this.metadata.set(k, next);
+    else this.metadata.delete(k);
   }
 
   has(cap: string) {
@@ -312,7 +350,10 @@ export class Conn {
   }
 }
 
-export type Toast = { id: number; text: string; kind: 'info' | 'error' };
+export type Toast = { id: number; text: string; kind: 'info' | 'error'; action?: { label: string; run: () => void } };
+
+/** Composer input that carries a password and must not be kept for recall. */
+export const secretInput = (line: string) => /^\/(register|verify)\b/i.test(line);
 
 export class App {
   servers = $state<ServerConfig[]>([]);
@@ -328,7 +369,13 @@ export class App {
   browserConn = $state<Conn | null>(null);
   settingsOpen = $state<null | { tab: string; serverId?: string }>(null);
   toasts = $state<Toast[]>([]);
-  inputHistory: string[] = [];
+  private recall: string[] = [];
+  get inputHistory(): string[] {
+    return this.recall;
+  }
+  set inputHistory(v: string[]) {
+    this.recall = v.filter((h) => !secretInput(h));
+  }
 
   /** conn id → folded channel to open when our JOIN arrives. */
   pendingActive = new Map<string, string>();
@@ -336,6 +383,7 @@ export class App {
   private blurredAt = Date.now();
   private saveBufferTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private previews = new Map<string, Promise<Preview | null>>();
+  private avatars = new Map<string, Promise<string | null>>();
 
   async init() {
     const cfg = await api.getConfig();
@@ -352,10 +400,15 @@ export class App {
     setInterval(() => this.checkAutoAway(), 30_000);
   }
 
-  toast(text: string, kind: Toast['kind'] = 'info') {
-    const t = { id: ++seq, text, kind };
+  toast(text: string, kind: Toast['kind'] = 'info', action?: Toast['action']) {
+    const t = { id: ++seq, text, kind, action };
     this.toasts = [...this.toasts, t];
-    setTimeout(() => (this.toasts = this.toasts.filter((x) => x.id !== t.id)), 5000);
+    // Leave time to act on an offer.
+    setTimeout(() => this.dismissToast(t.id), action ? 20_000 : 5000);
+  }
+
+  dismissToast(id: number) {
+    this.toasts = this.toasts.filter((x) => x.id !== id);
   }
 
   /** Root connections in config order, each followed by its bouncer children. */
@@ -385,10 +438,17 @@ export class App {
     this.active = buf;
     if (!buf) return;
     buf.divider = buf.unread > 0 ? buf.readMarker : 0;
+    this.rememberActive();
+    if (buf.kind !== 'server' && buf.history === 'idle' && buf.messages.length < 30) this.fetchHistory(buf, 'before');
+  }
+
+  /** Persist which buffer is open, to restore it on the next launch. */
+  rememberActive() {
+    const buf = this.active;
+    if (!buf) return;
     try {
       localStorage.setItem('hearth.active', `${buf.conn.serverId}|${buf.conn.netid ?? ''}|${buf.key}`);
     } catch {}
-    if (buf.kind !== 'server' && buf.history === 'idle' && buf.messages.length < 30) this.fetchHistory(buf, 'before');
   }
 
   step(delta: number, unreadOnly = false) {
@@ -560,6 +620,39 @@ export class App {
     buf.lastTypingSent = 0;
   }
 
+  /**
+   * Send text with line breaks as draft/multiline batches, so it arrives as
+   * one message. Returns false when the server can't take it that way.
+   */
+  sendMultiline(buf: Buffer, text: string, replyTo?: string): boolean {
+    const conn = buf.conn;
+    const limits = parseMultilineCap(conn.capValues['draft/multiline']);
+    if (!limits || !conn.has('batch') || buf.kind === 'server') return false;
+    // A single line (maybe with stray line breaks around it) needs no batch.
+    if (text.split('\n').filter((l) => l.trim()).length < 2) return false;
+    const target = buf.name;
+    const budget = 510 - (conn.nick.length + 100 + 'PRIVMSG'.length + target.length);
+    const batches = multilineBatches(text, limits, Math.max(budget, 60));
+    if (!batches.length) return false;
+    const reply = replyTo && conn.canTag('draft/reply') ? replyTo : undefined;
+    batches.forEach((parts, i) => {
+      const ref = `ml${nextSeq()}`;
+      // Labeled, so a FAIL about the batch (too long, say) lands here.
+      const label = conn.labelFor(buf);
+      const tags = [label && `label=${label}`, reply && i === 0 && `+draft/reply=${escapeTag(reply)}`].filter(Boolean);
+      conn.send(
+        `${tags.length ? `@${tags.join(';')} ` : ''}BATCH +${ref} draft/multiline ${target}`,
+        ...parts.map((p) => `@batch=${ref}${p.concat ? ';draft/multiline-concat' : ''} PRIVMSG ${target} :${p.text}`),
+        `BATCH -${ref}`,
+      );
+      if (!conn.has('echo-message')) {
+        buf.push(mkLine({ type: 'privmsg', nick: conn.nick, text: joinParts(parts), self: true, replyTo: i === 0 ? reply : undefined }));
+      }
+    });
+    buf.lastTypingSent = 0;
+    return true;
+  }
+
   sendTyping(buf: Buffer, state: 'active' | 'done') {
     if (!this.settings.sendTyping || buf.kind === 'server' || !buf.conn.canTag('typing')) return;
     const now = Date.now();
@@ -631,6 +724,30 @@ export class App {
     return p;
   }
 
+  /** A metadata avatar as a data: URL, or null if it can't or mustn't be loaded. */
+  avatar(url: string): Promise<string | null> {
+    if (!this.settings.loadAvatars) return Promise.resolve(null);
+    let p = this.avatars.get(url);
+    if (!p) {
+      p = api.avatar(url).catch(() => null);
+      this.avatars.set(url, p);
+      if (this.avatars.size > 1000) this.avatars.delete(this.avatars.keys().next().value!);
+    }
+    return p;
+  }
+
+  /** Use the account from /register for SASL on this server from now on. */
+  async saveLogin(conn: Conn, account: string, password: string) {
+    const cfg = conn.config;
+    if (!cfg) return;
+    try {
+      await this.saveServer({ ...$state.snapshot(cfg), sasl: 'plain', saslUsername: account, saslPassword: password }, false);
+      this.toast(`Hearth will sign in as ${account} on ${conn.name}`);
+    } catch (e) {
+      this.toast(`Couldn't save the login: ${e}`, 'error');
+    }
+  }
+
   // ─── History & search ──────────────────────────────────────
 
   fetchHistory(buf: Buffer, mode: 'latest' | 'before' | 'after'): Promise<void> {
@@ -675,6 +792,7 @@ export class App {
             b.typing.clear();
           }
           conn.online.clear();
+          conn.metadata.clear();
           if (was === 'connected' || ev.error) {
             conn.server.push(
               mkLine({
@@ -690,9 +808,11 @@ export class App {
       case 'registered':
         conn.nick = ev.nick;
         conn.caps = new Set(ev.caps);
+        conn.capValues = ev.capValues ?? {};
         break;
       case 'caps':
         conn.caps = new Set(ev.caps);
+        conn.capValues = ev.capValues ?? {};
         break;
       case 'isupport':
         conn.isupport = ev.isupport;

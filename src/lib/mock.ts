@@ -41,8 +41,23 @@ function scene(): IrcEvent[] {
     m('soju', msg('bouncer.example', 'BOUNCER', ['NETWORK', id, `name=${name};state=connected`]));
     const c = `soju/${id}`;
     ev.push({ type: 'conn-added', conn: c, server: 'soju', parent: 'soju', netid: id });
-    const caps = ['message-tags', 'server-time', 'echo-message', 'away-notify', 'multi-prefix', 'draft/message-redaction', 'labeled-response'];
-    ev.push({ type: 'registered', conn: c, nick: 'ember', caps });
+    const caps = [
+      'message-tags',
+      'server-time',
+      'echo-message',
+      'away-notify',
+      'multi-prefix',
+      'draft/message-redaction',
+      'labeled-response',
+      'batch',
+      'draft/multiline',
+      'draft/metadata-2',
+      'draft/channel-rename',
+      'draft/account-registration',
+      'standard-replies',
+    ];
+    const capValues = { 'draft/multiline': 'max-bytes=4096,max-lines=24', 'draft/account-registration': 'custom-account-name' };
+    ev.push({ type: 'registered', conn: c, nick: 'ember', caps, capValues });
     ev.push({ type: 'isupport', conn: c, isupport: { CHANTYPES: '#', PREFIX: '(ov)@+', CASEMAPPING: 'rfc1459', NETWORK: name, MONITOR: '100' } });
     ev.push({ type: 'status', conn: c, status: id === '3' ? 'disconnected' : 'connected', error: id === '3' ? 'connection reset by peer' : null, retryIn: id === '3' ? 16 : null });
   }
@@ -55,6 +70,11 @@ function scene(): IrcEvent[] {
   const people = ['@mira', '@tobias', '+wren', '+kestrel', 'juniper', 'oskar', 'lin_', 'halvard', 'sable', 'quill', 'rook', 'ada', 'pim', 'felix', 'noor', 'ember'];
   m(L, msg('irc.libera.chat', '353', ['ember', '=', chan, people.join(' ')]));
   m(L, msg('irc.libera.chat', '366', ['ember', chan, 'End of /NAMES list.']));
+  // draft/metadata-2: a few people have avatars and display names.
+  for (const [nick, name] of [['mira', 'Mira Okafor'], ['tobias', 'Tobias'], ['wren', ''], ['juniper', 'Juniper L.'], ['sable', '']]) {
+    m(L, msg('irc.libera.chat', 'METADATA', [nick, 'avatar', '*', `https://avatars.example/${nick}.png`]));
+    if (name) m(L, msg('irc.libera.chat', 'METADATA', [nick, 'display-name', '*', name]));
+  }
   m(L, { ...say('mira', chan, 'morning all — the websocket transport landed on main last night', 2), tags: { time: at(0), msgid: 'ws1' } });
   m(L, say('tobias', chan, 'nice. does it negotiate text.ircv3.net or just assume it?', 1));
   m(L, say('mira', chan, 'negotiates, falls back to binary frames', 1));
@@ -68,6 +88,9 @@ function scene(): IrcEvent[] {
   m(L, say('juniper', chan, 'bench numbers: \x02NAMES\x02 for a 2k-member channel now renders in \x0303~9ms\x03, down from 40', 4));
   m(L, say('oskar', chan, 'wait, are we coalescing the IPC events? that would explain it', 1));
   m(L, say('juniper', chan, 'yep, 8ms window, capped at 2000 events per payload', 1));
+  // A draft/multiline message, as the backend delivers it: one message with line breaks.
+  m(L, { ...say('oskar', chan, 'repro steps for the reconnect bug:\n1. /raw QUIT\n2. watch it come back anyway\n\nfixed on the ircv3 branch', 1), tags: { time: at(0), msgid: 'ml1' } });
+  m(L, msg('irc.libera.chat', 'FAIL', ['TOPIC', 'NEED_MORE_PRIVS', chan, 'You need channel operator status to change the topic'], { time: at(0) }));
   m(L, msg('tobias!tobias@user/tobias', 'MODE', [chan, '+v', 'juniper'], { time: at(1) }));
   m(L, { ...say('halvard', chan, 'drafted the release notes: https://hearth.example/notes/0.1 — shout if anything is wrong', 6), tags: { time: at(0), msgid: 'rn1' } });
   m(L, msg('tobias!tobias@user/tobias', 'TAGMSG', [chan], { '+draft/react': '🎉', '+draft/reply': 'rn1' }));
@@ -89,6 +112,12 @@ function scene(): IrcEvent[] {
   m('soju/1', say('ferris', '#rust', 'anyone around who knows pin projection well?', 1));
   m('soju/1', say('ferris', '#rust', 'ember: you did the tokio actor thing, right?', 1));
   m('soju/2', say('deb', '#debian', 'trixie point release is out', 1));
+  // draft/channel-rename: #hearth-design becomes #hearth-ui, keeping its history.
+  m(L, msg('ember!ember@user/ember', 'JOIN', ['#hearth-design'], { time: at(0) }));
+  m(L, msg('srv', '353', ['ember', '=', '#hearth-design', 'ember @mira wren']));
+  m(L, msg('srv', '366', ['ember', '#hearth-design', 'End']));
+  m(L, say('wren', '#hearth-design', 'mockups for the member list avatars are up', 1));
+  m(L, msg('mira!mira@user/mira', 'RENAME', ['#hearth-design', '#hearth-ui', 'design and UI talk'], { time: at(1) }));
   return ev;
 }
 
@@ -138,7 +167,7 @@ mockIPC(
       case 'get_config':
         return {
           servers: empty ? [] : [server],
-          settings: { theme: params.get('theme') ?? 'dark', layout: params.get('layout') ?? 'columns', linkPreviews: true },
+          settings: { theme: params.get('theme') ?? 'dark', layout: params.get('layout') ?? 'columns', linkPreviews: true, loadAvatars: !params.has('noavatars') },
         };
       case 'connect':
         if (lastSaved && a.server === lastSaved.id) {
@@ -171,6 +200,13 @@ mockIPC(
           site: 'hearth.example',
           image: null,
         };
+      case 'avatar': {
+        // A stand-in for the backend's fetched image: initials on the nick's hue.
+        const nick = String(a.url).replace(/^.*\/|\.png$/g, '');
+        const hue = [...nick].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) % 360, 7);
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" fill="hsl(${hue} 55% 55%)"/><circle cx="20" cy="16" r="7" fill="hsl(${hue} 60% 85%)"/><ellipse cx="20" cy="36" rx="13" ry="10" fill="hsl(${hue} 60% 85%)"/></svg>`;
+        return `data:image/svg+xml;base64,${btoa(svg)}`;
+      }
       case 'cert_info':
         throw new Error('file not found');
       case 'save_server':

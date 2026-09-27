@@ -255,3 +255,37 @@ async fn quit_is_flushed_with_its_reason() {
     real_sleep(ms(50)).await;
     assert_eq!(retry_delays(&d.events), Vec::<Option<u64>>::new());
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_quit_the_user_sends_does_not_reconnect() {
+    let _clock = hold_clock();
+    let d = Direct::start(|_| {}, None).await;
+    let mut p = Peer::accept(&d.listener).await;
+    p.register("labeled-response").await;
+    d.handled("422").await;
+
+    // `/raw QUIT` goes out labeled; the server answers with ERROR and hangs up.
+    d.send(&["@label=f1 QUIT :done for today"]);
+    assert_eq!(p.expect("@label=f1").await, "@label=f1 QUIT :done for today");
+    p.send("ERROR :Closing Link: me (Quit: done for today)").await;
+    drop(p);
+    must("the actor to stop", d.task).await.unwrap();
+    advance(secs(10), secs(1)).await;
+    assert!(Peer::try_accept(&d.listener, ms(100)).await.is_none(), "reconnected after QUIT");
+    assert_eq!(retry_delays(&d.events), Vec::<Option<u64>>::new());
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_unlabeled_quit_closes_without_retrying() {
+    let _clock = hold_clock();
+    let d = Direct::start(|_| {}, None).await;
+    let mut p = Peer::accept(&d.listener).await;
+    p.register("").await;
+    d.handled("422").await;
+
+    // Any spelling of QUIT stops the writer after it; that isn't a failure.
+    d.send(&["quit :bye", "PRIVMSG #a :never sent"]);
+    assert_eq!(p.closed().await, vec!["quit :bye"]);
+    must("the actor to stop", d.task).await.unwrap();
+    assert_eq!(retry_delays(&d.events), Vec::<Option<u64>>::new());
+}

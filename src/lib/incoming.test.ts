@@ -662,8 +662,8 @@ describe('numerics', () => {
     connect(app);
     feed(app, 'FAIL CHATHISTORY INVALID_TARGET #a :nope', 'FAIL NICK ERRONEOUS_NICKNAME * :Bad nick', 'NOTE SERVER RESTART :soon');
     expect(conn().server.messages.map((l) => [l.type, l.text])).toEqual([
-      ['error', 'NICK: Bad nick'],
-      ['info', 'SERVER: soon'],
+      ['error', 'NICK failed: Bad nick'],
+      ['info', 'soon'],
     ]);
   });
 });
