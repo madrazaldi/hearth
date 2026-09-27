@@ -1,28 +1,44 @@
+<script lang="ts" module>
+  import type { Preview } from '../types';
+  import { ByteLru } from '../media';
+
+  // Settled previews, so a row the message list re-mounts while scrolling
+  // renders at its full height straight away instead of growing a frame later.
+  // Bounded by bytes too: an inline image is kept as a data URL of up to ~11 MB.
+  const settled = new ByteLru<Preview | null>(500, 48 * 1024 * 1024);
+</script>
+
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { app } from '../state.svelte';
-  import type { Preview } from '../types';
+  import { fileName, mediaLabel } from '../media';
+  import Icon from './Icon.svelte';
+  import InlineImage from './InlineImage.svelte';
 
-  let { url }: { url: string } = $props();
+  let { url, nsfw = false }: { url: string; nsfw?: boolean } = $props();
 
   let el = $state<HTMLElement>();
-  let preview = $state<Preview | null>(null);
+  // The url never changes for a mounted preview (rows are keyed by line).
+  // svelte-ignore state_referenced_locally
+  let preview = $state<Preview | null>(settled.get(url) ?? null);
 
   onMount(() => {
-    if (!el) return;
-    // Only fetch once the message scrolls into view.
+    if (!el || settled.has(url)) return;
+    // Only fetch once the message nears the view; early enough that it has
+    // usually grown (and been anchored for) before it scrolls in.
     const io = new IntersectionObserver(
       (entries) => {
         if (!entries.some((e) => e.isIntersecting)) return;
         io.disconnect();
         app.preview(url).then(async (p) => {
+          settled.set(url, p, p?.image?.length ?? 0);
           preview = p;
           await tick();
           grew();
         });
       },
-      { rootMargin: '200px' },
+      { root: el.closest('.scroller'), rootMargin: '800px 0px' },
     );
     io.observe(el);
     return () => io.disconnect();
@@ -39,9 +55,26 @@
   }
 </script>
 
+{#snippet file(p: Preview)}
+  <div class="file">
+    <span class="file-icon"><Icon name={p.kind === 'image' ? 'image' : p.mime?.startsWith('audio/') ? 'music' : 'play'} size={16} /></span>
+    <span class="file-meta">
+      <span class="file-name" title={url}>{fileName(url)}</span>
+      <span class="file-kind">{mediaLabel(p)}</span>
+    </span>
+    <a href={url} class="btn ghost" onclick={open} title="Open in browser"><Icon name="external" size={14} />Open</a>
+  </div>
+{/snippet}
+
 <div class="slot" bind:this={el}>
   {#if preview?.kind === 'image' && preview.image}
-    <a href={url} class="image" onclick={open} title={url}><img src={preview.image} alt="" onload={grew} /></a>
+    {#if app.settings.inlineImages}
+      <InlineImage src={preview.image} {url} width={preview.width} height={preview.height} animated={preview.animated} {nsfw} />
+    {:else}
+      {@render file(preview)}
+    {/if}
+  {:else if preview?.kind === 'media'}
+    {@render file(preview)}
   {:else if preview?.kind === 'page'}
     <a href={url} class="card" class:with-image={!!preview.image} onclick={open} title={url}>
       <div class="meta">
@@ -49,14 +82,14 @@
         {#if preview.title}<div class="title">{preview.title}</div>{/if}
         {#if preview.description}<div class="desc">{preview.description}</div>{/if}
       </div>
-      {#if preview.image}<img src={preview.image} alt="" onload={grew} />{/if}
+      {#if preview.image}<img src={preview.image} alt="" class:veiled={nsfw} onload={grew} />{/if}
     </a>
   {/if}
 </div>
 
 <style>
-  .image,
-  .card {
+  .card,
+  .file {
     display: inline-flex;
     margin: 6px 0 4px;
     max-width: min(520px, 100%);
@@ -68,12 +101,52 @@
     cursor: pointer;
   }
 
-  .image img {
-    display: block;
-    max-width: 100%;
-    max-height: 280px;
-    object-fit: contain;
-    background: var(--bg-sunken);
+  .file {
+    align-items: center;
+    gap: 10px;
+    padding: 8px 8px 8px 10px;
+    min-width: 260px;
+    background: var(--bg-side);
+    cursor: default;
+  }
+
+  .file-icon {
+    width: 32px;
+    height: 32px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 6px;
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+
+  .file-meta {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+  }
+
+  .file-name {
+    font-size: 13px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .file-kind {
+    font-size: 11.5px;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .file .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex: none;
+    text-decoration: none;
   }
 
   .card {
@@ -123,5 +196,9 @@
     object-fit: cover;
     border-radius: 6px;
     flex: none;
+  }
+
+  .card img.veiled {
+    filter: blur(12px);
   }
 </style>

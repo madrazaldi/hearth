@@ -1,4 +1,5 @@
 import { api } from './api';
+import { expandCommand, splitCommands } from './aliases';
 import { mkLine, type App, type Buffer } from './state.svelte';
 
 interface Command {
@@ -291,12 +292,49 @@ export const COMMANDS: Record<string, Command> = {
       app.toast(`Notifications for ${buf.name}: ${level}`);
     },
   },
+  rename: {
+    usage: '/rename [#channel] <#newname> [reason]',
+    help: 'Rename a channel (needs server support)',
+    run: (ctx) => {
+      const conn = ctx.buf.conn;
+      need(conn.has('draft/channel-rename'), 'This server does not support renaming channels');
+      const both = ctx.args.length >= 2 && conn.isChannel(ctx.args[0]) && conn.isChannel(ctx.args[1]);
+      const from = both ? ctx.args[0] : chanOf(ctx);
+      const to = both ? ctx.args[1] : ctx.args[0];
+      need(to && conn.isChannel(to), '/rename [#channel] <#newname> [reason]');
+      const reason = ctx.args.slice(both ? 2 : 1).join(' ');
+      ask(ctx, `RENAME ${from} ${to}${reason ? ` :${reason}` : ''}`);
+    },
+  },
+  register: {
+    usage: '/register <email|*> <password>',
+    help: 'Register an account for your current nick',
+    run: (ctx) => {
+      const conn = ctx.buf.conn;
+      need(conn.has('draft/account-registration'), 'This server does not support registering here; try /msg NickServ help');
+      const [email, password] = ctx.args;
+      need(email && password && ctx.args.length === 2, '/register <email|*> <password>');
+      const caps = (conn.capValues['draft/account-registration'] ?? '').split(',');
+      need(email !== '*' || !caps.includes('email-required'), 'This server needs an email address: /register <email> <password>');
+      conn.registration = { account: conn.nick, password };
+      ask(ctx, `REGISTER * ${email} :${password}`);
+    },
+  },
+  verify: {
+    usage: '/verify <account> <code>',
+    help: 'Confirm an account registration',
+    run: (ctx) => {
+      need(ctx.buf.conn.has('draft/account-registration'), 'This server does not support account registration');
+      need(ctx.args.length === 2, '/verify <account> <code>');
+      ask(ctx, `VERIFY ${ctx.args[0]} ${ctx.args[1]}`);
+    },
+  },
   help: {
     usage: '/help',
     help: 'Show commands',
-    run: ({ buf }) => {
-      const text = Object.entries(COMMANDS)
-        .map(([, c]) => `${c.usage.padEnd(32)} ${c.help}`)
+    run: ({ app, buf }) => {
+      const text = commandInfos(app.settings.aliases)
+        .map((c) => `${c.usage.padEnd(32)} ${c.help}`)
         .join('\n');
       buf.push(mkLine({ type: 'info', data: { motd: text, title: 'Commands' } }));
     },
@@ -315,11 +353,76 @@ export const ALIASES: Record<string, string> = {
   unmute: 'notify',
 };
 
+export const isBuiltin = (name: string) => name in COMMANDS || name in ALIASES;
+
+export interface CommandInfo {
+  name: string;
+  usage: string;
+  help: string;
+  alias?: boolean;
+}
+
+/** Built-in commands plus user aliases (which win on a name clash), for suggestions and /help. */
+export function commandInfos(aliases: Record<string, string>): CommandInfo[] {
+  const user = Object.entries(aliases)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, body]) => ({ name, usage: `/${name}`, help: `→ ${body}`, alias: true }));
+  const taken = new Set(user.map((u) => u.name));
+  const builtin = Object.entries(COMMANDS)
+    .filter(([name]) => !taken.has(name))
+    .map(([name, c]) => ({ name, usage: c.usage, help: c.help }));
+  return [...user, ...builtin];
+}
+
+interface AliasTrail {
+  names: string[];
+  budget: { left: number };
+}
+
+const MAX_ALIAS_DEPTH = 8;
+// Bounds fan-out (a → b;b;b, b → c;c;c, …) as well as depth.
+const MAX_ALIAS_COMMANDS = 50;
+
+/** Expand and run a user alias. Undefined when `name` isn't one (or wraps the built-in it shadows). */
+async function runAlias(app: App, buf: Buffer, name: string, args: string[], trail: AliasTrail): Promise<boolean | undefined> {
+  const body = app.settings.aliases[name];
+  if (body === undefined) return undefined;
+  if (trail.names.includes(name)) {
+    // An alias may wrap the built-in it shadows, e.g. /join → /join #$1.
+    if (COMMANDS[ALIASES[name] ?? name]) return undefined;
+    app.toast(`Alias /${name} calls itself`, 'error');
+    return false;
+  }
+  if (trail.names.length >= MAX_ALIAS_DEPTH) {
+    app.toast(`Aliases nest too deeply at /${name}`, 'error');
+    return false;
+  }
+  const vars = { nick: buf.conn.nick, channel: buf.kind === 'channel' ? buf.name : '', network: buf.conn.name };
+  const next = { names: [...trail.names, name], budget: trail.budget };
+  let ok = false;
+  for (const cmd of splitCommands(body)) {
+    if (--trail.budget.left < 0) {
+      app.toast(`Alias /${trail.names[0] ?? name} runs too many commands`, 'error');
+      return ok;
+    }
+    ok = (await runInput(app, buf, expandCommand(cmd, args, vars), undefined, next)) || ok;
+  }
+  return ok;
+}
+
 /** Run composer input. Returns false if nothing was sent. */
-export async function runInput(app: App, buf: Buffer, input: string, replyTo?: string): Promise<boolean> {
+export async function runInput(
+  app: App,
+  buf: Buffer,
+  input: string,
+  replyTo?: string,
+  trail: AliasTrail = { names: [], budget: { left: MAX_ALIAS_COMMANDS } },
+): Promise<boolean> {
   if (!input.trim()) return false;
   if (input.startsWith('/') && !input.startsWith('//')) {
     const [rawName, ...args] = input.slice(1).split(/ +/);
+    const aliased = await runAlias(app, buf, rawName.toLowerCase(), args.filter(Boolean), trail);
+    if (aliased !== undefined) return aliased;
     const name = ALIASES[rawName.toLowerCase()] ?? rawName.toLowerCase();
     const lower = rawName.toLowerCase();
     if (lower === 'mute' || lower === 'unmute') args.splice(0, args.length, lower === 'mute' ? 'none' : 'default');
@@ -343,6 +446,7 @@ export async function runInput(app: App, buf: Buffer, input: string, replyTo?: s
     app.toast('This is a server buffer — use /raw to send commands', 'error');
     return false;
   }
+  if (app.sendMultiline(buf, text, replyTo)) return true;
   text
     .split('\n')
     .filter((line) => line.trim())

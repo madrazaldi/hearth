@@ -37,10 +37,14 @@ pub enum Event {
         conn: String,
         nick: String,
         caps: Vec<String>,
+        /// Values of enabled caps that have one, e.g. `draft/multiline` limits.
+        cap_values: BTreeMap<String, String>,
     },
     Caps {
         conn: String,
         caps: Vec<String>,
+        /// Values of enabled caps that have one, e.g. `draft/multiline` limits.
+        cap_values: BTreeMap<String, String>,
     },
     Isupport {
         conn: String,
@@ -80,5 +84,66 @@ impl Emitter {
 
     pub fn emit(&self, ev: Event) {
         let _ = self.0.send(ev);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc as std_mpsc;
+    use std::time::Duration;
+
+    fn status(i: u64) -> Event {
+        Event::Status { conn: "c".into(), status: Status::Connecting, error: None, retry_in: Some(i) }
+    }
+
+    fn recorder() -> (Emitter, std_mpsc::Receiver<usize>) {
+        let (tx, rx) = std_mpsc::channel();
+        let emitter = Emitter::spawn(move |evs| tx.send(evs.len()).unwrap());
+        (emitter, rx)
+    }
+
+    #[test]
+    fn a_burst_crosses_as_one_batch() {
+        let (emitter, rx) = recorder();
+        for i in 0..100 {
+            emitter.emit(status(i));
+        }
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), 100);
+        assert!(rx.recv_timeout(Duration::from_millis(50)).is_err());
+    }
+
+    #[test]
+    fn batches_are_capped() {
+        let (emitter, rx) = recorder();
+        for i in 0..2500 {
+            emitter.emit(status(i));
+        }
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), 2000);
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), 500);
+    }
+
+    #[test]
+    fn serializes_as_the_frontend_expects() {
+        let v = serde_json::to_value(Event::Status {
+            conn: "c".into(),
+            status: Status::Disconnected,
+            error: Some("boom".into()),
+            retry_in: Some(4),
+        })
+        .unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"type": "status", "conn": "c", "status": "disconnected", "error": "boom", "retryIn": 4})
+        );
+        let v = serde_json::to_value(Event::ConnAdded {
+            conn: "s/1".into(),
+            server: "s".into(),
+            parent: Some("s".into()),
+            netid: Some("1".into()),
+        })
+        .unwrap();
+        assert_eq!(v["type"], "conn-added");
+        assert_eq!(v["netid"], "1");
     }
 }

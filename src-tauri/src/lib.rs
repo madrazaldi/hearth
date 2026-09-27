@@ -24,6 +24,7 @@ struct AppState {
     irc: Arc<Manager>,
     previews: preview::Previewer,
     close_to_tray: AtomicBool,
+    load_avatars: AtomicBool,
 }
 
 type CmdResult<T> = Result<T, String>;
@@ -52,6 +53,7 @@ impl AppState {
         let flag = |k: &str, d: bool| settings.get(k).and_then(serde_json::Value::as_bool).unwrap_or(d);
         self.db().set_logging(flag("storeLogs", true));
         self.close_to_tray.store(flag("closeToTray", false), Ordering::Relaxed);
+        self.load_avatars.store(flag("loadAvatars", false), Ordering::Relaxed);
     }
 }
 
@@ -206,6 +208,16 @@ async fn link_preview(state: State<'_, AppState>, url: String) -> CmdResult<prev
     state.previews.preview(&url).await.map_err(err)
 }
 
+/// A draft/metadata-2 avatar as a data: URL. The webview's CSP forbids
+/// remote images, so the backend fetches it (public addresses only).
+#[tauri::command]
+async fn avatar(state: State<'_, AppState>, url: String) -> CmdResult<String> {
+    if !state.load_avatars.load(Ordering::Relaxed) {
+        return Err("avatars are turned off".into());
+    }
+    state.previews.avatar(&url).await.map_err(err)
+}
+
 #[tauri::command]
 fn generate_cert(app: AppHandle, server: String) -> CmdResult<certs::CertInfo> {
     let dir = app.path().app_config_dir().map_err(err)?.join("certs");
@@ -280,6 +292,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(if cfg!(debug_assertions) { log::LevelFilter::Info } else { log::LevelFilter::Warn })
@@ -305,6 +319,7 @@ pub fn run() {
                 irc,
                 previews: preview::Previewer::new(),
                 close_to_tray: AtomicBool::new(false),
+                load_avatars: AtomicBool::new(false),
             };
             state.apply_settings(&config.settings);
             app.manage(state);
@@ -338,6 +353,7 @@ pub fn run() {
             save_buffers,
             clear_logs,
             link_preview,
+            avatar,
             generate_cert,
             cert_info,
             upload_file,

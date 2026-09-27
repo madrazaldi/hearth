@@ -1,16 +1,15 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { app, type Conn, type ChannelInfo } from '../state.svelte';
   import { stripFormatting } from '../format';
   import Segmented from './Segmented.svelte';
   import Icon from './Icon.svelte';
+  import { modal } from '../a11y';
 
   let { conn }: { conn: Conn } = $props();
 
   const SHOWN = 300;
   let q = $state('');
   let sort = $state<'users' | 'name'>('users');
-  let input = $state<HTMLInputElement>();
 
   const list = $derived(conn.channelList);
 
@@ -41,18 +40,23 @@
     conn.channelList = null;
     app.browseChannels(conn);
   }
-
-  onMount(() => input?.focus());
 </script>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && close()} />
-
 <div class="scrim" onclick={close} role="presentation">
-  <div class="sheet" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Channels" tabindex="-1" onkeydown={() => {}}>
+  <div
+    class="sheet"
+    onclick={(e) => e.stopPropagation()}
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="browser-title"
+    tabindex="-1"
+    onkeydown={() => {}}
+    use:modal={{ onclose: close }}
+  >
     <header>
       <div>
-        <h2>Channels on {conn.name}</h2>
-        <p>
+        <h2 id="browser-title">Channels on {conn.name}</h2>
+        <p aria-live="polite">
           {#if list?.loading}
             Loading… {list.items.length ? `${list.items.length.toLocaleString()} so far` : ''}
           {:else if list}
@@ -62,12 +66,12 @@
           {/if}
         </p>
       </div>
-      <button class="icon-btn" title="Refresh" onclick={refresh} disabled={list?.loading}><Icon name="refresh" /></button>
-      <button class="icon-btn" title="Close" onclick={close}><Icon name="x" /></button>
+      <button class="icon-btn" title="Refresh" aria-label="Refresh" onclick={refresh} disabled={list?.loading}><Icon name="refresh" /></button>
+      <button class="icon-btn" title="Close" aria-label="Close" onclick={close}><Icon name="x" /></button>
     </header>
     <div class="tools">
-      <input class="input" bind:this={input} bind:value={q} placeholder="Filter by name or topic" spellcheck="false" />
-      <Segmented
+      <input class="input" bind:value={q} placeholder="Filter by name or topic" aria-label="Filter channels" spellcheck="false" data-autofocus />
+      <Segmented label="Sort by"
         bind:value={sort}
         options={[
           { value: 'users', label: 'Most users' },
@@ -83,8 +87,8 @@
             <div class="name">{c.name}</div>
             {#if c.topic}<div class="topic">{stripFormatting(c.topic)}</div>{/if}
           </div>
-          <span class="users" title="Users">{c.users.toLocaleString()}</span>
-          <button class="btn" class:primary={!joined} onclick={() => join(c)}>{joined ? 'Open' : 'Join'}</button>
+          <span class="users" title="Users">{c.users.toLocaleString()}<span class="sr-only"> users</span></span>
+          <button class="btn" class:primary={!joined} onclick={() => join(c)} aria-label="{joined ? 'Open' : 'Join'} {c.name}">{joined ? 'Open' : 'Join'}</button>
         </div>
       {:else}
         {#if !list?.loading}<p class="none">{q ? 'No channels match' : 'No channels listed'}</p>{/if}

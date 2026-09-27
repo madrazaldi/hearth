@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { app, type Buffer, type Conn } from '../state.svelte';
   import { parseCtcp } from '../irc';
   import { stripFormatting } from '../format';
   import { nickHue } from '../nickcolor';
   import type { SearchHit } from '../types';
   import Segmented from './Segmented.svelte';
+  import { modal } from '../a11y';
 
   const origin = app.active;
   let q = $state(app.searchQuery);
@@ -13,7 +13,6 @@
   let hits = $state<SearchHit[]>([]);
   let busy = $state(false);
   let sel = $state(0);
-  let input = $state<HTMLInputElement>();
   let list = $state<HTMLDivElement>();
   let run = 0;
 
@@ -104,20 +103,39 @@
     } else if (e.key === 'Enter') {
       e.preventDefault();
       choose(hits[sel]);
-    } else if (e.key === 'Escape') close();
+    }
   }
 
   const stamp = (t: number) => new Date(t).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-
-  onMount(() => input?.focus());
 </script>
 
 <div class="scrim" onclick={close} role="presentation">
-  <div class="palette" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Search" tabindex="-1" onkeydown={() => {}}>
+  <div
+    class="palette"
+    onclick={(e) => e.stopPropagation()}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Search messages"
+    tabindex="-1"
+    onkeydown={() => {}}
+    use:modal={{ onclose: close }}
+  >
     <div class="head">
-      <input bind:this={input} bind:value={q} onkeydown={onKey} placeholder="Search messages" spellcheck="false" />
+      <input
+        bind:value={q}
+        onkeydown={onKey}
+        placeholder="Search messages"
+        spellcheck="false"
+        role="combobox"
+        aria-label="Search messages"
+        aria-expanded={hits.length > 0}
+        aria-controls="search-results"
+        aria-autocomplete="list"
+        aria-activedescendant={hits.length ? `search-hit-${sel}` : undefined}
+        data-autofocus
+      />
       {#if origin}
-        <Segmented
+        <Segmented label="Search in"
           bind:value={scope}
           options={[
             { value: 'all', label: 'Everywhere' },
@@ -127,7 +145,7 @@
         />
       {/if}
     </div>
-    <div class="results" bind:this={list}>
+    <div class="results" bind:this={list} id="search-results" role={hits.length ? 'listbox' : undefined} aria-label={hits.length ? 'Results' : undefined}>
       {#if !canSearch}
         <p class="none">
           Search uses messages saved on this computer, which is turned off.
@@ -137,7 +155,17 @@
         {#each hits as h, i (h.network + (h.msg.tags.msgid ?? i))}
           {@const w = where(h)}
           {@const nick = h.msg.source?.nick ?? ''}
-          <button class="hit" class:sel={i === sel} disabled={!w.conn} onmouseenter={() => (sel = i)} onclick={() => choose(h)}>
+          <button
+            class="hit"
+            class:sel={i === sel}
+            id="search-hit-{i}"
+            role="option"
+            aria-selected={i === sel}
+            tabindex="-1"
+            disabled={!w.conn}
+            onmouseenter={() => (sel = i)}
+            onclick={() => choose(h)}
+          >
             <div class="meta">
               <span class="buf">{w.name}</span>
               {#if w.conn}<span class="net">{w.conn.name}</span>{/if}
@@ -157,7 +185,7 @@
       <span><span class="kbd">↑↓</span> navigate</span>
       <span><span class="kbd">↵</span> jump to message</span>
       <span><span class="kbd">esc</span> close</span>
-      <span class="hint">{busy ? 'Searching…' : hits.length ? `${hits.length} result${hits.length === 1 ? '' : 's'}` : ''}</span>
+      <span class="hint" aria-live="polite">{busy ? 'Searching…' : hits.length ? `${hits.length} result${hits.length === 1 ? '' : 's'}` : ''}</span>
     </footer>
   </div>
 </div>

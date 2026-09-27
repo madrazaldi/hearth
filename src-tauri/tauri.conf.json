@@ -67,6 +67,18 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "category": "SocialNetworking"
+    "category": "SocialNetworking",
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDEyMEFFRDgzQjRCQkRCQjkKUldTNTI3dTBnKzBLRW1wanRKOTZyS0RUb2ZlR0tlWUFYWjNRc2FJSVpXeVRKM25EYVFsTDhpYjkK",
+      "endpoints": [
+        "https://github.com/madrazaldi/hearth/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -15,8 +15,9 @@ use base64::Engine;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::Instant;
 
 const WANTED_CAPS: &[&str] = &[
     "account-notify",
@@ -25,10 +26,14 @@ const WANTED_CAPS: &[&str] = &[
     "batch",
     "cap-notify",
     "chghost",
+    "draft/account-registration",
+    "draft/channel-rename",
     "draft/chathistory",
     "draft/event-playback",
     "draft/extended-monitor",
     "draft/message-redaction",
+    "draft/metadata-2",
+    "draft/multiline",
     "draft/read-marker",
     "echo-message",
     "extended-join",
@@ -41,8 +46,15 @@ const WANTED_CAPS: &[&str] = &[
     "setname",
     "soju.im/bouncer-networks",
     "soju.im/search",
+    "standard-replies",
     "userhost-in-names",
 ];
+
+/// Metadata keys the UI shows (draft/metadata-2).
+const METADATA_KEYS: &str = "avatar display-name";
+
+/// Lines accepted in one incoming multiline batch before the rest is dropped.
+const MAX_MULTILINE_LINES: usize = 1000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryKind {
@@ -175,12 +187,53 @@ struct Pending {
 enum Route {
     /// Collected as the reply to a pending request.
     Collect(u64),
+    /// A batch nested inside a collected one (e.g. multiline): its messages
+    /// belong to the same reply, but its end doesn't complete it.
+    Nested(u64),
     /// A labeled-response wrapper around the reply to a pending request.
     Wrap(u64),
     /// A labeled response to a line the frontend sent; its messages carry
     /// this label so the UI can route them.
     Label(String),
     Other,
+}
+
+/// A draft/multiline batch being collected, sent or received.
+struct Multiline {
+    open: Message,
+    parts: Vec<Message>,
+}
+
+impl Multiline {
+    /// The batch as one PRIVMSG/NOTICE with newline-separated text. It keeps
+    /// the opening line's tags (msgid, time, label, and the parent batch), so
+    /// it's routed exactly as a single message would be.
+    fn combine(self) -> Option<Message> {
+        let first = self.parts.first()?;
+        let mut text = String::new();
+        for (i, p) in self.parts.iter().enumerate() {
+            if i > 0 && p.tag("draft/multiline-concat").is_none() {
+                text.push('\n');
+            }
+            text.push_str(p.param(1));
+        }
+        let mut tags = self.open.tags.clone();
+        for (k, v) in &first.tags {
+            if k != "batch" && k != "draft/multiline-concat" {
+                tags.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+        }
+        let target = match self.open.param(2) {
+            "" => first.param(0).to_string(),
+            t => t.to_string(),
+        };
+        Some(Message {
+            tags,
+            source: self.open.source.clone().or_else(|| first.source.clone()),
+            command: first.command.clone(),
+            params: vec![target, text],
+        })
+    }
 }
 
 enum Sasl {
@@ -207,6 +260,9 @@ struct State<'a> {
     cap_ended: bool,
     isupport: BTreeMap<String, String>,
     batches: HashMap<String, Route>,
+    /// Incoming and outgoing draft/multiline batches, by reference.
+    multiline: HashMap<String, Multiline>,
+    sent_multiline: HashMap<String, Multiline>,
     pending: Vec<Pending>,
     next_id: u64,
     sasl: Option<Sasl>,
@@ -214,6 +270,8 @@ struct State<'a> {
     sasl_in: String,
     sasl_fell_back: bool,
     sts_upgrade: Option<u16>,
+    /// The user sent QUIT themselves: the link closing is expected.
+    user_quit: bool,
 }
 
 impl State<'_> {
@@ -404,7 +462,16 @@ impl State<'_> {
         self.emitter.emit(Event::Caps {
             conn: self.conn(),
             caps: self.enabled.iter().cloned().collect(),
+            cap_values: self.cap_values(),
         });
+    }
+
+    /// Values of enabled caps that advertise one (e.g. draft/multiline limits).
+    fn cap_values(&self) -> BTreeMap<String, String> {
+        self.enabled
+            .iter()
+            .filter_map(|c| self.available.get(c).filter(|v| !v.is_empty()).map(|v| (c.clone(), v.clone())))
+            .collect()
     }
 
     /// React to an advertised STS policy. Returns true when the connection
@@ -436,10 +503,31 @@ impl State<'_> {
         if !msg.tags.contains_key("time") {
             msg.tags.insert("time".into(), format_ms(now_ms()));
         }
+        // Fold multiline batches into one message before any other routing.
+        if msg.command == "BATCH" {
+            let reference = msg.param(0);
+            if let Some(r) = reference.strip_prefix('+').filter(|_| msg.param(1) == "draft/multiline") {
+                self.multiline.insert(r.to_string(), Multiline { open: msg, parts: Vec::new() });
+                return Ok(());
+            }
+            if let Some(ml) = reference.strip_prefix('-').and_then(|r| self.multiline.remove(r)) {
+                return match ml.combine() {
+                    Some(combined) => self.handle(combined),
+                    None => Ok(()),
+                };
+            }
+        }
+        if let Some(ml) = msg.tag("batch").and_then(|b| self.multiline.get_mut(b)) {
+            if ml.parts.len() < MAX_MULTILINE_LINES {
+                ml.parts.push(msg);
+            }
+            return Ok(());
+        }
+
         // Route messages that belong to a batch.
         if let Some(batch) = msg.tag("batch").map(str::to_string) {
             match self.batches.get(&batch).cloned() {
-                Some(Route::Collect(id)) | Some(Route::Wrap(id)) if msg.command != "BATCH" => {
+                Some(Route::Collect(id) | Route::Nested(id) | Route::Wrap(id)) if msg.command != "BATCH" => {
                     if msg.command == "FAIL" {
                         self.complete(id, Err(msg.params.last().cloned().unwrap_or_default()));
                     } else if let Some(p) = self.pending.iter_mut().find(|p| p.id == id) {
@@ -489,7 +577,11 @@ impl State<'_> {
                     conn: self.conn(),
                     nick: self.nick.clone(),
                     caps: self.enabled.iter().cloned().collect(),
+                    cap_values: self.cap_values(),
                 });
+                if self.enabled.contains("draft/metadata-2") && !self.is_control() {
+                    self.send(format!("METADATA * SUB {METADATA_KEYS}"));
+                }
                 self.emitter.emit(Event::Status {
                     conn: self.conn(),
                     status: Status::Connected,
@@ -517,8 +609,7 @@ impl State<'_> {
                 self.on_welcome();
             }
             "433" | "432" if !self.registered => {
-                let next = format!("{}_", self.nick);
-                self.nick = next.chars().take(30).collect();
+                self.nick = fallback_nick(&self.nick);
                 self.send(format!("NICK {}", self.nick));
             }
             "NICK" => {
@@ -550,6 +641,10 @@ impl State<'_> {
                     }
                 }
             }
+            "ERROR" if self.user_quit => {
+                self.forward(msg);
+                return Err(anyhow!("quit"));
+            }
             "ERROR" => {
                 let reason = msg.param(0).to_string();
                 self.forward(msg);
@@ -560,6 +655,16 @@ impl State<'_> {
         self.log_live(&msg);
         self.forward(msg);
         Ok(())
+    }
+
+    /// How the session ends when the link fails: a QUIT the user sent means
+    /// they wanted out, so it must not be retried like a dropped connection.
+    fn ended(&self, e: anyhow::Error) -> End {
+        if self.user_quit {
+            End::Quit
+        } else {
+            End::Error(e, self.registered)
+        }
     }
 
     fn forward(&self, msg: Message) {
@@ -706,6 +811,7 @@ impl State<'_> {
                         Route::Collect(id)
                     }
                     (None, Some(Route::Label(l))) => Route::Label(l),
+                    (None, Some(Route::Collect(id) | Route::Nested(id))) => Route::Nested(id),
                     _ => Route::Other,
                 }
             };
@@ -763,6 +869,11 @@ impl State<'_> {
             self.spec.db.redact(&self.spec.id, msg.param(1));
             return;
         }
+        // draft/channel-rename: the channel's saved log follows it.
+        if msg.command == "RENAME" && self.is_channel(msg.param(0)) && self.is_channel(msg.param(1)) {
+            self.spec.db.rename_target(&self.spec.id, &self.fold(msg.param(0)), &self.fold(msg.param(1)));
+            return;
+        }
         if !self.spec.db.logging() || !loggable(msg) {
             return;
         }
@@ -773,11 +884,27 @@ impl State<'_> {
 
     /// Without echo-message the server never reflects our own messages, so
     /// log them as they are sent.
-    fn log_outgoing(&self, line: &str) {
+    fn log_outgoing(&mut self, line: &str) {
         if self.enabled.contains("echo-message") || self.is_control() || !self.spec.db.logging() {
             return;
         }
         let Some(mut msg) = Message::parse(line) else { return };
+        // A multiline batch is logged as the one message it reads as.
+        if msg.command == "BATCH" {
+            let reference = msg.param(0).to_string();
+            if let Some(r) = reference.strip_prefix('+').filter(|_| msg.param(1) == "draft/multiline") {
+                msg.tags.remove("label");
+                self.sent_multiline.insert(r.to_string(), Multiline { open: msg, parts: Vec::new() });
+                return;
+            }
+            match reference.strip_prefix('-').and_then(|r| self.sent_multiline.remove(r)).and_then(Multiline::combine) {
+                Some(combined) => msg = combined,
+                None => return,
+            }
+        } else if let Some(ml) = msg.tag("batch").and_then(|b| self.sent_multiline.get_mut(b)) {
+            ml.parts.push(msg);
+            return;
+        }
         if !matches!(msg.command.as_str(), "PRIVMSG" | "NOTICE") || !loggable(&msg) {
             return;
         }
@@ -807,6 +934,11 @@ impl State<'_> {
     }
 }
 
+/// Whether a raw line is a QUIT, labeled or not, in any letter case.
+fn is_quit(line: &str) -> bool {
+    Message::parse(line).is_some_and(|m| m.command == "QUIT")
+}
+
 /// Whether a message is worth keeping in the local log.
 fn loggable(msg: &Message) -> bool {
     match msg.command.as_str() {
@@ -818,6 +950,21 @@ fn loggable(msg: &Message) -> bool {
         "JOIN" | "PART" | "KICK" | "TOPIC" | "MODE" => true,
         _ => false,
     }
+}
+
+/// The nick to try when ours is taken: ours with '_' appended, or, at the
+/// 30-character cap where appending changes nothing, with its last
+/// character cycled so the same nick isn't retried forever.
+fn fallback_nick(nick: &str) -> String {
+    let next: String = format!("{nick}_").chars().take(30).collect();
+    if next != nick {
+        return next;
+    }
+    const CYCLE: &str = "_0123456789";
+    let mut chars: Vec<char> = nick.chars().collect();
+    let i = chars.pop().and_then(|c| CYCLE.find(c)).map_or(0, |i| (i + 1) % CYCLE.len());
+    chars.push(CYCLE.as_bytes()[i] as char);
+    chars.into_iter().collect()
 }
 
 fn unescape_isupport(v: &str) -> String {
@@ -900,6 +1047,8 @@ async fn session(
         cap_ended: false,
         isupport: BTreeMap::new(),
         batches: HashMap::new(),
+        multiline: HashMap::new(),
+        sent_multiline: HashMap::new(),
         pending: Vec::new(),
         next_id: 1,
         sasl: None,
@@ -907,6 +1056,7 @@ async fn session(
         sasl_in: String::new(),
         sasl_fell_back: false,
         sts_upgrade: None,
+        user_quit: false,
     };
 
     st.send("CAP LS 302");
@@ -935,16 +1085,19 @@ async fn session(
                         if let Some(port) = st.sts_upgrade {
                             break End::Upgrade(port);
                         }
-                        break End::Error(e, st.registered);
+                        break st.ended(e);
                     }
                 }
-                Ok(None) => break End::Error(anyhow!("connection closed by server"), st.registered),
-                Err(e) => break End::Error(e, st.registered),
+                Ok(None) => break st.ended(anyhow!("connection closed by server")),
+                Err(e) => break st.ended(e),
             },
             cmd = rx.recv() => match cmd {
                 None => break End::Quit,
                 Some(Cmd::Send(lines)) => for l in lines {
                     st.log_outgoing(&l);
+                    if is_quit(&l) {
+                        st.user_quit = true;
+                    }
                     st.send(l);
                 },
                 Some(Cmd::History { kind, target, line, reply }) => {
@@ -988,7 +1141,7 @@ async fn session(
             res = &mut writer_task => {
                 writer_finished = true;
                 let err = match res { Ok(Err(e)) => e, _ => anyhow!("writer stopped") };
-                break End::Error(err, st.registered);
+                break st.ended(err);
             }
         }
     };
@@ -1027,7 +1180,7 @@ async fn write_loop(
             }
             tokens -= 1.0;
         }
-        let quitting = line.starts_with("QUIT");
+        let quitting = is_quit(&line);
         let sent = writer.send_line(&line).await;
         backlog.fetch_sub(1, Ordering::Relaxed);
         sent?;

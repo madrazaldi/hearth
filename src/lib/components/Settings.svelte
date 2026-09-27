@@ -7,15 +7,18 @@
   import Segmented from './Segmented.svelte';
   import ServerForm from './ServerForm.svelte';
   import BouncerNetworks from './BouncerNetworks.svelte';
-
-  const isMac = navigator.userAgent.includes('Mac');
-  const mod = isMac ? '⌘' : 'Ctrl';
+  import NetworkHighlights from './NetworkHighlights.svelte';
+  import AliasEditor from './AliasEditor.svelte';
+  import ShortcutList from './ShortcutList.svelte';
+  import { updater } from '../updater.svelte';
+  import { modal } from '../a11y';
 
   const tabs = [
     { id: 'servers', label: 'Servers', icon: 'server' },
     { id: 'general', label: 'General', icon: 'settings' },
     { id: 'appearance', label: 'Appearance', icon: 'moon' },
     { id: 'notifications', label: 'Notifications', icon: 'bell' },
+    { id: 'aliases', label: 'Aliases', icon: 'terminal' },
     { id: 'privacy', label: 'Privacy & data', icon: 'lock' },
     { id: 'shortcuts', label: 'Shortcuts', icon: 'layers' },
   ];
@@ -75,19 +78,26 @@
   }
 </script>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && close()} />
-
 <div class="scrim" onclick={close} role="presentation">
-  <div class="sheet" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Settings" tabindex="-1" onkeydown={() => {}}>
-    <nav>
-      <p class="eyebrow">Settings</p>
+  <div
+    class="sheet"
+    onclick={(e) => e.stopPropagation()}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Settings"
+    tabindex="-1"
+    onkeydown={() => {}}
+    use:modal={{ onclose: close }}
+  >
+    <nav aria-label="Settings sections">
+      <p class="eyebrow" aria-hidden="true">Settings</p>
       {#each tabs as t (t.id)}
-        <button class:on={tab === t.id} onclick={() => go(t.id)}>
+        <button class:on={tab === t.id} aria-current={tab === t.id ? 'page' : undefined} data-autofocus={tab === t.id || undefined} onclick={() => go(t.id)}>
           <Icon name={t.icon} size={15} />{t.label}
         </button>
       {/each}
       <div class="about">
-        <p>Hearth <span>0.1.0</span></p>
+        <p>Hearth <span>{updater.current || '0.1.0'}</span></p>
       </div>
     </nav>
 
@@ -116,6 +126,11 @@
           {/key}
           {#if bouncer?.isControl}
             <BouncerNetworks conn={bouncer} />
+          {/if}
+          {#if editing !== 'new'}
+            {#key editing}
+              <NetworkHighlights serverId={editServer.id} nick={editServer.nick} />
+            {/key}
           {/if}
         {:else}
           <h2>Servers</h2>
@@ -153,7 +168,7 @@
               <div class="label">Mark me away</div>
               <div class="hint">When Hearth has been in the background this long. You're marked back when you return.</div>
             </div>
-            <Segmented
+            <Segmented label="Mark me away after"
               bind:value={autoAway.get, autoAway.set}
               options={[
                 { value: 0, label: 'Never' },
@@ -162,6 +177,41 @@
                 { value: 60, label: '1 hour' },
               ]}
             />
+          </div>
+          <Switch
+            bind:checked={() => app.settings.spellcheck, (v) => app.updateSettings({ spellcheck: v })}
+            label="Check spelling as I type"
+            hint="Underlines misspelled words in the message box. Autocorrect and auto-capitalization stay off."
+          />
+          <Switch
+            bind:checked={() => app.settings.checkUpdates, (v) => app.updateSettings({ checkUpdates: v })}
+            label="Check for updates automatically"
+            hint="Looks for a new release when Hearth starts and every few hours. Nothing is installed without asking."
+          />
+          <div class="row">
+            <div>
+              <div class="label">Hearth {updater.current}</div>
+              <div class="hint" class:error={updater.phase === 'error'}>
+                {#if updater.phase === 'checking'}
+                  Checking for updates…
+                {:else if updater.phase === 'current'}
+                  You're up to date.
+                {:else if updater.phase === 'available'}
+                  Version {updater.version} is available.
+                {:else if updater.phase === 'installing'}
+                  Installing {updater.version}{updater.progress != null ? ` · ${Math.round(updater.progress * 100)}%` : '…'}
+                {:else if updater.phase === 'error'}
+                  Couldn't update: {updater.error}
+                {:else}
+                  Updates come from GitHub releases and are verified before installing.
+                {/if}
+              </div>
+            </div>
+            {#if updater.phase === 'available' || updater.phase === 'installing'}
+              <button class="btn primary" disabled={updater.busy} onclick={() => updater.installAndRestart()}>Install and restart</button>
+            {:else}
+              <button class="btn" disabled={updater.busy} onclick={() => updater.check()}>Check now</button>
+            {/if}
           </div>
         </div>
       {:else if tab === 'privacy'}
@@ -189,6 +239,23 @@
             label="Show link previews"
             hint="Hearth fetches linked pages and images itself, so those sites see your IP address. Links to local or private addresses are never fetched."
           />
+          <Switch
+            bind:checked={() => app.settings.loadAvatars, (v) => app.updateSettings({ loadAvatars: v })}
+            label="Show profile pictures"
+            hint="People can publish an avatar on servers that support it. Hearth fetches the image itself, so its host sees your IP address."
+          />
+          {#if app.settings.linkPreviews}
+            <Switch
+              bind:checked={() => app.settings.inlineImages, (v) => app.updateSettings({ inlineImages: v })}
+              label="Show inline images"
+              hint="Image links appear under the message. Images in messages that mention NSFW stay blurred until clicked. Video and audio are only described."
+            />
+            <Switch
+              bind:checked={() => app.settings.autoplayAnimations, (v) => app.updateSettings({ autoplayAnimations: v })}
+              label="Play animations automatically"
+              hint="Otherwise animated images play while the pointer is over them. Never when your system asks for reduced motion."
+            />
+          {/if}
           <div class="field">
             <span>Ignored people</span>
             {#if app.settings.ignores.length}
@@ -196,13 +263,13 @@
                 {#each app.settings.ignores as mask (mask)}
                   <div class="ignore">
                     <span class="mono">{mask}</span>
-                    <button class="icon-btn" title="Stop ignoring" onclick={() => app.unignore(mask)}><Icon name="x" size={13} /></button>
+                    <button class="icon-btn" title="Stop ignoring" aria-label="Stop ignoring {mask}" onclick={() => app.unignore(mask)}><Icon name="x" size={13} /></button>
                   </div>
                 {/each}
               </div>
             {/if}
             <form class="add-ignore" onsubmit={addIgnore}>
-              <input class="input mono" bind:value={newIgnore} placeholder="nick or nick!user@host" spellcheck="false" />
+              <input class="input mono" bind:value={newIgnore} placeholder="nick or nick!user@host" aria-label="Nick or mask to ignore" spellcheck="false" />
               <button class="btn" type="submit" disabled={!newIgnore.trim()}>Ignore</button>
             </form>
             <small>Hides their messages, notices, invites and reactions everywhere. <code>*</code> and <code>?</code> are wildcards.</small>
@@ -213,7 +280,7 @@
         <div class="rows">
           <div class="row">
             <div><div class="label">Theme</div></div>
-            <Segmented
+            <Segmented label="Theme"
               bind:value={theme.get, theme.set}
               options={[
                 { value: 'system', label: 'System' },
@@ -227,7 +294,7 @@
               <div class="label">Message layout</div>
               <div class="hint">Columns aligns nicks in a gutter; compact stacks them above messages.</div>
             </div>
-            <Segmented
+            <Segmented label="Message layout"
               bind:value={layout.get, layout.set}
               options={[
                 { value: 'columns', label: 'Columns' },
@@ -237,7 +304,7 @@
           </div>
           <div class="row">
             <div><div class="label">Text size</div></div>
-            <Segmented
+            <Segmented label="Text size"
               bind:value={fontSize.get, fontSize.set}
               options={[
                 { value: 13, label: 'S' },
@@ -249,7 +316,7 @@
           </div>
           <div class="row">
             <div><div class="label">Clock</div></div>
-            <Segmented
+            <Segmented label="Clock"
               bind:value={clock.get, clock.set}
               options={[
                 { value: '24h', label: '24-hour' },
@@ -262,7 +329,7 @@
               <div class="label">Joins, parts and quits</div>
               <div class="hint">Collapse folds consecutive events into one line.</div>
             </div>
-            <Segmented
+            <Segmented label="Joins, parts and quits"
               bind:value={membership.get, membership.set}
               options={[
                 { value: 'show', label: 'Show' },
@@ -302,25 +369,16 @@
               onchange={() => app.updateSettings({ highlightWords: words.split(',').map((w) => w.trim()).filter(Boolean) })}
               placeholder="hearth, deploy"
             />
-            <small>Comma-separated. Your nickname always counts.</small>
+            <small>Comma-separated. Your nickname always counts. Add per-server words and exceptions on each server's settings page.</small>
           </label>
         </div>
+      {:else if tab === 'aliases'}
+        <h2>Aliases</h2>
+        <p class="lede">Your own slash commands. <code>/j</code> → <code>/join $1</code>, <code>/ns</code> → <code>/msg NickServ $*</code>. They show up in command suggestions and Tab completion.</p>
+        <AliasEditor />
       {:else if tab === 'shortcuts'}
         <h2>Shortcuts</h2>
-        <dl class="keys">
-          <dt><span class="kbd">{mod} K</span></dt><dd>Jump to buffer</dd>
-          <dt><span class="kbd">⌥ ↑</span> <span class="kbd">⌥ ↓</span></dt><dd>Previous / next buffer</dd>
-          <dt><span class="kbd">⌥ ⇧ ↑</span> <span class="kbd">⌥ ⇧ ↓</span></dt><dd>Previous / next unread</dd>
-          <dt><span class="kbd">{mod} 1–9</span></dt><dd>Go to channel by position</dd>
-          <dt><span class="kbd">{mod} F</span></dt><dd>Filter messages</dd>
-          <dt><span class="kbd">{mod} ⇧ F</span></dt><dd>Search all messages</dd>
-          <dt><span class="kbd">{mod} W</span></dt><dd>Close buffer</dd>
-          <dt><span class="kbd">{mod} ⇧ M</span></dt><dd>Toggle member list</dd>
-          <dt><span class="kbd">{mod} ,</span></dt><dd>Settings</dd>
-          <dt><span class="kbd">Tab</span></dt><dd>Complete nick, channel or command</dd>
-          <dt><span class="kbd">↑</span> <span class="kbd">↓</span></dt><dd>Input history</dd>
-          <dt><span class="kbd">⇧ ↵</span></dt><dd>New line</dd>
-        </dl>
+        <div class="keys"><ShortcutList /></div>
       {/if}
     </section>
   </div>
@@ -527,6 +585,10 @@
     color: var(--text-3);
   }
 
+  .hint.error {
+    color: var(--danger);
+  }
+
   .ignores {
     display: grid;
     border-radius: 8px;
@@ -560,20 +622,7 @@
     font-size: 11.5px;
   }
 
-  .keys {
-    display: grid;
-    grid-template-columns: 180px 1fr;
-    gap: 10px 16px;
-    font-size: 13.5px;
-  }
-
-  .keys dt {
-    display: flex;
-    gap: 4px;
-  }
-
-  .keys dd {
-    margin: 0;
-    color: var(--text-2);
+  .lede code {
+    white-space: nowrap;
   }
 </style>

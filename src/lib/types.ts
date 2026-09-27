@@ -17,8 +17,8 @@ export type IrcEvent =
   | { type: 'conn-added'; conn: string; server: string; parent: string | null; netid: string | null }
   | { type: 'conn-removed'; conn: string }
   | { type: 'status'; conn: string; status: ConnStatus; error: string | null; retryIn: number | null }
-  | { type: 'registered'; conn: string; nick: string; caps: string[] }
-  | { type: 'caps'; conn: string; caps: string[] }
+  | { type: 'registered'; conn: string; nick: string; caps: string[]; capValues?: Record<string, string> }
+  | { type: 'caps'; conn: string; caps: string[]; capValues?: Record<string, string> }
   | { type: 'isupport'; conn: string; isupport: Record<string, string> }
   | { type: 'message'; conn: string; msg: IrcMessage };
 
@@ -71,7 +71,15 @@ export interface Settings {
   storeLogs: boolean;
   /** Fetch link and image previews (through the backend, never the webview). */
   linkPreviews: boolean;
+  /** Fetch avatars people set with draft/metadata-2 (through the backend). */
+  loadAvatars: boolean;
+  /** With link previews on, show direct image links as images under the message. */
+  inlineImages: boolean;
+  /** Play animated images without hovering (still off under prefers-reduced-motion). */
+  autoplayAnimations: boolean;
   closeToTray: boolean;
+  /** Check the release feed on launch and every few hours. */
+  checkUpdates: boolean;
   /** Mark away after this many minutes with the window in the background; 0 disables. */
   autoAwayMinutes: number;
   /** nick or nick!user@host masks, `*` and `?` wildcards. */
@@ -80,6 +88,19 @@ export interface Settings {
   bufferNotify: Record<string, NotifyLevel>;
   /** Nicks to watch with MONITOR, keyed by `Conn.prefKey`. */
   watch: Record<string, string[]>;
+  /** Extra highlight rules per server id; bouncer networks share their bouncer's. */
+  networkHighlights: Record<string, NetworkHighlights>;
+  /** User slash commands: name (no slash) → `;`-separated commands with `$1`…`$9`, `$*`, `$nick`, … */
+  aliases: Record<string, string>;
+  /** Spellcheck in the message box. */
+  spellcheck: boolean;
+}
+
+export interface NetworkHighlights {
+  /** Words, or `/regex/flags`. */
+  words: string[];
+  /** Nicks or masks whose messages never highlight (bots, relays). */
+  never: string[];
 }
 
 export type LineType =
@@ -132,11 +153,19 @@ export interface SearchHit {
 
 export interface Preview {
   url: string;
-  kind: 'image' | 'page';
+  /** `media` is a video or audio link, described but never loaded. */
+  kind: 'image' | 'page' | 'media';
   title: string | null;
   description: string | null;
   site: string | null;
+  /** A data: URL. */
   image: string | null;
+  /** Pixel size of `image`. */
+  width: number | null;
+  height: number | null;
+  animated: boolean;
+  mime: string | null;
+  size: number | null;
 }
 
 export interface CertInfo {
@@ -184,9 +213,16 @@ export const defaultSettings = (): Settings => ({
   sidebarWidth: 248,
   storeLogs: true,
   linkPreviews: false,
+  loadAvatars: false,
+  inlineImages: true,
+  autoplayAnimations: false,
   closeToTray: false,
+  checkUpdates: true,
   autoAwayMinutes: 0,
   ignores: [],
   bufferNotify: {},
   watch: {},
+  networkHighlights: {},
+  aliases: {},
+  spellcheck: true,
 });

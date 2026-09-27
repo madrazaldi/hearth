@@ -1,109 +1,13 @@
 //! Drives a real connection actor against a scripted IRC server on localhost.
 
-use hearth_lib::config::{SaslMechanism, ServerConfig};
+mod common;
+
+use common::*;
+use hearth_lib::config::SaslMechanism;
 use hearth_lib::irc::client::HistoryKind;
-use hearth_lib::irc::events::{Emitter, Event};
-use hearth_lib::irc::manager::Manager;
-use hearth_lib::store::Db;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpListener;
-
-struct Peer {
-    reader: BufReader<tokio::net::tcp::OwnedReadHalf>,
-    writer: tokio::net::tcp::OwnedWriteHalf,
-}
-
-impl Peer {
-    async fn accept(listener: &TcpListener) -> Peer {
-        let (sock, _) = tokio::time::timeout(Duration::from_secs(10), listener.accept()).await.expect("client connects").unwrap();
-        let (r, w) = sock.into_split();
-        Peer { reader: BufReader::new(r), writer: w }
-    }
-
-    async fn line(&mut self) -> String {
-        let mut s = String::new();
-        tokio::time::timeout(Duration::from_secs(10), self.reader.read_line(&mut s)).await.expect("client line").unwrap();
-        s.trim_end().to_string()
-    }
-
-    /// Read lines until one starts with `prefix`, returning it.
-    async fn expect(&mut self, prefix: &str) -> String {
-        loop {
-            let l = self.line().await;
-            if l.starts_with(prefix) {
-                return l;
-            }
-        }
-    }
-
-    async fn send(&mut self, line: &str) {
-        self.writer.write_all(format!("{line}\r\n").as_bytes()).await.unwrap();
-    }
-
-    async fn register(&mut self, caps: &str) {
-        self.expect("CAP LS").await;
-        self.send(&format!(":srv CAP * LS :{caps}")).await;
-        if !caps.is_empty() {
-            let req = self.expect("CAP REQ").await;
-            let list = req.split_once(':').unwrap().1.to_string();
-            self.send(&format!(":srv CAP * ACK :{list}")).await;
-        }
-        self.expect("CAP END").await;
-        self.welcome().await;
-    }
-
-    async fn welcome(&mut self) {
-        self.send(":srv 001 me :Welcome").await;
-        self.send(":srv 005 me CHANTYPES=# CASEMAPPING=ascii :are supported").await;
-        self.send(":srv 422 me :No MOTD").await;
-    }
-}
-
-struct Harness {
-    mgr: Arc<Manager>,
-    db: Arc<Db>,
-    events: Arc<Mutex<Vec<Event>>>,
-    listener: TcpListener,
-}
-
-impl Harness {
-    async fn new() -> Harness {
-        let db = Arc::new(Db::memory().unwrap());
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let sink = events.clone();
-        let mgr = Manager::new(Emitter::spawn(move |evs| sink.lock().unwrap().extend_from_slice(evs)), db.clone());
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        Harness { mgr, db, events, listener }
-    }
-
-    fn server(&self) -> ServerConfig {
-        ServerConfig {
-            id: "t".into(),
-            host: "127.0.0.1".into(),
-            port: self.listener.local_addr().unwrap().port(),
-            tls: false,
-            nick: "me".into(),
-            ..Default::default()
-        }
-    }
-
-    /// Wait for an emitted message event matching `pred`.
-    async fn event(&self, pred: impl Fn(&hearth_lib::irc::message::Message) -> bool) -> hearth_lib::irc::message::Message {
-        for _ in 0..200 {
-            let found = self.events.lock().unwrap().iter().find_map(|e| match e {
-                Event::Message { msg, .. } if pred(msg) => Some(msg.clone()),
-                _ => None,
-            });
-            if let Some(m) = found {
-                return m;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        panic!("expected event never arrived");
-    }
-}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn scram_falls_back_to_plain() {
@@ -230,9 +134,4 @@ async fn logs_live_and_outgoing_messages() {
     assert_eq!(query[1].source.as_ref().unwrap().nick, "me");
     assert!(h.db.history("t", "srv.example", None, 10).unwrap().is_empty());
     h.mgr.disconnect_all();
-}
-
-fn base64_decode(s: &str) -> Vec<u8> {
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD.decode(s).unwrap()
 }

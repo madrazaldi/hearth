@@ -132,10 +132,47 @@ function linkify(seg: Segment): Segment[] {
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** Whole-word, case-insensitive match against any of the given words. */
-export function mentions(text: string, words: string[]): boolean {
+const REGEX_RULE = /^\/(.+)\/([a-z]*)$/s;
+const ruleCache = new Map<string, RegExp | null>();
+
+function compileRule(rule: string): RegExp | null {
+  let re = ruleCache.get(rule);
+  if (re !== undefined) return re;
+  const m = REGEX_RULE.exec(rule);
+  try {
+    // Check the flags as written (so `gg` is rejected), then drop g and y:
+    // they make .test() stateful.
+    if (m) new RegExp(m[1], m[2]);
+    re = m ? new RegExp(m[1], m[2].replace(/[gy]/g, '')) : new RegExp(`(^|[^\\w-])${escapeRe(rule)}($|[^\\w-])`, 'i');
+  } catch {
+    re = null;
+  }
+  if (ruleCache.size > 500) ruleCache.clear();
+  ruleCache.set(rule, re);
+  return re;
+}
+
+/** Why a highlight rule is invalid, or null. `/pattern/flags` rules are regexes; anything else is a word. */
+export function ruleError(rule: string): string | null {
+  const m = REGEX_RULE.exec(rule.trim());
+  if (!m) return null;
+  try {
+    new RegExp(m[1], m[2]);
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message.replace(/^Invalid regular expression: /, '') : String(e);
+  }
+}
+
+/** The first rule that matches: words match whole-word and case-insensitively, `/regex/flags` as written. */
+export function matchingRule(text: string, rules: string[]): string | null {
   const plain = stripFormatting(text);
-  return words.some((w) => w && new RegExp(`(^|[^\\w-])${escapeRe(w)}($|[^\\w-])`, 'i').test(plain));
+  for (const r of rules) if (r && compileRule(r)?.test(plain)) return r;
+  return null;
+}
+
+export function mentions(text: string, rules: string[]): boolean {
+  return matchingRule(text, rules) !== null;
 }
 
 /** The first http(s) link in a message, for previews. */

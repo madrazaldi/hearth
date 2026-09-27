@@ -166,3 +166,60 @@ impl Manager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manager() -> Arc<Manager> {
+        Manager::new(Emitter::spawn(|_| {}), Arc::new(Db::memory().unwrap()))
+    }
+
+    /// Register a fake connection whose commands land in the returned receiver.
+    fn fake(m: &Manager, id: &str, generation: u64) -> (mpsc::UnboundedReceiver<Cmd>, Arc<AtomicUsize>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let backlog = Arc::new(AtomicUsize::new(0));
+        let entry = Entry { tx, generation, server: "s".into(), backlog: backlog.clone() };
+        m.conns.lock().unwrap().insert(id.into(), entry);
+        (rx, backlog)
+    }
+
+    #[test]
+    fn send_is_refused_at_the_backlog_cap() {
+        let m = manager();
+        let (mut rx, backlog) = fake(&m, "s", 1);
+        backlog.store(MAX_BACKLOG - 1, Ordering::Relaxed);
+        m.send("s", vec!["A\rB\nC".into(), " ".into(), "D".into()]).unwrap();
+        match rx.try_recv() {
+            Ok(Cmd::Send(lines)) => assert_eq!(lines, ["A B C", "D"]),
+            _ => panic!("expected a send"),
+        }
+        backlog.store(MAX_BACKLOG, Ordering::Relaxed);
+        assert!(m.send("s", vec!["E".into()]).is_err());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn stale_actors_do_not_remove_their_successor() {
+        let m = manager();
+        let (_rx, _) = fake(&m, "s", 2);
+        m.actor_finished("s", 1);
+        assert!(m.sender("s").is_ok());
+        m.actor_finished("s", 2);
+        assert!(m.sender("s").is_err());
+    }
+
+    #[test]
+    fn disconnect_takes_children_along() {
+        let m = manager();
+        let (mut parent, _) = fake(&m, "s", 1);
+        let (mut child, _) = fake(&m, &child_id("s", "7"), 2);
+        let (mut other, _) = fake(&m, "o", 3);
+        m.conns.lock().unwrap().get_mut("o").unwrap().server = "o".into();
+        m.disconnect("s", Some("bye".into()));
+        assert!(matches!(parent.try_recv(), Ok(Cmd::Quit(Some(r))) if r == "bye"));
+        assert!(matches!(child.try_recv(), Ok(Cmd::Quit(Some(r))) if r == "bye"));
+        assert!(other.try_recv().is_err());
+        assert!(m.sender("o").is_ok());
+    }
+}

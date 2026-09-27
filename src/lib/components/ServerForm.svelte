@@ -109,6 +109,7 @@
     <div class="field">
       <span>Transport</span>
       <Segmented
+        label="Transport"
         options={[
           { value: 'tcp', label: 'IRC' },
           { value: 'ws', label: 'WebSocket' },
@@ -146,6 +147,7 @@
   <div class="field">
     <span>Authentication</span>
     <Segmented
+      label="Authentication"
       bind:value={s.sasl}
       options={[
         { value: 'none', label: 'None' },
@@ -191,8 +193,8 @@
     <small>Ignored when connecting through a bouncer, which restores channels itself.</small>
   </label>
 
-  <button type="button" class="disclosure" onclick={() => (advanced = !advanced)}>
-    {advanced ? '▾' : '▸'} Advanced
+  <button type="button" class="disclosure" aria-expanded={advanced} onclick={() => (advanced = !advanced)}>
+    <span aria-hidden="true">{advanced ? '▾' : '▸'}</span> Advanced
   </button>
   {#if advanced}
     <div class="advanced">

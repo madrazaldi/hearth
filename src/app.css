@@ -9,6 +9,8 @@
   --radius: 7px;
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 
+  /* --text-3 and --text-4 are secondary text, so they keep WCAG AA (4.5:1)
+     on every surface they're used on; decoration can go dimmer with opacity. */
   color-scheme: dark;
   --bg: #171513;
   --bg-side: #121110;
@@ -20,8 +22,8 @@
   --line-strong: rgb(255 240 220 / 0.14);
   --text: #ece6dd;
   --text-2: #b7afa4;
-  --text-3: #80786e;
-  --text-4: #564f48;
+  --text-3: #9f968b;
+  --text-4: #8f877c;
   --accent: #ef8b4f;
   --accent-text: #1a0f08;
   --accent-soft: rgb(239 139 79 / 0.14);
@@ -51,15 +53,15 @@
   --line-strong: rgb(70 45 20 / 0.16);
   --text: #221e1a;
   --text-2: #57504a;
-  --text-3: #8b8379;
-  --text-4: #b6aea4;
-  --accent: #c9591c;
+  --text-3: #6b645b;
+  --text-4: #736b62;
+  --accent: #b34d14;
   --accent-text: #fff;
-  --accent-soft: rgb(201 89 28 / 0.12);
-  --mention: rgb(201 89 28 / 0.06);
+  --accent-soft: rgb(179 77 20 / 0.12);
+  --mention: rgb(179 77 20 / 0.06);
   --ok: #4d8a3c;
   --warn: #a67b12;
-  --danger: #c2412f;
+  --danger: #b3382a;
   --nick-l: 0.5;
   --nick-c: 0.13;
   --shadow: 0 16px 48px -12px rgb(60 40 20 / 0.25), 0 0 0 1px var(--line-strong);
@@ -127,8 +129,36 @@ a {
 }
 
 :focus-visible {
-  outline: 2px solid color-mix(in oklab, var(--accent) 70%, transparent);
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* Rows and list items that clip or sit flush get the ring inside. */
+.focus-inset:focus-visible {
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 ::-webkit-scrollbar {

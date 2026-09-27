@@ -2,7 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { app, type Buffer } from '../state.svelte';
-  import { COMMANDS, runInput } from '../commands';
+  import { commandInfos, runInput } from '../commands';
   import { api } from '../api';
   import { stripFormatting } from '../format';
   import { nickHue } from '../nickcolor';
@@ -30,13 +30,12 @@
         : `Message ${buf.name}`,
   );
 
+  const commands = $derived(commandInfos(app.settings.aliases));
   const cmdMatches = $derived.by(() => {
-    const m = /^\/(\w*)$/.exec(text);
+    const m = /^\/([\w-]*)$/.exec(text);
     if (!m) return [];
     const q = m[1].toLowerCase();
-    return Object.entries(COMMANDS)
-      .filter(([name]) => name.startsWith(q))
-      .slice(0, 7);
+    return commands.filter((c) => c.name.startsWith(q)).slice(0, 7);
   });
 
   $effect(() => {
@@ -81,26 +80,25 @@
     return seen;
   }
 
-  function complete(backwards: boolean) {
-    if (!ta) return;
+  /** Tab completion; false when there's nothing to complete, so Tab can move focus instead. */
+  function complete(backwards: boolean): boolean {
+    if (!ta) return false;
     if (completion && ta.selectionStart === completion.end) {
       const c = completion;
       c.index = (c.index + (backwards ? -1 : 1) + c.options.length) % c.options.length;
       apply(c);
-      return;
+      return true;
     }
     const caret = ta.selectionStart;
     const before = text.slice(0, caret);
     const start = before.search(/\S*$/);
     const word = before.slice(start);
-    if (!word) return;
+    if (!word) return false;
     const lw = word.toLowerCase();
     let options: string[] = [];
     let suffix = ' ';
     if (start === 0 && word.startsWith('/')) {
-      options = Object.keys(COMMANDS)
-        .filter((c) => c.startsWith(lw.slice(1)))
-        .map((c) => '/' + c);
+      options = commands.filter((c) => c.name.startsWith(lw.slice(1))).map((c) => '/' + c.name);
     } else if (conn.isChannel(word)) {
       options = [...conn.buffers.values()]
         .filter((b) => b.kind === 'channel' && b.name.toLowerCase().startsWith(lw))
@@ -113,9 +111,10 @@
       options = [...new Set(pool)].filter((n) => n.toLowerCase().startsWith(lw) && !conn.isMe(n));
       if (start === 0) suffix = ': ';
     }
-    if (!options.length) return;
+    if (!options.length) return false;
     completion = { start, end: caret, options, index: backwards ? options.length - 1 : 0, suffix };
     apply(completion);
+    return true;
   }
 
   function apply(c: NonNullable<typeof completion>) {
@@ -132,14 +131,13 @@
       cmdIndex = (cmdIndex + (e.key === 'ArrowUp' ? -1 : 1) + cmdMatches.length) % cmdMatches.length;
       return;
     }
-    if (cmdMatches.length && (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && cmdMatches[cmdIndex][0] !== text.slice(1)))) {
+    if (cmdMatches.length && (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && cmdMatches[cmdIndex].name !== text.slice(1)))) {
       e.preventDefault();
-      text = `/${cmdMatches[cmdIndex][0]} `;
+      text = `/${cmdMatches[cmdIndex].name} `;
       return;
     }
     if (e.key === 'Tab') {
-      e.preventDefault();
-      complete(e.shiftKey);
+      if (complete(e.shiftKey)) e.preventDefault();
       return;
     }
     completion = null;
@@ -235,8 +233,8 @@
       .catch(() => {});
     const refocus = (e: KeyboardEvent) => {
       // Typing anywhere lands in the composer.
-      const t = e.target as HTMLElement;
-      if (t.closest('input, textarea, [contenteditable]') || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (e.defaultPrevented || !(t instanceof Element) || t.closest('input, textarea, [contenteditable]') || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key.length === 1) ta?.focus({ preventScroll: true });
     };
     const onInsert = (e: Event) => {
@@ -259,15 +257,15 @@
 
 <div class="composer" class:dragging>
   {#if cmdMatches.length}
-    <div class="suggest" role="listbox">
-      {#each cmdMatches as [name, c], i (name)}
+    <div class="suggest" role="listbox" aria-label="Commands">
+      {#each cmdMatches as c, i (c.name)}
         <button
           class:sel={i === cmdIndex}
           role="option"
           aria-selected={i === cmdIndex}
           onmousedown={(e) => {
             e.preventDefault();
-            text = `/${name} `;
+            text = `/${c.name} `;
             ta?.focus({ preventScroll: true });
           }}
         >
@@ -283,27 +281,30 @@
       <Icon name="reply" size={13} />
       <span>Replying to <b class="nick" style="--h:{nickHue(r.nick)}">{r.nick}</b></span>
       <span class="snip">{stripFormatting(r.text)}</span>
-      <button class="icon-btn" title="Cancel reply (Esc)" onclick={() => (buf.replyTo = null)}><Icon name="x" size={13} /></button>
+      <button class="icon-btn" title="Cancel reply (Esc)" aria-label="Cancel reply" onclick={() => (buf.replyTo = null)}><Icon name="x" size={13} /></button>
     </div>
   {/if}
   <div class="box" class:with-reply={!!buf.replyTo}>
-    <button class="nickname mono" title="Change nickname" onclick={() => (text = `/nick ${conn.nick}`)}>{conn.nick || '…'}</button>
+    <button class="nickname mono" title="Change nickname" aria-label="Your nickname, {conn.nick}. Change nickname" onclick={() => (text = `/nick ${conn.nick}`)}>{conn.nick || '…'}</button>
     <textarea
       bind:this={ta}
       bind:value={text}
       rows="1"
       {placeholder}
-      spellcheck="true"
+      aria-label={placeholder}
+      spellcheck={app.settings.spellcheck}
       autocomplete="off"
+      {...{ autocorrect: 'off' }}
+      autocapitalize="off"
       onkeydown={onKeydown}
       oninput={onInput}
       onpaste={onPaste}
     ></textarea>
     {#if uploading}
-      <span class="uploading" title="Uploading"></span>
+      <span class="uploading" title="Uploading" role="status" aria-label="Uploading"></span>
     {/if}
     {#if filehost && buf.kind !== 'server'}
-      <button class="icon-btn" title="Attach file" onclick={() => fileInput?.click()}><Icon name="clip" /></button>
+      <button class="icon-btn" title="Attach file" aria-label="Attach file" onclick={() => fileInput?.click()}><Icon name="clip" /></button>
       <input
         type="file"
         hidden

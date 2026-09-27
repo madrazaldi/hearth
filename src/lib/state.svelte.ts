@@ -1,17 +1,23 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { api, onIrc } from './api';
-import { casefold, escapeTag, isoTime, parsePrefix, splitMessage, escapeAttr, type PrefixMap } from './irc';
+import { casefold, escapeTag, parsePrefix, splitMessage, type PrefixMap } from './irc';
 import { isIgnored, normalizeMask } from './ignore';
-import { stripFormatting } from './format';
+import { mentions, stripFormatting } from './format';
 import { notify } from './notify';
-import { handleMessage, historyLine } from './incoming';
+import { handleMessage } from './incoming';
+import { fetchHistory, fetchTargets, loadAround, mergeLines } from './history';
+import { search } from './search';
+import { isWatched, syncMonitor, unwatch, watch } from './monitor';
+import { rejoinCommands, restoreBuffers, saveBuffersSoon } from './saved';
+import { countHighlights, countUnread, markRead } from './unread';
+import { joinParts, multilineBatches, parseMultilineCap } from './multiline';
 import {
   defaultSettings,
   type ConnStatus,
   type IrcEvent,
   type IrcMessage,
   type Line,
-  type LineType,
+  type NetworkHighlights,
   type NotifyLevel,
   type Preview,
   type SearchHit,
@@ -21,8 +27,11 @@ import {
 } from './types';
 
 let seq = 0;
-const MAX_LINES = 4000;
-const COUNTED: LineType[] = ['privmsg', 'action', 'notice'];
+// Rows are virtualized, so the cap is about memory and the O(n) derivations
+// per new line (unread counts, msgid index, timeline), not DOM size.
+const MAX_LINES = 20_000;
+/** Trimmed in chunks so a busy channel doesn't slice the array on every line. */
+const TRIM_TO = 18_000;
 
 export type BufferKind = 'server' | 'channel' | 'query';
 
@@ -34,6 +43,13 @@ export interface Member {
   user?: string;
   host?: string;
   realname?: string;
+}
+
+/** What someone has published about themselves with draft/metadata-2. */
+export interface Profile {
+  /** An image URL; load it with `App.avatar`, never directly. */
+  avatar?: string;
+  displayName?: string;
 }
 
 export interface ChannelInfo {
@@ -48,10 +64,6 @@ export function mkLine(p: Partial<Line> & Pick<Line, 'type'>): Line {
 
 export function nextSeq(): number {
   return ++seq;
-}
-
-function lineKey(l: Line): string {
-  return l.msgid ?? `${l.time}|${l.type}|${l.nick}|${l.text}`;
 }
 
 export class Buffer {
@@ -106,26 +118,11 @@ export class Buffer {
 
   level = $derived.by((): NotifyLevel | 'default' => this.conn.app.settings.bufferNotify[this.prefKey] ?? 'default');
 
-  unread = $derived.by(() => {
-    let n = 0;
-    for (let i = this.messages.length - 1; i >= 0; i--) {
-      const l = this.messages[i];
-      if (l.time <= this.readMarker) break;
-      if (!l.self && COUNTED.includes(l.type)) n++;
-    }
-    return n;
-  });
+  unread = $derived.by(() => countUnread(this.messages, this.readMarker));
 
   highlights = $derived.by(() => {
     if (this.level === 'none') return 0;
-    const everything = this.kind === 'query' || this.level === 'all';
-    let n = 0;
-    for (let i = this.messages.length - 1; i >= 0; i--) {
-      const l = this.messages[i];
-      if (l.time <= this.readMarker) break;
-      if (!l.self && (l.highlight || (everything && COUNTED.includes(l.type)))) n++;
-    }
-    return n;
+    return countHighlights(this.messages, this.readMarker, this.kind === 'query' || this.level === 'all');
   });
 
   sortedMembers = $derived.by(() => {
@@ -147,7 +144,7 @@ export class Buffer {
     if (!last || last.time <= line.time) next = [...next, line];
     else next = [...next, line].sort((a, b) => a.time - b.time);
     if (next.length > MAX_LINES) {
-      next = next.slice(next.length - MAX_LINES + 500);
+      next = next.slice(next.length - TRIM_TO);
       this.history = 'idle';
     }
     this.messages = next;
@@ -155,27 +152,8 @@ export class Buffer {
 
   /** Add lines from history, skipping ones already present. */
   merge(lines: Line[]) {
-    if (!lines.length) return;
-    const seen = new Set(this.messages.map(lineKey));
-    // Lines without a msgid can differ by a few ms between the live copy and
-    // the logged one (our own messages without echo-message), so also match
-    // same-content lines that are close in time.
-    const loose = new Map<string, number[]>();
-    for (const l of this.messages) {
-      if (l.msgid) continue;
-      const k = `${l.type}|${l.nick}|${l.text}`;
-      const times = loose.get(k);
-      if (times) times.push(l.time);
-      else loose.set(k, [l.time]);
-    }
-    const fresh = lines.filter((l) => {
-      if (seen.has(lineKey(l))) return false;
-      if (l.msgid) return true;
-      const times = loose.get(`${l.type}|${l.nick}|${l.text}`);
-      return !times?.some((t) => Math.abs(t - l.time) < 3000);
-    });
-    if (!fresh.length) return;
-    this.messages = [...this.messages, ...fresh].sort((a, b) => a.time - b.time || a.id - b.id);
+    const next = mergeLines(this.messages, lines);
+    if (next) this.messages = next;
   }
 
   /** Record a +draft/react on the message with `msgid`. */
@@ -214,6 +192,8 @@ export class Conn {
   retryAt = $state(0);
   nick = $state('');
   caps = $state.raw(new Set<string>());
+  /** Values of enabled caps that have one, e.g. draft/multiline limits. */
+  capValues = $state.raw<Record<string, string>>({});
   isupport = $state.raw<Record<string, string>>({});
   buffers = new SvelteMap<string, Buffer>();
   server: Buffer;
@@ -223,6 +203,8 @@ export class Conn {
   /** MONITOR state: case-folded nick → online. */
   online = new SvelteMap<string, boolean>();
   channelList = $state.raw<{ loading: boolean; items: ChannelInfo[]; at: number } | null>(null);
+  /** draft/metadata-2 key/values: case-folded nick (or channel) → key → value. */
+  metadata = new SvelteMap<string, Record<string, string>>();
 
   whois: Record<string, Record<string, string>> = {};
   motd: string[] = [];
@@ -237,6 +219,11 @@ export class Conn {
   labels = new Map<string, Buffer>();
   ctcpTimes: number[] = [];
   ctcpWarned = 0;
+  /**
+   * draft/account-registration: credentials from /register, kept in memory
+   * only until the server answers, so they can be offered for SASL.
+   */
+  registration: { account: string; password: string } | null = null;
 
   constructor(app: App, id: string, serverId: string, parentId: string | null, netid: string | null) {
     this.app = app;
@@ -328,11 +315,32 @@ export class Conn {
 
   /** Send a command whose replies should land in `buf` (via labeled-response). */
   sendFrom(buf: Buffer, line: string) {
-    if (!this.caps.has('labeled-response') || line.startsWith('@')) return this.send(line);
+    const label = line.startsWith('@') ? undefined : this.labelFor(buf);
+    return this.send(label ? `@label=${label} ${line}` : line);
+  }
+
+  /** A fresh label whose replies go to `buf`, if the server supports labels. */
+  labelFor(buf: Buffer): string | undefined {
+    if (!this.caps.has('labeled-response')) return undefined;
     const label = `f${nextSeq()}`;
     this.labels.set(label, buf);
     if (this.labels.size > 200) this.labels.delete(this.labels.keys().next().value!);
-    return this.send(`@label=${label} ${line}`);
+    return label;
+  }
+
+  profile(nick: string): Profile {
+    const m = this.metadata.get(this.fold(nick));
+    return { avatar: m?.avatar || undefined, displayName: m?.['display-name'] || undefined };
+  }
+
+  /** Record a metadata key; `value` undefined means it was removed. */
+  setMetadata(target: string, key: string, value: string | undefined) {
+    const k = this.fold(target);
+    const next = { ...(this.metadata.get(k) ?? {}) };
+    if (value === undefined) delete next[key];
+    else next[key] = value;
+    if (Object.keys(next).length) this.metadata.set(k, next);
+    else this.metadata.delete(k);
   }
 
   has(cap: string) {
@@ -347,7 +355,10 @@ export class Conn {
   }
 }
 
-export type Toast = { id: number; text: string; kind: 'info' | 'error' };
+export type Toast = { id: number; text: string; kind: 'info' | 'error'; action?: { label: string; run: () => void } };
+
+/** Composer input that carries a password and must not be kept for recall. */
+export const secretInput = (line: string) => /^\/(register|verify)\b/i.test(line);
 
 export class App {
   servers = $state<ServerConfig[]>([]);
@@ -362,8 +373,17 @@ export class App {
   searchQuery = $state('');
   browserConn = $state<Conn | null>(null);
   settingsOpen = $state<null | { tab: string; serverId?: string }>(null);
+  shortcutsOpen = $state(false);
+  /** Latched by the first-run flow so it can show connection progress after the first save. */
+  onboarding = $state(false);
   toasts = $state<Toast[]>([]);
-  inputHistory: string[] = [];
+  private recall: string[] = [];
+  get inputHistory(): string[] {
+    return this.recall;
+  }
+  set inputHistory(v: string[]) {
+    this.recall = v.filter((h) => !secretInput(h));
+  }
 
   /** conn id → folded channel to open when our JOIN arrives. */
   pendingActive = new Map<string, string>();
@@ -371,6 +391,7 @@ export class App {
   private blurredAt = Date.now();
   private saveBufferTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private previews = new Map<string, Promise<Preview | null>>();
+  private avatars = new Map<string, Promise<string | null>>();
 
   async init() {
     const cfg = await api.getConfig();
@@ -387,10 +408,15 @@ export class App {
     setInterval(() => this.checkAutoAway(), 30_000);
   }
 
-  toast(text: string, kind: Toast['kind'] = 'info') {
-    const t = { id: ++seq, text, kind };
+  toast(text: string, kind: Toast['kind'] = 'info', action?: Toast['action']) {
+    const t = { id: ++seq, text, kind, action };
     this.toasts = [...this.toasts, t];
-    setTimeout(() => (this.toasts = this.toasts.filter((x) => x.id !== t.id)), 5000);
+    // Leave time to act on an offer.
+    setTimeout(() => this.dismissToast(t.id), action ? 20_000 : 5000);
+  }
+
+  dismissToast(id: number) {
+    this.toasts = this.toasts.filter((x) => x.id !== id);
   }
 
   /** Root connections in config order, each followed by its bouncer children. */
@@ -420,10 +446,17 @@ export class App {
     this.active = buf;
     if (!buf) return;
     buf.divider = buf.unread > 0 ? buf.readMarker : 0;
+    this.rememberActive();
+    if (buf.kind !== 'server' && buf.history === 'idle' && buf.messages.length < 30) this.fetchHistory(buf, 'before');
+  }
+
+  /** Persist which buffer is open, to restore it on the next launch. */
+  rememberActive() {
+    const buf = this.active;
+    if (!buf) return;
     try {
       localStorage.setItem('hearth.active', `${buf.conn.serverId}|${buf.conn.netid ?? ''}|${buf.key}`);
     } catch {}
-    if (buf.kind !== 'server' && buf.history === 'idle' && buf.messages.length < 30) this.fetchHistory(buf, 'before');
   }
 
   step(delta: number, unreadOnly = false) {
@@ -437,15 +470,7 @@ export class App {
   }
 
   markRead(buf: Buffer) {
-    const last = buf.messages[buf.messages.length - 1];
-    if (!last || last.time <= buf.readMarker) return;
-    buf.readMarker = last.time;
-    if (buf.kind === 'server' || !buf.conn.has('draft/read-marker')) return;
-    if (buf.markTimer) clearTimeout(buf.markTimer);
-    buf.markTimer = setTimeout(() => {
-      buf.markTimer = null;
-      buf.conn.send(`MARKREAD ${buf.name} timestamp=${isoTime(buf.readMarker)}`);
-    }, 400);
+    markRead(buf);
   }
 
   closeBuffer(buf: Buffer) {
@@ -466,25 +491,8 @@ export class App {
   async jumpTo(buf: Buffer, time: number, msgid?: string) {
     this.open(buf);
     const present = buf.messages.some((l) => (msgid ? l.msgid === msgid : l.time === time));
-    if (!present) {
-      try {
-        let msgs: IrcMessage[] = [];
-        if (buf.conn.has('draft/chathistory') && buf.conn.status === 'connected') {
-          const at = msgid ? `msgid=${msgid}` : `timestamp=${isoTime(time)}`;
-          msgs = await api.history(buf.conn.id, 'messages', buf.name, `CHATHISTORY AROUND ${buf.name} ${at} 100`);
-        } else if (this.settings.storeLogs) {
-          const [before, after] = await Promise.all([
-            api.localHistory(buf.conn.id, buf.key, { before: time + 1, limit: 60 }),
-            api.localHistory(buf.conn.id, buf.key, { after: time, limit: 60 }),
-          ]);
-          msgs = [...before, ...after];
-        }
-        this.applyHistory(buf, msgs);
-      } catch (e) {
-        console.warn('jump', e);
-      }
-    }
-    buf.focus = { time, msgid, seq: ++seq };
+    if (!present) await loadAround(this, buf, time, msgid);
+    buf.focus = { time, msgid, seq: nextSeq() };
   }
 
   // ─── Settings & servers ─────────────────────────────────────
@@ -550,43 +558,15 @@ export class App {
   }
 
   isWatched(conn: Conn, nick: string): boolean {
-    return conn.watched.some((n) => conn.fold(n) === conn.fold(nick));
+    return isWatched(conn, nick);
   }
 
   watch(conn: Conn, nick: string) {
-    if (this.isWatched(conn, nick)) return;
-    this.updateSettings({ watch: { ...this.settings.watch, [conn.prefKey]: [...conn.watched, nick] } });
-    if (conn.canMonitor) conn.send(`MONITOR + ${nick}`);
+    watch(this, conn, nick);
   }
 
   unwatch(conn: Conn, nick: string) {
-    const rest = conn.watched.filter((n) => conn.fold(n) !== conn.fold(nick));
-    this.updateSettings({ watch: { ...this.settings.watch, [conn.prefKey]: rest } });
-    if (conn.canMonitor && !conn.buffer(nick)) {
-      conn.send(`MONITOR - ${nick}`);
-      conn.online.delete(conn.fold(nick));
-    }
-  }
-
-  /** Subscribe to presence for watched nicks and open conversations. */
-  private syncMonitor(conn: Conn) {
-    if (!conn.canMonitor) return;
-    const limit = parseInt(conn.isupport.MONITOR) || Infinity;
-    const nicks = new Map<string, string>();
-    for (const n of conn.watched) nicks.set(conn.fold(n), n);
-    for (const b of conn.buffers.values()) if (b.kind === 'query') nicks.set(conn.fold(b.name), b.name);
-    conn.online.clear();
-    const list = [...nicks.values()].slice(0, limit);
-    let chunk: string[] = [];
-    const flush = () => {
-      if (chunk.length) conn.send(`MONITOR + ${chunk.join(',')}`);
-      chunk = [];
-    };
-    for (const n of list) {
-      if (chunk.join(',').length + n.length > 400) flush();
-      chunk.push(n);
-    }
-    flush();
+    unwatch(this, conn, nick);
   }
 
   // ─── Presence ───────────────────────────────────────────────
@@ -618,36 +598,7 @@ export class App {
   // ─── Saved buffers ──────────────────────────────────────────
 
   saveBuffersSoon(conn: Conn) {
-    if (!conn.buffersLoaded || conn.isControl) return;
-    clearTimeout(this.saveBufferTimers.get(conn.id));
-    this.saveBufferTimers.set(
-      conn.id,
-      setTimeout(() => {
-        const list = [...conn.buffers.values()]
-          .filter((b) => b.kind === 'query' || (b.kind === 'channel' && b.wantJoined))
-          .map((b) => ({ name: b.name, kind: b.kind as 'channel' | 'query', key: b.joinKey }));
-        api.saveBuffers(conn.id, list).catch((e) => console.warn('save buffers', e));
-      }, 500),
-    );
-  }
-
-  private async restoreBuffers(conn: Conn) {
-    try {
-      const saved = await api.loadBuffers(conn.id);
-      for (const s of saved) {
-        // Bouncers keep their own channel list; only restore conversations there.
-        if (s.kind === 'channel' && conn.netid) continue;
-        const b = conn.ensure(s.name, s.kind);
-        if (s.kind === 'channel') {
-          b.wantJoined = true;
-          b.joinKey = s.key;
-        } else if (!b.messages.length) this.fetchHistory(b, 'latest');
-        this.maybeRestoreActive(conn, b.key);
-      }
-    } catch (e) {
-      console.warn('restore buffers', e);
-    }
-    conn.buffersLoaded = true;
+    saveBuffersSoon(conn, this.saveBufferTimers);
   }
 
   // ─── Outgoing ────────────────────────────────────────────────
@@ -675,6 +626,39 @@ export class App {
       }
     });
     buf.lastTypingSent = 0;
+  }
+
+  /**
+   * Send text with line breaks as draft/multiline batches, so it arrives as
+   * one message. Returns false when the server can't take it that way.
+   */
+  sendMultiline(buf: Buffer, text: string, replyTo?: string): boolean {
+    const conn = buf.conn;
+    const limits = parseMultilineCap(conn.capValues['draft/multiline']);
+    if (!limits || !conn.has('batch') || buf.kind === 'server') return false;
+    // A single line (maybe with stray line breaks around it) needs no batch.
+    if (text.split('\n').filter((l) => l.trim()).length < 2) return false;
+    const target = buf.name;
+    const budget = 510 - (conn.nick.length + 100 + 'PRIVMSG'.length + target.length);
+    const batches = multilineBatches(text, limits, Math.max(budget, 60));
+    if (!batches.length) return false;
+    const reply = replyTo && conn.canTag('draft/reply') ? replyTo : undefined;
+    batches.forEach((parts, i) => {
+      const ref = `ml${nextSeq()}`;
+      // Labeled, so a FAIL about the batch (too long, say) lands here.
+      const label = conn.labelFor(buf);
+      const tags = [label && `label=${label}`, reply && i === 0 && `+draft/reply=${escapeTag(reply)}`].filter(Boolean);
+      conn.send(
+        `${tags.length ? `@${tags.join(';')} ` : ''}BATCH +${ref} draft/multiline ${target}`,
+        ...parts.map((p) => `@batch=${ref}${p.concat ? ';draft/multiline-concat' : ''} PRIVMSG ${target} :${p.text}`),
+        `BATCH -${ref}`,
+      );
+      if (!conn.has('echo-message')) {
+        buf.push(mkLine({ type: 'privmsg', nick: conn.nick, text: joinParts(parts), self: true, replyTo: i === 0 ? reply : undefined }));
+      }
+    });
+    buf.lastTypingSent = 0;
+    return true;
   }
 
   sendTyping(buf: Buffer, state: 'active' | 'done') {
@@ -743,118 +727,47 @@ export class App {
     if (!p) {
       p = api.linkPreview(url).catch(() => null);
       this.previews.set(url, p);
+      // Only in-flight dedupe for big images; the preview component keeps
+      // its own byte-bounded cache of settled ones.
+      p.then((r) => (r?.image?.length ?? 0) > 256 * 1024 && this.previews.get(url) === p && this.previews.delete(url));
       if (this.previews.size > 500) this.previews.delete(this.previews.keys().next().value!);
     }
     return p;
   }
 
+  /** A metadata avatar as a data: URL, or null if it can't or mustn't be loaded. */
+  avatar(url: string): Promise<string | null> {
+    if (!this.settings.loadAvatars) return Promise.resolve(null);
+    let p = this.avatars.get(url);
+    if (!p) {
+      p = api.avatar(url).catch(() => null);
+      this.avatars.set(url, p);
+      if (this.avatars.size > 1000) this.avatars.delete(this.avatars.keys().next().value!);
+    }
+    return p;
+  }
+
+  /** Use the account from /register for SASL on this server from now on. */
+  async saveLogin(conn: Conn, account: string, password: string) {
+    const cfg = conn.config;
+    if (!cfg) return;
+    try {
+      await this.saveServer({ ...$state.snapshot(cfg), sasl: 'plain', saslUsername: account, saslPassword: password }, false);
+      this.toast(`Hearth will sign in as ${account} on ${conn.name}`);
+    } catch (e) {
+      this.toast(`Couldn't save the login: ${e}`, 'error');
+    }
+  }
+
   // ─── History & search ──────────────────────────────────────
 
-  async fetchHistory(buf: Buffer, mode: 'latest' | 'before' | 'after') {
-    const conn = buf.conn;
-    if (buf.kind === 'server') return;
-    const remote = conn.has('draft/chathistory') && conn.status === 'connected';
-    // The local log only fills gaps before what we have: anything newer
-    // arrived live in this session.
-    if (!remote && (!this.settings.storeLogs || mode === 'after')) return;
-    if (buf.history === 'loading' || (mode === 'before' && buf.history === 'done')) return;
-    const max = parseInt(conn.isupport.CHATHISTORY || '100') || 100;
-    const first = buf.messages[0];
-    const last = buf.messages[buf.messages.length - 1];
-    let limit = Math.min(100, max);
-    buf.history = 'loading';
-    try {
-      let msgs: IrcMessage[];
-      if (remote) {
-        let line: string;
-        if (mode === 'after' && last) {
-          limit = Math.min(1000, max);
-          line = `CHATHISTORY AFTER ${buf.name} timestamp=${isoTime(last.time)} ${limit}`;
-        } else if (mode === 'before' && first) {
-          line = `CHATHISTORY BEFORE ${buf.name} timestamp=${isoTime(first.time)} ${limit}`;
-        } else {
-          line = `CHATHISTORY LATEST ${buf.name} * ${limit}`;
-        }
-        msgs = await api.history(conn.id, 'messages', buf.name, line);
-      } else {
-        limit = 100;
-        msgs = await api.localHistory(conn.id, buf.key, { before: mode === 'before' ? first?.time : undefined, limit });
-      }
-      this.applyHistory(buf, msgs);
-      buf.history = mode !== 'after' && msgs.length < limit ? 'done' : 'idle';
-    } catch (e) {
-      buf.history = 'idle';
-      console.warn('history', buf.name, e);
-    }
-  }
-
-  private applyHistory(buf: Buffer, msgs: IrcMessage[]) {
-    const lines = msgs.map((m) => historyLine(this, buf.conn, m)).filter((l): l is Line => !!l);
-    buf.merge(lines);
-    for (const m of msgs) {
-      const emoji = m.tags['+draft/react'];
-      const parent = m.tags['+draft/reply'];
-      if (m.command === 'TAGMSG' && emoji && parent && m.source && !this.isIgnored(buf.conn, m.source)) {
-        buf.react(parent, emoji, m.source.nick);
-      }
-    }
-  }
-
-  private async fetchTargets(conn: Conn) {
-    if (!conn.has('draft/chathistory') || conn.isControl) return;
-    const now = Date.now();
-    const line = `CHATHISTORY TARGETS timestamp=${isoTime(now + 60000)} timestamp=${isoTime(now - 14 * 86400000)} 50`;
-    try {
-      const msgs = await api.history(conn.id, 'targets', '*', line);
-      for (const m of msgs) {
-        const target = m.params[1];
-        if (!target || conn.isChannel(target) || conn.isMe(target)) continue;
-        const b = conn.ensure(target, 'query');
-        if (!b.messages.length) this.fetchHistory(b, 'latest');
-      }
-    } catch (e) {
-      console.warn('targets', e);
-    }
+  fetchHistory(buf: Buffer, mode: 'latest' | 'before' | 'after'): Promise<void> {
+    return fetchHistory(this, buf, mode);
   }
 
   /** Search the local log and, where supported, the bouncer. Newest first. */
-  async search(query: string, scope: { conn?: Conn; buf?: Buffer }): Promise<SearchHit[]> {
-    const q = query.trim();
-    if (!q) return [];
-    const target = scope.buf && scope.buf.kind !== 'server' ? scope.buf : undefined;
-    const tasks: Promise<SearchHit[]>[] = [];
-    if (this.settings.storeLogs) {
-      tasks.push(api.search(q, scope.conn?.id ?? null, target?.key ?? null, 200).catch(() => []));
-    }
-    const remote = scope.conn ? [scope.conn] : [...this.conns.values()];
-    for (const c of remote) {
-      if (!c.has('soju.im/search') || c.status !== 'connected' || c.isControl) continue;
-      let attrs = `text=${escapeAttr(q)};limit=100`;
-      if (target) attrs += `;in=${escapeAttr(target.name)}`;
-      tasks.push(
-        api
-          .history(c.id, 'search', '*', `SEARCH ${attrs}`)
-          .then((msgs) =>
-            msgs.map((msg) => {
-              const to = msg.params[0] ?? '';
-              const peer = c.isChannel(to) || !msg.source || c.isMe(msg.source.nick) ? to : msg.source.nick;
-              return { network: c.id, target: c.fold(peer), msg };
-            }),
-          )
-          .catch(() => []),
-      );
-    }
-    const all = (await Promise.all(tasks)).flat();
-    const seen = new Set<string>();
-    const out: SearchHit[] = [];
-    for (const h of all) {
-      const k = h.msg.tags.msgid ? `${h.network}|${h.msg.tags.msgid}` : `${h.network}|${h.target}|${h.msg.tags.time}|${h.msg.params[1]}`;
-      if (seen.has(k)) continue;
-      seen.add(k);
-      out.push(h);
-    }
-    const t = (h: SearchHit) => Date.parse(h.msg.tags.time ?? '') || 0;
-    return out.sort((a, b) => t(b) - t(a));
+  search(query: string, scope: { conn?: Conn; buf?: Buffer }): Promise<SearchHit[]> {
+    return search(this, query, scope);
   }
 
   // ─── Incoming ────────────────────────────────────────────────
@@ -890,6 +803,7 @@ export class App {
             b.typing.clear();
           }
           conn.online.clear();
+          conn.metadata.clear();
           if (was === 'connected' || ev.error) {
             conn.server.push(
               mkLine({
@@ -905,9 +819,11 @@ export class App {
       case 'registered':
         conn.nick = ev.nick;
         conn.caps = new Set(ev.caps);
+        conn.capValues = ev.capValues ?? {};
         break;
       case 'caps':
         conn.caps = new Set(ev.caps);
+        conn.capValues = ev.capValues ?? {};
         break;
       case 'isupport':
         conn.isupport = ev.isupport;
@@ -924,25 +840,15 @@ export class App {
     this.maybeRestoreActive(conn, '');
     if (!this.active) this.open(conn.server);
     if (conn.isControl) return;
-    if (!conn.buffersLoaded) await this.restoreBuffers(conn);
+    if (!conn.buffersLoaded) await restoreBuffers(this, conn);
     // Rejoin channels on direct connections; bouncers restore them on their own.
     if (!conn.netid) {
       const auto = new Set((conn.config?.autojoin ?? []).map((c) => conn.fold(c.trim())));
       const rejoin = [...conn.buffers.values()].filter((b) => b.kind === 'channel' && b.wantJoined && !auto.has(b.key));
-      if (rejoin.length) setTimeout(() => this.rejoin(conn, rejoin), 1500);
+      if (rejoin.length) setTimeout(() => rejoinCommands(rejoin).forEach((l) => conn.send(l)), 1500);
     }
-    this.syncMonitor(conn);
-    setTimeout(() => this.fetchTargets(conn), 800);
-  }
-
-  private rejoin(conn: Conn, chans: Buffer[]) {
-    for (let i = 0; i < chans.length; i += 10) {
-      const group = chans.slice(i, i + 10);
-      // Keyed channels must come first so keys line up by position.
-      const keyed = group.filter((b) => b.joinKey);
-      const names = [...keyed, ...group.filter((b) => !b.joinKey)].map((b) => b.name).join(',');
-      conn.send(keyed.length ? `JOIN ${names} ${keyed.map((b) => b.joinKey).join(',')}` : `JOIN ${names}`);
-    }
+    syncMonitor(conn);
+    setTimeout(() => fetchTargets(this, conn), 800);
   }
 
   maybeRestoreActive(conn: Conn, key: string) {
@@ -963,8 +869,23 @@ export class App {
     return this.active?.conn === conn ? this.active : conn.server;
   }
 
+  get welcoming(): boolean {
+    return this.ready && (this.servers.length === 0 || this.onboarding);
+  }
+
+  networkHighlights(serverId: string): NetworkHighlights {
+    return this.settings.networkHighlights[serverId] ?? { words: [], never: [] };
+  }
+
   highlightWords(conn: Conn): string[] {
-    return [conn.nick, ...this.settings.highlightWords];
+    return [conn.nick, ...this.settings.highlightWords, ...this.networkHighlights(conn.serverId).words];
+  }
+
+  /** Whether a message from `src` highlights us. */
+  isHighlight(conn: Conn, src: Source | null, text: string): boolean {
+    const never = this.networkHighlights(conn.serverId).never;
+    if (src && isIgnored(never, src, (s) => conn.fold(s))) return false;
+    return mentions(text, this.highlightWords(conn));
   }
 
   maybeNotify(conn: Conn, buf: Buffer, nick: string, text: string, important: boolean) {

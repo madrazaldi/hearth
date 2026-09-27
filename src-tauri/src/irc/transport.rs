@@ -241,3 +241,126 @@ impl ServerCertVerifier for NoVerify {
         self.0.signature_verification_algorithms.supported_schemes()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpListener;
+    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+
+    async fn listen() -> (TcpListener, Endpoint) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ep = Endpoint {
+            host: "127.0.0.1".into(),
+            port: listener.local_addr().unwrap().port(),
+            tls: false,
+            accept_invalid_certs: false,
+            websocket_path: None,
+            client_cert: None,
+        };
+        (listener, ep)
+    }
+
+    #[tokio::test]
+    async fn raw_lines_are_split_trimmed_and_decoded() {
+        let (listener, ep) = listen().await;
+        let (client, server) = tokio::join!(connect(&ep), listener.accept());
+        let (mut reader, mut writer) = client.unwrap();
+        let (mut sock, _) = server.unwrap();
+
+        sock.write_all(b"PING a\r\n\r\n\nPING b\n:x PRIVMSG #a :caf\xe9\r\n:x PRIVMSG #a :caf\xc3\xa9\r\nPARTIAL").await.unwrap();
+        sock.shutdown().await.unwrap();
+        assert_eq!(reader.next_line().await.unwrap().as_deref(), Some("PING a"));
+        assert_eq!(reader.next_line().await.unwrap().as_deref(), Some("PING b"));
+        // Invalid UTF-8 falls back to Latin-1.
+        assert_eq!(reader.next_line().await.unwrap().as_deref(), Some(":x PRIVMSG #a :café"));
+        assert_eq!(reader.next_line().await.unwrap().as_deref(), Some(":x PRIVMSG #a :café"));
+        // A final line without a terminator still counts.
+        assert_eq!(reader.next_line().await.unwrap().as_deref(), Some("PARTIAL"));
+        assert_eq!(reader.next_line().await.unwrap(), None);
+
+        writer.send_line("NICK me").await.unwrap();
+        writer.close().await;
+        let mut got = String::new();
+        sock.read_to_string(&mut got).await.unwrap();
+        assert_eq!(got, "NICK me\r\n");
+    }
+
+    #[tokio::test]
+    async fn overlong_lines_are_rejected() {
+        let (listener, ep) = listen().await;
+        let (client, server) = tokio::join!(connect(&ep), listener.accept());
+        let (mut reader, _writer) = client.unwrap();
+        let (mut sock, _) = server.unwrap();
+        tokio::spawn(async move {
+            let _ = sock.write_all(&vec![b'a'; MAX_LINE + 10]).await;
+            let _ = sock.write_all(b"\r\n").await;
+            let _ = sock.shutdown().await;
+        });
+        assert!(reader.next_line().await.is_err());
+    }
+
+    #[tokio::test]
+    async fn websocket_frames_are_lines() {
+        let (listener, mut ep) = listen().await;
+        ep.websocket_path = Some("irc".into());
+        let server = tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.unwrap();
+            // The callback's signature is tungstenite's, large error type and all.
+            #[allow(clippy::result_large_err)]
+            let pick = |req: &Request, mut resp: Response| {
+                assert_eq!(req.uri().path(), "/irc");
+                let offered = req.headers()["Sec-WebSocket-Protocol"].to_str().unwrap();
+                assert!(offered.contains("text.ircv3.net"), "{offered}");
+                resp.headers_mut().insert("Sec-WebSocket-Protocol", HeaderValue::from_static("text.ircv3.net"));
+                Ok(resp)
+            };
+            let mut ws = tokio_tungstenite::accept_hdr_async(sock, pick).await.unwrap();
+            ws.send(WsMessage::text("PING a\r\n")).await.unwrap();
+            ws.send(WsMessage::Ping(vec![1].into())).await.unwrap();
+            ws.send(WsMessage::binary(b"PING b".to_vec())).await.unwrap();
+            // The client answers our ping on its own; skip to its text.
+            let got = loop {
+                match ws.next().await.unwrap().unwrap() {
+                    WsMessage::Pong(_) => continue,
+                    other => break other,
+                }
+            };
+            ws.close(None).await.unwrap();
+            got
+        });
+        let (mut reader, mut writer) = connect(&ep).await.unwrap();
+        assert_eq!(reader.next_line().await.unwrap().as_deref(), Some("PING a"));
+        // Control frames are skipped.
+        assert_eq!(reader.next_line().await.unwrap().as_deref(), Some("PING b"));
+        writer.send_line("PONG a").await.unwrap();
+        assert_eq!(reader.next_line().await.unwrap(), None);
+        assert_eq!(server.await.unwrap(), WsMessage::text("PONG a"));
+    }
+
+    #[tokio::test]
+    async fn unreachable_hosts_name_the_address() {
+        let (listener, ep) = listen().await;
+        drop(listener);
+        let err = connect(&ep).await.err().expect("nothing listens there");
+        assert!(format!("{err:#}").contains(&format!("could not reach 127.0.0.1:{}", ep.port)), "{err:#}");
+    }
+
+    #[test]
+    fn client_certificates_must_contain_a_certificate() {
+        let err = load_identity("/nonexistent/hearth-cert.pem").err().unwrap();
+        assert!(format!("{err:#}").contains("could not read client certificate"));
+        let path = std::env::temp_dir().join(format!("hearth-empty-{}.pem", std::process::id()));
+        std::fs::write(&path, "not a pem file\n").unwrap();
+        let err = load_identity(path.to_str().unwrap()).err().unwrap();
+        std::fs::remove_file(&path).ok();
+        assert!(format!("{err:#}").contains("contains no certificate"), "{err:#}");
+    }
+
+    #[test]
+    fn decode_prefers_utf8() {
+        assert_eq!(decode("naïve ☃".as_bytes()), "naïve ☃");
+        assert_eq!(decode(b"\xa3\xff"), "£ÿ");
+    }
+}

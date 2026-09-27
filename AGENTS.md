@@ -20,7 +20,7 @@ cd src-tauri && cargo clippy --all-targets -- -D warnings   # CI runs with -D wa
 
 Run a single test: `pnpm vitest run -t "name"` / `cargo test name`. Headless backend smoke test: `HEARTH_HOST=… HEARTH_NICK=… cargo run --example probe`.
 
-CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. MSRV is `rust-version` in `src-tauri/Cargo.toml` (1.90); clippy lints depend on it.
+CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. Releases come from `.github/workflows/release.yml` on a `v*` tag (see README "Releasing"). Never commit the updater private key (`~/.tauri/hearth-updater.key`). The frontend updater lives in `src/lib/updater.svelte.ts`, and `mock.ts` fakes its `plugin:updater|*` calls. MSRV is `rust-version` in `src-tauri/Cargo.toml` (1.90); clippy lints depend on it.
 
 ## Architecture
 
@@ -37,6 +37,11 @@ CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. MS
 **Frontend (`src/lib`)**
 - `state.svelte.ts`: the `App`, `Conn` and `Buffer` classes using `$state` runes, a single `app` instance.
 - `incoming.ts`: turns each server message into state changes (`handleMessage`, `historyLine`).
+- `history.ts`: CHATHISTORY paging with the local-log fallback, and `mergeLines` (history dedupe).
+- `search.ts`: search across the local FTS log and `soju.im/search`, deduped and newest first.
+- `saved.ts`: saving and restoring the buffer list, and rejoin commands.
+- `monitor.ts`: MONITOR subscriptions and the watch list.
+- `unread.ts`: unread and highlight counts, and read markers.
 - `commands.ts`: slash commands (`runInput`).
 - `api.ts`: typed `invoke` wrappers.
 - `types.ts`: types shared with Rust (serde `camelCase`).
@@ -60,4 +65,4 @@ CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. MS
 
 - **Frontend:** `src/lib/test-utils.ts` provides `mockApi`, `connect(app, {caps, isupport})`, `feed(app, ...rawLines)` and `sent` (outgoing lines). Mock `./api` and `./notify` with `vi.mock` as in `state.test.ts`, and test behaviour by feeding raw IRC lines.
 - **Backend:** `src-tauri/tests/actor.rs` runs the actor against a scripted local TCP server. Add a test there for protocol changes such as CAP, SASL, batches or labels.
-- **UI changes:** check them visually with `pnpm dev`. The mock query params `?view=search|channels|settings|switcher`, `?tab=<settings tab>&server=<id>`, `?theme=light`, `?layout=compact` and `?empty` open the matching views.
+- **UI changes:** check them visually with `pnpm dev`. The mock query params `?view=search|channels|settings|switcher|shortcuts`, `?tab=<settings tab>&server=<id>`, `?theme=light`, `?layout=compact`, `?update=none` and `?empty` open the matching views; `?noavatars` turns off mock avatars. `?stress` opens `#stress`, a channel with about 10k lines and 5k members, for checking performance. `?stress=live` also posts a line every 3 s.
