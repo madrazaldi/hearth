@@ -138,7 +138,13 @@ mockIPC(
       case 'get_config':
         return {
           servers: empty ? [] : [server],
-          settings: { theme: params.get('theme') ?? 'dark', layout: params.get('layout') ?? 'columns', linkPreviews: true },
+          settings: {
+            theme: params.get('theme') ?? 'dark',
+            layout: params.get('layout') ?? 'columns',
+            linkPreviews: true,
+            aliases: { ns: '/msg NickServ $*', j: '/join $1', hi: 'hello $1!; /me waves' },
+            networkHighlights: { soju: { words: ['release', '/\\bci (failed|broke)\\b/i'], never: ['*bot*'] } },
+          },
         };
       case 'connect':
         if (lastSaved && a.server === lastSaved.id) {
@@ -205,6 +211,7 @@ setTimeout(async () => {
   const view = params.get('view');
   if (view === 'switcher') window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true, ctrlKey: true }));
   if (view === 'settings') window.dispatchEvent(new KeyboardEvent('keydown', { key: ',', metaKey: true, ctrlKey: true }));
+  if (view === 'shortcuts') window.dispatchEvent(new KeyboardEvent('keydown', { key: '/', metaKey: true, ctrlKey: true }));
   if (view === 'search') {
     app.searchQuery = params.get('q') ?? 'transport';
     app.searchOpen = true;

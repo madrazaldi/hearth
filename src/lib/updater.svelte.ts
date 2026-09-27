@@ -18,6 +18,7 @@ class Updater {
   error = $state<string | null>(null);
   private update: Update | null = null;
   private announced: string | null = null;
+  private pending = false;
 
   /** Reads the running version and, if enabled, checks quietly now and periodically. */
   async start() {
@@ -49,13 +50,21 @@ class Updater {
       this.version = found.version;
       this.phase = 'available';
       if (quiet && this.announced !== found.version) {
-        this.announced = found.version;
-        app.toast(`Hearth ${found.version} is available. Install it from Settings › General.`);
+        this.pending = true;
+        this.announce();
       }
     } catch (e) {
       this.phase = quiet ? 'idle' : 'error';
       this.error = String(e);
     }
+  }
+
+  /** Toasts a quietly found update, unless the first-run welcome card is up (the toast would cover it). */
+  announce() {
+    if (!this.pending || !this.version || app.welcoming) return;
+    this.pending = false;
+    this.announced = this.version;
+    app.toast(`Hearth ${this.version} is available. Install it from Settings › General.`);
   }
 
   async installAndRestart() {

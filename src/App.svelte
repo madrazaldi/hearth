@@ -10,15 +10,19 @@
   import ChannelBrowser from './lib/components/ChannelBrowser.svelte';
   import Settings from './lib/components/Settings.svelte';
   import Welcome from './lib/components/Welcome.svelte';
+  import ShortcutsHelp from './lib/components/ShortcutsHelp.svelte';
 
   const isMac = navigator.userAgent.includes('Mac');
   let systemDark = $state(window.matchMedia('(prefers-color-scheme: dark)').matches);
   let bootError = $state<string | null>(null);
   // Latched so the welcome flow can show connection progress after the first
   // server is saved, until the user moves on.
-  let onboarding = $state(false);
   $effect(() => {
-    if (app.ready && app.servers.length === 0) onboarding = true;
+    if (app.ready && app.servers.length === 0) app.onboarding = true;
+  });
+  // An update found during first run is announced once the welcome card is gone.
+  $effect(() => {
+    if (!app.welcoming) updater.announce();
   });
 
   const theme = $derived(app.settings.theme === 'system' ? (systemDark ? 'dark' : 'light') : app.settings.theme);
@@ -69,6 +73,9 @@
       e.preventDefault();
       e.stopPropagation();
       app.searchOpen = !app.searchOpen;
+    } else if (mod && (e.key === '/' || e.code === 'Slash')) {
+      e.preventDefault();
+      app.shortcutsOpen = !app.shortcutsOpen;
     } else if (mod && e.key === ',') {
       e.preventDefault();
       app.settingsOpen = app.settingsOpen ? null : { tab: 'appearance' };
@@ -97,8 +104,8 @@
     <p class="eyebrow">Hearth failed to start</p>
     <pre class="mono selectable">{bootError}</pre>
   </div>
-{:else if app.ready && (app.servers.length === 0 || onboarding)}
-  <Welcome ondone={() => (onboarding = false)} />
+{:else if app.welcoming}
+  <Welcome ondone={() => (app.onboarding = false)} />
 {:else}
   <div class="shell">
     <Sidebar />
@@ -127,6 +134,9 @@
 {/if}
 {#if app.settingsOpen}
   <Settings />
+{/if}
+{#if app.shortcutsOpen}
+  <ShortcutsHelp />
 {/if}
 
 <div class="toasts" aria-live="polite">

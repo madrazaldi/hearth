@@ -2,7 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { app, type Buffer } from '../state.svelte';
-  import { COMMANDS, runInput } from '../commands';
+  import { commandInfos, runInput } from '../commands';
   import { api } from '../api';
   import { stripFormatting } from '../format';
   import { nickHue } from '../nickcolor';
@@ -30,13 +30,12 @@
         : `Message ${buf.name}`,
   );
 
+  const commands = $derived(commandInfos(app.settings.aliases));
   const cmdMatches = $derived.by(() => {
-    const m = /^\/(\w*)$/.exec(text);
+    const m = /^\/([\w-]*)$/.exec(text);
     if (!m) return [];
     const q = m[1].toLowerCase();
-    return Object.entries(COMMANDS)
-      .filter(([name]) => name.startsWith(q))
-      .slice(0, 7);
+    return commands.filter((c) => c.name.startsWith(q)).slice(0, 7);
   });
 
   $effect(() => {
@@ -98,9 +97,7 @@
     let options: string[] = [];
     let suffix = ' ';
     if (start === 0 && word.startsWith('/')) {
-      options = Object.keys(COMMANDS)
-        .filter((c) => c.startsWith(lw.slice(1)))
-        .map((c) => '/' + c);
+      options = commands.filter((c) => c.name.startsWith(lw.slice(1))).map((c) => '/' + c.name);
     } else if (conn.isChannel(word)) {
       options = [...conn.buffers.values()]
         .filter((b) => b.kind === 'channel' && b.name.toLowerCase().startsWith(lw))
@@ -132,9 +129,9 @@
       cmdIndex = (cmdIndex + (e.key === 'ArrowUp' ? -1 : 1) + cmdMatches.length) % cmdMatches.length;
       return;
     }
-    if (cmdMatches.length && (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && cmdMatches[cmdIndex][0] !== text.slice(1)))) {
+    if (cmdMatches.length && (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && cmdMatches[cmdIndex].name !== text.slice(1)))) {
       e.preventDefault();
-      text = `/${cmdMatches[cmdIndex][0]} `;
+      text = `/${cmdMatches[cmdIndex].name} `;
       return;
     }
     if (e.key === 'Tab') {
@@ -235,8 +232,8 @@
       .catch(() => {});
     const refocus = (e: KeyboardEvent) => {
       // Typing anywhere lands in the composer.
-      const t = e.target as HTMLElement;
-      if (t.closest('input, textarea, [contenteditable]') || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target;
+      if (!(t instanceof Element) || t.closest('input, textarea, [contenteditable]') || e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key.length === 1) ta?.focus({ preventScroll: true });
     };
     const onInsert = (e: Event) => {
@@ -260,14 +257,14 @@
 <div class="composer" class:dragging>
   {#if cmdMatches.length}
     <div class="suggest" role="listbox">
-      {#each cmdMatches as [name, c], i (name)}
+      {#each cmdMatches as c, i (c.name)}
         <button
           class:sel={i === cmdIndex}
           role="option"
           aria-selected={i === cmdIndex}
           onmousedown={(e) => {
             e.preventDefault();
-            text = `/${name} `;
+            text = `/${c.name} `;
             ta?.focus({ preventScroll: true });
           }}
         >
@@ -293,8 +290,10 @@
       bind:value={text}
       rows="1"
       {placeholder}
-      spellcheck="true"
+      spellcheck={app.settings.spellcheck}
       autocomplete="off"
+      {...{ autocorrect: 'off' }}
+      autocapitalize="off"
       onkeydown={onKeydown}
       oninput={onInput}
       onpaste={onPaste}

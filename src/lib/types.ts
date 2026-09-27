@@ -82,6 +82,19 @@ export interface Settings {
   bufferNotify: Record<string, NotifyLevel>;
   /** Nicks to watch with MONITOR, keyed by `Conn.prefKey`. */
   watch: Record<string, string[]>;
+  /** Extra highlight rules per server id; bouncer networks share their bouncer's. */
+  networkHighlights: Record<string, NetworkHighlights>;
+  /** User slash commands: name (no slash) → `;`-separated commands with `$1`…`$9`, `$*`, `$nick`, … */
+  aliases: Record<string, string>;
+  /** Spellcheck in the message box. */
+  spellcheck: boolean;
+}
+
+export interface NetworkHighlights {
+  /** Words, or `/regex/flags`. */
+  words: string[];
+  /** Nicks or masks whose messages never highlight (bots, relays). */
+  never: string[];
 }
 
 export type LineType =
@@ -192,4 +205,7 @@ export const defaultSettings = (): Settings => ({
   ignores: [],
   bufferNotify: {},
   watch: {},
+  networkHighlights: {},
+  aliases: {},
+  spellcheck: true,
 });
