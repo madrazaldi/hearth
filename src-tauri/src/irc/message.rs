@@ -243,6 +243,74 @@ mod tests {
         assert_eq!(Message::parse(&s).unwrap(), m);
     }
 
+    fn tag(line: &str, key: &str) -> Option<String> {
+        Message::parse(line).unwrap().tag(key).map(str::to_string)
+    }
+
+    #[test]
+    fn unescapes_tag_values() {
+        assert_eq!(tag(r"@k=a\:b\sc\\d\re\nf CMD", "k").unwrap(), "a;b c\\d\re\nf");
+        // Unknown escapes drop the backslash; a trailing lone one vanishes.
+        assert_eq!(tag(r"@k=\b\x CMD", "k").unwrap(), "bx");
+        assert_eq!(tag(r"@k=abc\ CMD", "k").unwrap(), "abc");
+        assert_eq!(tag(r"@k=\\ CMD", "k").unwrap(), "\\");
+        // Only the first '=' separates key from value.
+        assert_eq!(tag("@k=a=b CMD", "k").unwrap(), "a=b");
+        assert_eq!(tag("@k=caf\u{e9}\u{2603} CMD", "k").unwrap(), "caf\u{e9}\u{2603}");
+    }
+
+    #[test]
+    fn tag_keys_and_empty_values() {
+        let m = Message::parse("@;a;b=;+example.com/c=1;;a=2 CMD").unwrap();
+        // A repeated key keeps its last value.
+        assert_eq!(m.tag("a"), Some("2"));
+        assert_eq!(m.tag("b"), Some(""));
+        assert_eq!(m.tag("+example.com/c"), Some("1"));
+        assert_eq!(m.tags.len(), 3);
+        assert_eq!(m.command, "CMD");
+    }
+
+    #[test]
+    fn escapes_roundtrip() {
+        let nasty = "; \\\r\n\\s\\:=é";
+        let mut m = Message::new("TAGMSG", &["#a"]);
+        m.tags.insert("+k".into(), nasty.into());
+        m.tags.insert("flag".into(), String::new());
+        let line = m.serialize();
+        assert!(!line[..line.find(' ').unwrap()].contains([' ', '\r', '\n']), "{line:?}");
+        // ':' and '=' need no escaping; an empty value is written bare.
+        assert!(line.starts_with(r"@+k=\:\s\\\r\n\\s\\:=é;flag TAGMSG"), "{line}");
+        assert_eq!(Message::parse(&line).unwrap(), m);
+    }
+
+    #[test]
+    fn rejects_lines_without_a_command() {
+        assert!(Message::parse("@a=1").is_none());
+        assert!(Message::parse(":nick").is_none());
+        assert!(Message::parse("@a=1 :nick ").is_none());
+        assert!(Message::parse("   ").is_none());
+    }
+
+    #[test]
+    fn tolerates_extra_spaces_and_lowercase_commands() {
+        let m = Message::parse("@a=1  :n!u@h   privmsg   #a    :hi  there\r\n").unwrap();
+        assert_eq!(m.command, "PRIVMSG");
+        assert_eq!(m.params, vec!["#a", "hi  there"]);
+        assert_eq!(m.source.unwrap().host.as_deref(), Some("h"));
+        let m = Message::parse(":srv.example 005 me A B").unwrap();
+        assert_eq!(m.source.as_ref().unwrap().nick, "srv.example");
+        assert_eq!(m.source.unwrap().user, None);
+        assert_eq!(m.params, vec!["me", "A", "B"]);
+    }
+
+    #[test]
+    fn trailing_param_is_colon_prefixed_only_when_needed() {
+        assert_eq!(Message::new("NICK", &["me"]).serialize(), "NICK me");
+        assert_eq!(Message::new("PRIVMSG", &["#a", ""]).serialize(), "PRIVMSG #a :");
+        assert_eq!(Message::new("PRIVMSG", &["#a", "a b"]).serialize(), "PRIVMSG #a :a b");
+        assert_eq!(Message::new("PRIVMSG", &["#a", ":x"]).serialize(), "PRIVMSG #a ::x");
+    }
+
     #[test]
     fn casefolds() {
         assert_eq!(casefold("Foo[]\\~", "rfc1459"), "foo{}|^");
