@@ -59,6 +59,7 @@
   class:veiled={hidden}
   style="width:{box.width}px;aspect-ratio:{box.width}/{box.height}"
   title={hidden ? 'Marked NSFW: click to show' : url}
+  aria-label={hidden ? 'Show NSFW image' : 'Open image'}
   onpointerenter={() => (hover = true)}
   onpointerleave={() => (hover = false)}
   {onclick}

@@ -120,6 +120,23 @@ describe('monitorCommands', () => {
     expect(monitorCommands([])).toEqual([]);
   });
 
+  it('counts commas and UTF-8 bytes against the 400-byte limit', () => {
+    expect(monitorCommands(['a'.repeat(200), 'b'.repeat(199)])).toHaveLength(1);
+    expect(monitorCommands(['a'.repeat(200), 'b'.repeat(200)])).toHaveLength(2);
+    // 134 three-byte characters are 402 bytes but only 134 UTF-16 units.
+    expect(monitorCommands(['ä'.repeat(100), 'ö'.repeat(99)])).toHaveLength(1);
+    expect(monitorCommands(['中'.repeat(100), '文'.repeat(34)])).toHaveLength(2);
+  });
+
+  it('refuses to watch past the server limit', () => {
+    connect(app, { isupport: { MONITOR: '1' } });
+    app.watch(conn(), 'ann');
+    sent.length = 0;
+    app.watch(conn(), 'bob');
+    expect(conn().watched).toEqual(['ann']);
+    expect(sent).not.toContain('MONITOR + bob');
+  });
+
   it('subscribes watched nicks and open queries on connect', async () => {
     app.settings.watch = { 'c|': ['Ann'] };
     mockApi.loadBuffers.mockResolvedValueOnce([{ name: 'bob', kind: 'query', key: '' }]);

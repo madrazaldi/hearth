@@ -42,6 +42,11 @@ describe('timeline', () => {
     // A divider breaks grouping.
     expect(items[3].kind === 'line' && items[3].cont).toBe(false);
   });
+
+  it('starts a new group at a reply', () => {
+    const items = buildItems([line('privmsg', 'a', 0), line('privmsg', 'a', 1, { replyTo: 'm1' })], opts);
+    expect(items.map((i) => (i.kind === 'line' ? i.cont : null))).toEqual([null, false, false]);
+  });
 });
 
 describe('virtual offsets', () => {

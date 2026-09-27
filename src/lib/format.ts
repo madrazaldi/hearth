@@ -140,7 +140,9 @@ function compileRule(rule: string): RegExp | null {
   if (re !== undefined) return re;
   const m = REGEX_RULE.exec(rule);
   try {
-    // g and y make .test() stateful, so they're dropped.
+    // Check the flags as written (so `gg` is rejected), then drop g and y:
+    // they make .test() stateful.
+    if (m) new RegExp(m[1], m[2]);
     re = m ? new RegExp(m[1], m[2].replace(/[gy]/g, '')) : new RegExp(`(^|[^\\w-])${escapeRe(rule)}($|[^\\w-])`, 'i');
   } catch {
     re = null;

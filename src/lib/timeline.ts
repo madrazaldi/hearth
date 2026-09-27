@@ -57,8 +57,10 @@ export function buildItems(lines: Line[], o: TimelineOpts): Item[] {
       continue;
     }
     flush();
+    // A reply shows its quote under a full header, so it starts a new group.
     const cont =
       !!prev &&
+      !l.replyTo &&
       TALK.has(l.type) &&
       prev.type === l.type &&
       l.type !== 'action' &&

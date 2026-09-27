@@ -189,6 +189,8 @@ describe('highlight rules', () => {
     expect(matchingRule('the build is red', ['ann', '/(unclosed/', '/build/'])).toBe('/build/');
     expect(matchingRule(`${'\x02'}ann${'\x02'}: hi`, ['bob', 'ann'])).toBe('ann');
     expect(matchingRule('nothing here', ['ann'])).toBeNull();
+    // Invalid flags stay invalid even though g is dropped when compiling.
+    expect(matchingRule('foo', ['/foo/gg'])).toBeNull();
   });
 
   it('validates regex rules and accepts plain words', () => {

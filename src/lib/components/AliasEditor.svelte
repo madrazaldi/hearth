@@ -1,6 +1,6 @@
 <script lang="ts">
   import { app } from '../state.svelte';
-  import { aliasError, aliasName } from '../aliases';
+  import { aliasError, aliasName, BODY_ERROR } from '../aliases';
   import { isBuiltin } from '../commands';
   import Icon from './Icon.svelte';
 
@@ -10,6 +10,9 @@
 
   const key = $derived(aliasName(name));
   const error = $derived(aliasError(key, body));
+  // Which input the error is about: aliasError reports name problems before body ones.
+  const nameBad = $derived(tried && !!error && error !== BODY_ERROR);
+  const bodyBad = $derived(tried && error === BODY_ERROR);
   const exists = $derived(key in app.settings.aliases);
   const entries = $derived(Object.entries(app.settings.aliases).sort(([a], [b]) => a.localeCompare(b)));
 
@@ -51,12 +54,12 @@
   {/if}
 
   <form onsubmit={save}>
-    <input class="input mono name-in" bind:value={name} placeholder="/ns" spellcheck="false" autocapitalize="off" aria-label="Alias name" />
-    <input class="input mono" bind:value={body} placeholder="/msg NickServ $*" spellcheck="false" autocapitalize="off" aria-label="Commands" />
+    <input class="input mono name-in" bind:value={name} placeholder="/ns" spellcheck="false" autocapitalize="off" aria-label="Alias name" aria-invalid={nameBad} aria-describedby={nameBad ? 'alias-error' : undefined} />
+    <input class="input mono" bind:value={body} placeholder="/msg NickServ $*" spellcheck="false" autocapitalize="off" aria-label="Commands" aria-invalid={bodyBad} aria-describedby={bodyBad ? 'alias-error' : undefined} />
     <button class="btn" type="submit" disabled={!name.trim() || !body.trim()}>{exists ? 'Update' : 'Add'}</button>
   </form>
   {#if tried && error}
-    <small class="bad">{error}</small>
+    <small class="bad" id="alias-error">{error}</small>
   {:else if key && isBuiltin(key)}
     <small class="warn-text">/{key} is a built-in command. This alias will replace it; inside the alias, /{key} still runs the built-in.</small>
   {/if}

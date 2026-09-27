@@ -29,9 +29,11 @@ export function expandCommand(cmd: string, args: string[], vars: AliasVars): str
 export const aliasName = (raw: string) => raw.trim().replace(/^\/+/, '').toLowerCase();
 
 /** An error for a name or body that can't work, else null. */
+export const BODY_ERROR = 'Add at least one command';
+
 export function aliasError(name: string, body: string): string | null {
   if (!name) return 'Give the alias a name';
   if (!/^[a-z0-9_-]+$/.test(name)) return 'Names use letters, digits, - and _ only';
-  if (!splitCommands(body).length) return 'Add at least one command';
+  if (!splitCommands(body).length) return BODY_ERROR;
   return null;
 }

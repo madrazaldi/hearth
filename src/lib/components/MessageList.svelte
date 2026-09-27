@@ -44,8 +44,9 @@
 
   // ── Virtualization ───────────────────────────────────────────
   // Measured heights by item key; anything unmeasured uses a per-category
-  // average. `hv` bumps whenever `heights` changes.
-  const heights = new Map<string, number>();
+  // average. `hv` bumps whenever `heights` changes. The category is kept with
+  // the height because a row can move between `msg` and `cont` on a rebuild.
+  const heights = new Map<string, { h: number; cat: string }>();
   const est = new Estimates({ day: 41, unread: 19, run: 25, msg: 28, cont: 22, event: 24, block: 160 });
   let hv = $state(0);
 
@@ -58,7 +59,7 @@
 
   const offs = $derived.by(() => {
     void hv;
-    return prefixSums(items.length, (i) => heights.get(items[i].key) ?? est.get(category(items[i])));
+    return prefixSums(items.length, (i) => heights.get(items[i].key)?.h ?? est.get(category(items[i])));
   });
 
   // Scroll position and viewport height, in scroller coordinates; `base` is
@@ -84,10 +85,12 @@
       const i = index.get(key);
       if (i === undefined) continue;
       const h = node.getBoundingClientRect().height;
+      const cat = category(items[i]);
       const old = heights.get(key);
-      if (old !== undefined && Math.abs(old - h) < 0.5) continue;
-      heights.set(key, h);
-      est.add(category(items[i]), h, old);
+      const same = old?.cat === cat;
+      if (same && Math.abs(old!.h - h) < 0.5) continue;
+      heights.set(key, { h, cat });
+      est.add(cat, h, same ? old!.h : undefined);
       changed = true;
     }
     base = list.offsetTop;

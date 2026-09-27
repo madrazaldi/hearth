@@ -54,7 +54,8 @@ class Updater {
         this.announce();
       }
     } catch (e) {
-      this.phase = quiet ? 'idle' : 'error';
+      // A failed background recheck shouldn't hide an update that was already found.
+      this.phase = quiet ? (this.update ? 'available' : 'idle') : 'error';
       this.error = String(e);
     }
   }

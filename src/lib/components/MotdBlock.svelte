@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { app } from '../state.svelte';
   import { formatClock, formatFull } from '../time';
   import type { Line } from '../types';
@@ -6,12 +7,13 @@
 
   /** `open` is only the initial state; the user can toggle it. */
   let { l, open }: { l: Line; open: boolean } = $props();
+  const initialOpen = untrack(() => open);
 </script>
 
 <div class="row block">
   <time title={formatFull(l.time)}>{formatClock(l.time, app.settings)}</time>
   <span class="who"></span>
-  <details class="motd" {open}>
+  <details class="motd" open={initialOpen}>
     <summary>{l.data!.title ?? 'Message of the day'}</summary>
     <pre class="selectable"><RichText text={l.data!.motd} /></pre>
   </details>

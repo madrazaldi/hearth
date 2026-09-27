@@ -1,20 +1,12 @@
 <script lang="ts">
-  import { tick } from 'svelte';
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { app } from '../state.svelte';
   import { lightbox } from '../lightbox.svelte';
   import { fileName } from '../media';
+  import { modal } from '../a11y';
   import Icon from './Icon.svelte';
 
-  let closeBtn = $state<HTMLButtonElement>();
   const img = $derived(lightbox.current);
-
-  $effect(() => {
-    if (!img) return;
-    const prev = document.activeElement as HTMLElement | null;
-    tick().then(() => closeBtn?.focus());
-    return () => prev?.focus?.();
-  });
 
   function close() {
     lightbox.current = null;
@@ -36,11 +28,11 @@
 <svelte:window onkeydowncapture={onkey} />
 
 {#if img}
-  <div class="lightbox" role="dialog" aria-modal="true" aria-label="Image" tabindex="-1" onclick={close} onkeydown={() => {}}>
+  <div class="lightbox" role="dialog" aria-modal="true" aria-label="Image" tabindex="-1" onclick={close} onkeydown={() => {}} use:modal={{ onclose: close }}>
     <div class="bar" role="toolbar" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
       <span class="name" title={img.url}>{fileName(img.url)}{#if img.width && img.height}<span class="dims">{img.width}×{img.height}</span>{/if}</span>
       <button class="action" onclick={open}><Icon name="external" size={14} />Open in browser</button>
-      <button class="close" bind:this={closeBtn} onclick={close} title="Close (Esc)"><Icon name="x" size={16} /></button>
+      <button class="close" data-autofocus onclick={close} title="Close (Esc)"><Icon name="x" size={16} /></button>
     </div>
     <img src={img.src} alt={fileName(img.url)} width={img.width ?? undefined} height={img.height ?? undefined} />
   </div>

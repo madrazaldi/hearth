@@ -41,6 +41,8 @@
   });
 
   function save() {
+    // Keep what's saved until the edit is valid, rather than dropping the bad rule.
+    if (errors.length) return;
     const next = { ...app.settings.networkHighlights };
     if (!valid.length && !neverList.length) delete next[serverId];
     else next[serverId] = { words: valid, never: neverList };

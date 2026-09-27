@@ -220,7 +220,7 @@ describe('draft/account-registration', () => {
   it('registers, then offers to save the login for SASL', async () => {
     const a = setup();
     await runInput(app, a, '/register me@example.com hunter2');
-    expect(normalized()).toEqual(['@label=L REGISTER * me@example.com hunter2']);
+    expect(normalized()).toEqual(['@label=L REGISTER * me@example.com :hunter2']);
     const label = sent[0].match(/label=(f\d+)/)![1];
     feed(app, `@label=${label} REGISTER SUCCESS me :Account created`);
     expect(a.messages.at(-1)?.text).toBe('Account me registered');

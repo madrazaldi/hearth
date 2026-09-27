@@ -43,6 +43,17 @@ jobs:
             echo "::error::Tag $REF_NAME does not match version $version in tauri.conf.json"
             exit 1
           fi
+          # A manual run builds $GITHUB_SHA, so an existing tag elsewhere would
+          # leave the assets and the tag disagreeing.
+          if [ "$REF_TYPE" != tag ] && gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+            echo "::error::Tag $tag already exists; run the workflow from the tag instead"
+            exit 1
+          fi
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.tag_name == \"$tag\") | .id")
+          if [ -n "$existing" ]; then
+            echo "::error::A release for $tag already exists; delete the draft to rebuild it"
+            exit 1
+          fi
           id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
             -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" -f name="Hearth $version" \
             -F draft=true -F generate_release_notes=true --jq .id)

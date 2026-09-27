@@ -71,7 +71,7 @@
   {#if url}<LinkPreview {url} nsfw={isNsfw(l.text)} />{/if}
 {/snippet}
 
-<div class="row msg {l.type}" class:cont={cont && !l.replyTo} class:hl={l.highlight} class:self={l.self} class:flash data-line={l.id}>
+<div class="row msg {l.type}" class:cont class:hl={l.highlight} class:self={l.self} class:flash data-line={l.id}>
   <time title={formatFull(l.time)}>{clock}</time>
   {#if s.layout === 'columns'}
     <span class="who">

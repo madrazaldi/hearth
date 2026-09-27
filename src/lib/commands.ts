@@ -317,7 +317,7 @@ export const COMMANDS: Record<string, Command> = {
       const caps = (conn.capValues['draft/account-registration'] ?? '').split(',');
       need(email !== '*' || !caps.includes('email-required'), 'This server needs an email address: /register <email> <password>');
       conn.registration = { account: conn.nick, password };
-      ask(ctx, `REGISTER * ${email} ${password}`);
+      ask(ctx, `REGISTER * ${email} :${password}`);
     },
   },
   verify: {
