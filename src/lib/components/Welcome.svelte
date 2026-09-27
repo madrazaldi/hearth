@@ -1,4 +1,5 @@
 <script lang="ts">
+  import logo from '../../assets/logo.png';
   import { app, nextSeq } from '../state.svelte';
   import { api } from '../api';
   import { defaultServer, type ServerConfig } from '../types';
@@ -174,13 +175,7 @@
 
 <div class="welcome" data-tauri-drag-region>
   <div class="col">
-    <div class="mark" aria-hidden="true">
-      <svg width="30" height="30" viewBox="0 0 30 30">
-        <path d="M8 24V13a7 7 0 0 1 14 0v11Z" fill="var(--bg-sunken)" stroke="var(--line-strong)" />
-        <path d="M15 14.5c1.9 2.1 2.7 3.6 2.7 5a2.7 2.7 0 0 1-5.4 0c0-1.4.8-2.9 2.7-5Z" fill="var(--accent)" />
-        <rect x="5" y="24" width="20" height="2" rx="1" fill="var(--text-3)" />
-      </svg>
-    </div>
+    <img class="mark" src={logo} width="48" height="48" alt="" />
     <h1>Hearth</h1>
     <p class="lede">A quiet place for IRC. Pick a network to begin — you can add more, or a bouncer, any time.</p>
 
@@ -419,7 +414,8 @@
   }
 
   .mark {
-    margin-bottom: 18px;
+    display: block;
+    margin: 0 0 18px -4px;
   }
 
   h1 {
