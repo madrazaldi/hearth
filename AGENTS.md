@@ -20,7 +20,7 @@ cd src-tauri && cargo clippy --all-targets -- -D warnings   # CI runs with -D wa
 
 Run a single test: `pnpm vitest run -t "name"` / `cargo test name`. Headless backend smoke test: `HEARTH_HOST=… HEARTH_NICK=… cargo run --example probe`.
 
-CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. MSRV is `rust-version` in `src-tauri/Cargo.toml` (1.90); clippy lints depend on it.
+CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. Releases come from `.github/workflows/release.yml` on a `v*` tag (see README "Releasing"). Never commit the updater private key (`~/.tauri/hearth-updater.key`). The frontend updater lives in `src/lib/updater.svelte.ts`, and `mock.ts` fakes its `plugin:updater|*` calls. MSRV is `rust-version` in `src-tauri/Cargo.toml` (1.90); clippy lints depend on it.
 
 ## Architecture
 

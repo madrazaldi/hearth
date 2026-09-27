@@ -144,6 +144,19 @@ mockIPC(
         throw new Error('file not found');
       case 'save_server':
         return { ...(a.server as ServerConfig), id: 'new' };
+      // Updater and process plugins: `?update=none` pretends to be current.
+      case 'plugin:app|version':
+        return '0.1.0';
+      case 'plugin:updater|check':
+        await new Promise((r) => setTimeout(r, 600));
+        if (params.get('update') === 'none') return null;
+        return { rid: 1, currentVersion: '0.1.0', version: '0.2.0', date: new Date().toISOString(), body: 'Mock release', rawJson: {} };
+      case 'plugin:updater|download_and_install':
+        await new Promise((r) => setTimeout(r, 1500));
+        return null;
+      case 'plugin:process|restart':
+        location.reload();
+        return null;
       default:
         return null;
     }

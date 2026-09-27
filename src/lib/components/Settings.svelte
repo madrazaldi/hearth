@@ -7,6 +7,7 @@
   import Segmented from './Segmented.svelte';
   import ServerForm from './ServerForm.svelte';
   import BouncerNetworks from './BouncerNetworks.svelte';
+  import { updater } from '../updater.svelte';
 
   const isMac = navigator.userAgent.includes('Mac');
   const mod = isMac ? '⌘' : 'Ctrl';
@@ -87,7 +88,7 @@
         </button>
       {/each}
       <div class="about">
-        <p>Hearth <span>0.1.0</span></p>
+        <p>Hearth <span>{updater.current || '0.1.0'}</span></p>
       </div>
     </nav>
 
@@ -162,6 +163,36 @@
                 { value: 60, label: '1 hour' },
               ]}
             />
+          </div>
+          <Switch
+            bind:checked={() => app.settings.checkUpdates, (v) => app.updateSettings({ checkUpdates: v })}
+            label="Check for updates automatically"
+            hint="Looks for a new release when Hearth starts and every few hours. Nothing is installed without asking."
+          />
+          <div class="row">
+            <div>
+              <div class="label">Hearth {updater.current}</div>
+              <div class="hint" class:error={updater.phase === 'error'}>
+                {#if updater.phase === 'checking'}
+                  Checking for updates…
+                {:else if updater.phase === 'current'}
+                  You're up to date.
+                {:else if updater.phase === 'available'}
+                  Version {updater.version} is available.
+                {:else if updater.phase === 'installing'}
+                  Installing {updater.version}{updater.progress != null ? ` · ${Math.round(updater.progress * 100)}%` : '…'}
+                {:else if updater.phase === 'error'}
+                  Couldn't update: {updater.error}
+                {:else}
+                  Updates come from GitHub releases and are verified before installing.
+                {/if}
+              </div>
+            </div>
+            {#if updater.phase === 'available' || updater.phase === 'installing'}
+              <button class="btn primary" disabled={updater.busy} onclick={() => updater.installAndRestart()}>Install and restart</button>
+            {:else}
+              <button class="btn" disabled={updater.busy} onclick={() => updater.check()}>Check now</button>
+            {/if}
           </div>
         </div>
       {:else if tab === 'privacy'}
@@ -525,6 +556,10 @@
   .hint {
     font-size: 12px;
     color: var(--text-3);
+  }
+
+  .hint.error {
+    color: var(--danger);
   }
 
   .ignores {
