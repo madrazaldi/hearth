@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="670" height="670" viewBox="185 190 670 670">
+  <!-- Menu-bar / tray template: black on transparent; the OS tints it. -->
+  <path fill="#000" fill-rule="evenodd" d="M256 844V470A264 264 0 0 1 784 470V720A48 48 0 0 1 736 768H384ZM352 680V470A168 168 0 0 1 688 470V680ZM438 602C438 540 474 500 500 466C516 446 530 436 542 418C552 478 594 526 594 602A78 78 0 0 1 438 602Z"/>
+</svg>
