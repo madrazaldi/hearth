@@ -71,6 +71,10 @@ export interface Settings {
   storeLogs: boolean;
   /** Fetch link and image previews (through the backend, never the webview). */
   linkPreviews: boolean;
+  /** With link previews on, show direct image links as images under the message. */
+  inlineImages: boolean;
+  /** Play animated images without hovering (still off under prefers-reduced-motion). */
+  autoplayAnimations: boolean;
   closeToTray: boolean;
   /** Check the release feed on launch and every few hours. */
   checkUpdates: boolean;
@@ -134,11 +138,19 @@ export interface SearchHit {
 
 export interface Preview {
   url: string;
-  kind: 'image' | 'page';
+  /** `media` is a video or audio link, described but never loaded. */
+  kind: 'image' | 'page' | 'media';
   title: string | null;
   description: string | null;
   site: string | null;
+  /** A data: URL. */
   image: string | null;
+  /** Pixel size of `image`. */
+  width: number | null;
+  height: number | null;
+  animated: boolean;
+  mime: string | null;
+  size: number | null;
 }
 
 export interface CertInfo {
@@ -186,6 +198,8 @@ export const defaultSettings = (): Settings => ({
   sidebarWidth: 248,
   storeLogs: true,
   linkPreviews: false,
+  inlineImages: true,
+  autoplayAnimations: false,
   closeToTray: false,
   checkUpdates: true,
   autoAwayMinutes: 0,

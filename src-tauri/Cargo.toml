@@ -41,6 +41,7 @@ pbkdf2 = "0.12.2"
 rcgen = "0.14.7"
 getrandom = "0.3.4"
 url = "2.5.8"
+imagesize = { version = "0.15", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }

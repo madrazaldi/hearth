@@ -12,6 +12,7 @@ A modern IRC client built with Rust, Tauri 2 and Svelte 5.
 - **Search:** ⌘⇧F searches every buffer, one network or the current buffer, using the local full-text index plus bouncer search. Choosing a result jumps to the message.
 - **Replies and reactions:** hover a message to reply, react, copy it or delete your own.
 - **Link previews** (opt-in): pages and images are fetched by the Rust backend, which refuses local and private addresses at every redirect.
+- **Inline images**: with link previews on, image links (including soju FILEHOST uploads) show as thumbnails you can open full size. Images are checked by their bytes (PNG, JPEG, GIF, WebP; at most 8 MB), animations play on hover unless autoplay is on, and images in messages that mention NSFW stay blurred until clicked. Video and audio links get a compact card that opens in your browser; nothing is streamed into the app.
 - **Channel browser** for `/list`, with filtering and sorting.
 - **Saved buffers:** open channels and private conversations are remembered per network, including channel keys, and restored on launch.
 - **Ignore list** with nick or `nick!user@host` wildcard masks. **Per-buffer notifications:** all messages, mentions only, or muted.
