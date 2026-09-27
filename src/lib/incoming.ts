@@ -175,7 +175,8 @@ export function handleMessage(app: App, conn: Conn, m: IrcMessage) {
     case 'NICK': {
       const next = p[0];
       if (self) conn.nick = next;
-      for (const buf of conn.buffers.values()) {
+      // Snapshot: renaming a query re-inserts it into the map being walked.
+      for (const buf of [...conn.buffers.values()]) {
         const mem = buf.member(nick);
         const isQuery = buf.kind === 'query' && conn.fold(buf.name) === conn.fold(nick);
         if (mem) {
@@ -183,7 +184,8 @@ export function handleMessage(app: App, conn: Conn, m: IrcMessage) {
           buf.setMember({ ...mem, nick: next });
         }
         if (mem || isQuery || (self && buf.kind === 'query')) buf.push(mkLine({ ...base, type: 'nick', target: next }));
-        if (isQuery && !conn.buffer(next)) {
+        // A case-only change folds to the same key, so the buffer is still "free".
+        if (isQuery && (conn.buffer(next) ?? buf) === buf) {
           conn.buffers.delete(buf.key);
           buf.name = next;
           conn.buffers.set(conn.fold(next), buf);
@@ -400,6 +402,9 @@ function onMode(conn: Conn, m: IrcMessage, base: Base) {
   buf.push(mkLine({ ...base, type: 'mode', text: [modestr, ...args].join(' ') }));
 }
 
+// Error numerics whose first parameter is the channel or nick they concern.
+const TARGET_ERRORS = new Set(['401', '403', '404', '405', '406', '442', '467', '471', '473', '474', '475', '477', '478', '482', '489']);
+
 function onNumeric(app: App, conn: Conn, m: IrcMessage, time: number) {
   const p = m.params;
   const rest = p.slice(1);
@@ -614,6 +619,11 @@ function onNumeric(app: App, conn: Conn, m: IrcMessage, time: number) {
   }
 
   const code = parseInt(m.command);
-  if (code >= 400 && code < 600) return info(rest.filter((x, i) => i < rest.length - 1 || x).join(' '), app.here(conn, label), 'error');
+  if (code >= 400 && code < 600) {
+    // Unlabeled errors about a channel or nick belong with that conversation,
+    // not whatever the user happens to be looking at.
+    const about = !label && TARGET_ERRORS.has(m.command) ? conn.buffer(p[1] ?? '') : undefined;
+    return info(rest.filter((x, i) => i < rest.length - 1 || x).join(' '), about ?? app.here(conn, label), 'error');
+  }
   info(rest.join(' '), label ? app.here(conn, label) : conn.server);
 }
