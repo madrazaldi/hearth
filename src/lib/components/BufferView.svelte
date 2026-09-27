@@ -40,7 +40,9 @@
 
   function openNick(nick: string, e: MouseEvent) {
     e.stopPropagation();
-    nickMenu = { nick, x: e.clientX, y: e.clientY };
+    // From the keyboard there's no pointer position; open it by the element.
+    const r = e.detail === 0 && e.currentTarget instanceof Element ? e.currentTarget.getBoundingClientRect() : null;
+    nickMenu = { nick, x: r ? r.left : e.clientX, y: r ? r.bottom : e.clientY };
   }
 
   function toggleFilter() {
@@ -75,7 +77,7 @@
         {/if}
       {/if}
       {#if buf.kind === 'channel' && buf.topic}
-        <button class="topic" onclick={() => (topicOpen = !topicOpen)} title="Show full topic">
+        <button class="topic" onclick={() => (topicOpen = !topicOpen)} title="Show full topic" aria-expanded={topicOpen}>
           <RichText text={buf.topic} plain />
         </button>
       {:else if subtitle}
@@ -90,17 +92,20 @@
             bind:this={filterEl}
             bind:value={filter}
             placeholder="Filter messages"
+            aria-label="Filter messages"
             onkeydown={(e) => e.key === 'Escape' && toggleFilter()}
           />
         </div>
       {:else}
-        <button class="icon-btn" title="Filter messages" onclick={toggleFilter}><Icon name="search" /></button>
+        <button class="icon-btn" title="Filter messages" aria-label="Filter messages" onclick={toggleFilter}><Icon name="search" /></button>
       {/if}
       {#if buf.kind === 'channel'}
         <button
           class="icon-btn"
           class:on={app.settings.showMembers}
           title="Members"
+          aria-label="Members"
+          aria-pressed={app.settings.showMembers}
           onclick={() => app.updateSettings({ showMembers: !app.settings.showMembers })}
         >
           <Icon name="users" />
@@ -121,7 +126,7 @@
   <div class="body">
     <div class="center">
       {#if conn.status !== 'connected' && buf.kind !== 'server'}
-        <div class="banner">
+        <div class="banner" role="status">
           {#if conn.status === 'disconnected'}
             Disconnected{conn.error ? ` — ${conn.error}` : ''}.
           {:else}
@@ -245,6 +250,10 @@
     background: var(--bg-sunken);
     box-shadow: 0 0 0 1px var(--line) inset;
     color: var(--text-3);
+  }
+
+  .filter:focus-within {
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 60%, var(--line)) inset, 0 0 0 3px var(--accent-soft);
   }
 
   .filter input {

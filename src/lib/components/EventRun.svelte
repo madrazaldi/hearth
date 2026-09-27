@@ -35,9 +35,9 @@
 
 <div class="row event run" class:open>
   <time title={formatFull(lines[0].time)}>{clock(lines[0].time)}</time>
-  <span class="who"><span class="glyph">⇅</span></span>
+  <span class="who"><span class="glyph" aria-hidden="true">⇅</span></span>
   <div class="text">
-    <button class="run-toggle" onclick={ontoggle} title={open ? 'Collapse' : 'Show all'}>
+    <button class="run-toggle" onclick={ontoggle} title={open ? 'Collapse' : 'Show all'} aria-expanded={open}>
       {summarize(lines)}
       <span class="chev" class:open><Icon name="chevron" size={11} /></span>
     </button>
@@ -46,7 +46,7 @@
         {#each lines as l (l.id)}
           <div class="run-line">
             <time>{clock(l.time)}</time>
-            <span class="glyph">{GLYPH[l.type]}</span>
+            <span class="glyph" aria-hidden="true">{GLYPH[l.type]}</span>
             <span><EventText {l} {buf} {onnick} /></span>
           </div>
         {/each}

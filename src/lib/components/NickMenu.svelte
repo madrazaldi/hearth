@@ -2,6 +2,7 @@
   import { app, type Buffer } from '../state.svelte';
   import { nickHue } from '../nickcolor';
   import Avatar from './Avatar.svelte';
+  import { modal } from '../a11y';
 
   let { buf, nick, x, y, onclose }: { buf: Buffer; nick: string; x: number; y: number; onclose: () => void } = $props();
 
@@ -47,13 +48,16 @@
   bind:this={el}
   style="left:{pos.left}px; top:{pos.top}px"
   role="dialog"
+  aria-modal="true"
+  aria-labelledby="nick-menu-name"
   tabindex="-1"
   onclick={(e) => e.stopPropagation()}
-  onkeydown={(e) => e.key === 'Escape' && onclose()}
+  onkeydown={() => {}}
+  use:modal={{ onclose }}
 >
   <div class="head" class:with-avatar={showAvatar}>
     {#if showAvatar}<Avatar {conn} {nick} size={40} />{/if}
-    <div class="name nick" style="--h:{nickHue(nick)}">{nick}</div>
+    <div class="name nick" id="nick-menu-name" style="--h:{nickHue(nick)}">{nick}</div>
     {#if profile.displayName && profile.displayName !== nick}<div class="display">{profile.displayName}</div>{/if}
     {#if member?.user}<div class="mask mono selectable">{member.user}@{member.host}</div>{/if}
     <div class="meta">

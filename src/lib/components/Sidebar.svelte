@@ -3,6 +3,8 @@
   import { api } from '../api';
   import type { NotifyLevel } from '../types';
   import Icon from './Icon.svelte';
+  import { tick } from 'svelte';
+  import { bufferLabel, menu as menuNav, stepIndex } from '../a11y';
 
   const LEVELS: { value: NotifyLevel | 'default'; label: string }[] = [
     { value: 'default', label: 'Default' },
@@ -42,8 +44,99 @@
 
   function openMenu(e: MouseEvent, conn?: Conn, buf?: Buffer) {
     e.preventDefault();
+    e.stopPropagation();
     menuPos = { left: 0, top: 0 };
     menu = { x: e.clientX, y: e.clientY, conn, buf };
+  }
+
+  // ── Tree keyboard navigation ─────────────────────────────────
+  // One tabbable item (roving tabindex); arrows move, Left/Right fold.
+  type Node = { id: string; conn: Conn; buf?: Buffer };
+  let tree = $state<HTMLUListElement>();
+  let focusId = $state<string | null>(null);
+
+  const nodes = $derived.by(() => {
+    const out: Node[] = [];
+    for (const conn of app.orderedConns) {
+      out.push({ id: 'n' + conn.id, conn });
+      if (conn.isControl || !conn.collapsed) for (const buf of conn.channelBuffers) out.push({ id: 'b' + buf.id, conn, buf });
+    }
+    return out;
+  });
+
+  const roving = $derived.by(() => {
+    if (focusId && nodes.some((n) => n.id === focusId)) return focusId;
+    const a = app.active;
+    const at = a && nodes.find((n) => (n.buf ?? n.conn.server) === a);
+    return at ? at.id : nodes[0]?.id;
+  });
+
+  const tid = (id: string) => encodeURIComponent(id);
+
+  async function focusNode(id: string) {
+    focusId = id;
+    await tick();
+    tree?.querySelector<HTMLElement>(`[data-tid="${CSS.escape(tid(id))}"]`)?.focus();
+  }
+
+  function onItemKey(e: KeyboardEvent, n: Node) {
+    // Items nest (a network holds its channels); only the focused one acts.
+    if (e.target !== e.currentTarget) return;
+    const i = nodes.findIndex((x) => x.id === n.id);
+    const foldable = !n.buf && !n.conn.isControl;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      app.open(n.buf ?? n.conn.server);
+    } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+      e.preventDefault();
+      e.stopPropagation();
+      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      menuPos = { left: 0, top: 0 };
+      menu = { x: r.left + 24, y: r.top + 24, conn: n.conn, buf: n.buf };
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      if (foldable && n.conn.collapsed) n.conn.collapsed = false;
+      else if (!n.buf && nodes[i + 1]?.buf) focusNode(nodes[i + 1].id);
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      if (n.buf) focusNode('n' + n.conn.id);
+      else if (foldable && !n.conn.collapsed) n.conn.collapsed = true;
+    } else {
+      const to = stepIndex(e.key, i, nodes.length);
+      if (to === null) return;
+      e.preventDefault();
+      focusNode(nodes[to].id);
+    }
+  }
+
+  function netLabel(conn: Conn, status: string): string {
+    const parts = [conn.name, conn.isControl ? 'bouncer' : 'network'];
+    if (status) parts.push(status);
+    if (conn.collapsed && !conn.isControl) {
+      const hl = conn.channelBuffers.reduce((n, b) => n + b.highlights, 0);
+      if (hl) parts.push(`${hl} mention${hl === 1 ? '' : 's'}`);
+    }
+    return parts.join(', ');
+  }
+
+  function bufLabel(conn: Conn, b: Buffer): string {
+    return bufferLabel({
+      name: b.name,
+      kind: b.kind,
+      unread: b.unread,
+      highlights: b.highlights,
+      muted: b.level === 'none',
+      joined: b.joined,
+      online: b.kind === 'query' ? conn.online.get(conn.fold(b.name)) : undefined,
+      typing: b.kind === 'query' && b.typing.size > 0,
+    });
+  }
+
+  function resizeKey(e: KeyboardEvent) {
+    const d = e.key === 'ArrowRight' ? 16 : e.key === 'ArrowLeft' ? -16 : 0;
+    if (!d) return;
+    e.preventDefault();
+    app.updateSettings({ sidebarWidth: Math.min(420, Math.max(190, app.settings.sidebarWidth + d)) });
   }
 
   function resize(e: PointerEvent) {
@@ -67,168 +160,233 @@
 </script>
 
 {#snippet buffers(conn: Conn)}
-  {#each conn.channelBuffers as b (b.id)}
-    <button
-      class="buf"
-      class:active={app.active === b}
-      class:unread={b.unread > 0}
-      class:parted={b.kind === 'channel' && !b.joined}
-      class:muted={b.level === 'none'}
-      onclick={() => app.open(b)}
-      oncontextmenu={(e) => openMenu(e, conn, b)}
-    >
-      <span class="glyph">
-        {#if b.kind === 'channel'}#{:else}<Icon name="user" size={12} stroke={1.6} />{/if}
-        {#if b.kind === 'query' && conn.online.has(conn.fold(b.name))}
-          <i class="presence" class:online={conn.online.get(conn.fold(b.name))}></i>
-        {/if}
-      </span>
-      <span class="label">{name(b)}</span>
-      {#if b.level === 'none'}
-        <span class="mute" title="Muted"><Icon name="bellOff" size={12} /></span>
-      {:else if b.highlights > 0}
-        <span class="badge">{b.highlights}</span>
-      {:else if b.typing.size > 0 && b.kind === 'query'}
-        <span class="typing-dots"><i></i><i></i><i></i></span>
-      {/if}
-      <span
-        class="close"
-        role="button"
-        tabindex="-1"
-        title={b.kind === 'channel' ? 'Leave' : 'Close'}
+  <ul role="group">
+    {#each conn.channelBuffers as b (b.id)}
+      {@const id = 'b' + b.id}
+      <li
+        class="buf focus-inset"
+        class:active={app.active === b}
+        class:unread={b.unread > 0}
+        class:parted={b.kind === 'channel' && !b.joined}
+        class:muted={b.level === 'none'}
+        role="treeitem"
+        aria-level={2}
+        aria-selected={app.active === b}
+        aria-label={bufLabel(conn, b)}
+        tabindex={roving === id ? 0 : -1}
+        data-tid={tid(id)}
+        onfocus={() => (focusId = id)}
         onclick={(e) => {
           e.stopPropagation();
-          app.closeBuffer(b);
+          app.open(b);
         }}
-        onkeydown={() => {}}
+        onkeydown={(e) => onItemKey(e, { id, conn, buf: b })}
+        oncontextmenu={(e) => openMenu(e, conn, b)}
       >
-        <Icon name="x" size={12} />
-      </span>
-    </button>
-  {/each}
+        <span class="glyph" aria-hidden="true">
+          {#if b.kind === 'channel'}#{:else}<Icon name="user" size={12} stroke={1.6} />{/if}
+          {#if b.kind === 'query' && conn.online.has(conn.fold(b.name))}
+            <i class="presence" class:online={conn.online.get(conn.fold(b.name))}></i>
+          {/if}
+        </span>
+        <span class="label">{name(b)}</span>
+        {#if b.level === 'none'}
+          <span class="mute" title="Muted"><Icon name="bellOff" size={12} /></span>
+        {:else if b.highlights > 0}
+          <span class="badge">{b.highlights}</span>
+        {:else if b.typing.size > 0 && b.kind === 'query'}
+          <span class="typing-dots"><i></i><i></i><i></i></span>
+        {/if}
+        <!-- Mouse-only shortcut; from the keyboard it's in the context menu and on Cmd/Ctrl+W. -->
+        <span
+          class="close"
+          role="button"
+          tabindex="-1"
+          aria-hidden="true"
+          title={b.kind === 'channel' ? 'Leave' : 'Close'}
+          onclick={(e) => {
+            e.stopPropagation();
+            app.closeBuffer(b);
+          }}
+          onkeydown={() => {}}
+        >
+          <Icon name="x" size={12} />
+        </span>
+      </li>
+    {/each}
+  </ul>
 {/snippet}
 
 <svelte:window onclick={() => (menu = null)} onblur={() => (menu = null)} />
 
-<aside class:mac={isMac}>
+<aside class:mac={isMac} aria-label="Sidebar">
   <div class="top" data-tauri-drag-region>
     <button class="find" onclick={() => (app.switcherOpen = true)} title="Jump to…">
       <Icon name="search" size={14} />
       <span>Jump to…</span>
-      <span class="kbd">{isMac ? '⌘' : 'Ctrl '}K</span>
+      <span class="kbd" aria-hidden="true">{isMac ? '⌘' : 'Ctrl '}K</span>
     </button>
-    <button class="icon-btn" title="Search messages ({isMac ? '⌘⇧F' : 'Ctrl+Shift+F'})" onclick={() => (app.searchOpen = true)}>
+    <button
+      class="icon-btn"
+      title="Search messages ({isMac ? '⌘⇧F' : 'Ctrl+Shift+F'})"
+      aria-label="Search messages"
+      onclick={() => (app.searchOpen = true)}
+    >
       <Icon name="list" size={15} />
     </button>
   </div>
 
-  <nav>
-    {#each app.orderedConns as conn (conn.id)}
-      {@const label = statusLabel(conn)}
-      {#if conn.isControl}
-        <button
-          class="group"
-          class:active={app.active === conn.server}
+  <nav aria-label="Networks and channels">
+    <ul class="tree" role="tree" aria-label="Networks and channels" bind:this={tree}>
+      {#each app.orderedConns as conn (conn.id)}
+        {@const label = statusLabel(conn)}
+        {@const id = 'n' + conn.id}
+        {@const kids = conn.channelBuffers.length > 0}
+        <li
+          class="net-item"
+          class:control={conn.isControl}
+          class:child={!!conn.parentId}
+          role="treeitem"
+          aria-level={1}
+          aria-selected={app.active === conn.server}
+          aria-expanded={kids ? conn.isControl || !conn.collapsed : undefined}
+          aria-label={netLabel(conn, label)}
+          tabindex={roving === id ? 0 : -1}
+          data-tid={tid(id)}
+          onfocus={(e) => e.target === e.currentTarget && (focusId = id)}
           onclick={() => app.open(conn.server)}
+          onkeydown={(e) => onItemKey(e, { id, conn })}
           oncontextmenu={(e) => openMenu(e, conn)}
-          title="Bouncer console"
         >
-          <span class="eyebrow">{conn.name}</span>
-          {#if label}<span class="state {conn.status}">{label}</span>{/if}
-        </button>
-        {#if conn.buffers.size}<div class="control-bufs">{@render buffers(conn)}</div>{/if}
-      {:else}
-        <section class:child={!!conn.parentId}>
-          <div class="net-row">
-            <button
-              class="net"
-              class:active={app.active === conn.server}
-              onclick={() => app.open(conn.server)}
-              oncontextmenu={(e) => openMenu(e, conn)}
-            >
-              <span class="dot {conn.status}"></span>
-              <span class="net-name">{conn.name}</span>
+          {#if conn.isControl}
+            <div class="group" class:active={app.active === conn.server} title="Bouncer console">
+              <span class="eyebrow">{conn.name}</span>
               {#if label}<span class="state {conn.status}">{label}</span>{/if}
-              {#if conn.collapsed}
-                {@const hl = conn.channelBuffers.reduce((n, b) => n + b.highlights, 0)}
-                {#if hl}<span class="badge">{hl}</span>{/if}
-              {/if}
-            </button>
-            <button
-              class="fold"
-              class:folded={conn.collapsed}
-              onclick={() => (conn.collapsed = !conn.collapsed)}
-              aria-label={conn.collapsed ? 'Expand' : 'Collapse'}
-            >
-              <Icon name="down" size={13} />
-            </button>
-          </div>
-          {#if !conn.collapsed}
-            {@render buffers(conn)}
+            </div>
+            {#if conn.buffers.size}<div class="control-bufs">{@render buffers(conn)}</div>{/if}
+          {:else}
+            <div class="net-row">
+              <div class="net" class:active={app.active === conn.server}>
+                <span class="dot {conn.status}"></span>
+                <span class="net-name">{conn.name}</span>
+                {#if label}<span class="state {conn.status}">{label}</span>{/if}
+                {#if conn.collapsed}
+                  {@const hl = conn.channelBuffers.reduce((n, b) => n + b.highlights, 0)}
+                  {#if hl}<span class="badge">{hl}</span>{/if}
+                {/if}
+              </div>
+              <!-- Left/Right arrows fold from the keyboard. -->
+              <span
+                class="fold"
+                class:folded={conn.collapsed}
+                role="button"
+                tabindex="-1"
+                aria-hidden="true"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  conn.collapsed = !conn.collapsed;
+                }}
+                onkeydown={() => {}}
+              >
+                <Icon name="down" size={13} />
+              </span>
+            </div>
+            {#if !conn.collapsed && kids}
+              {@render buffers(conn)}
+            {/if}
           {/if}
-        </section>
-      {/if}
-    {/each}
+        </li>
+      {/each}
+    </ul>
   </nav>
 
   <footer>
-    <button class="icon-btn" title="Add network" onclick={() => (app.settingsOpen = { tab: 'servers', serverId: 'new' })}>
+    <button
+      class="icon-btn"
+      title="Add network"
+      aria-label="Add network"
+      onclick={() => (app.settingsOpen = { tab: 'servers', serverId: 'new' })}
+    >
       <Icon name="plus" />
     </button>
     <div class="me">
       {#if app.active}
-        <span class="dot {app.active.conn.status}" class:away={app.active.conn.away}></span>
-        <span class="me-nick">{app.active.conn.nick || '—'}</span>
-        {#if app.active.conn.away}<span class="me-away">away</span>{/if}
+        {@const c = app.active.conn}
+        <span class="dot {c.status}" class:away={c.away}></span>
+        <span class="me-nick">{c.nick || '—'}</span>
+        {#if c.away}<span class="me-away">away</span>{/if}
+        <span class="sr-only">, {c.status}</span>
       {/if}
     </div>
-    <button class="icon-btn" title="Settings" onclick={() => (app.settingsOpen = { tab: 'appearance' })}>
+    <button class="icon-btn" title="Settings" aria-label="Settings" onclick={() => (app.settingsOpen = { tab: 'appearance' })}>
       <Icon name="settings" />
     </button>
   </footer>
 
-  <div class="grip" onpointerdown={resize} role="separator" aria-orientation="vertical"></div>
+  <div
+    class="grip"
+    onpointerdown={resize}
+    onkeydown={resizeKey}
+    role="slider"
+    aria-orientation="horizontal"
+    aria-label="Sidebar width"
+    aria-valuenow={app.settings.sidebarWidth}
+    aria-valuemin={190}
+    aria-valuemax={420}
+    tabindex="0"
+  ></div>
 </aside>
 
 {#if menu}
-  <div class="menu" bind:this={menuEl} style="left:{menuPos.left || menu.x}px; top:{menuPos.top || menu.y}px" role="menu">
+  {@const close = () => (menu = null)}
+  <div
+    class="menu"
+    bind:this={menuEl}
+    style="left:{menuPos.left || menu.x}px; top:{menuPos.top || menu.y}px"
+    role="menu"
+    tabindex="-1"
+    aria-label={menu.buf ? menu.buf.name : menu.conn?.name}
+    use:menuNav={{ onclose: close }}
+  >
     {#if menu.buf}
       {@const b = menu.buf}
-      <button onclick={() => app.markRead(b)}>Mark as read</button>
+      <button role="menuitem" onclick={() => app.markRead(b)}>Mark as read</button>
       {#if b.kind === 'channel' && !b.joined}
-        <button onclick={() => app.join(b.conn, b.name)}>Rejoin</button>
+        <button role="menuitem" onclick={() => app.join(b.conn, b.name)}>Rejoin</button>
       {/if}
       {#if b.kind === 'query' && b.conn.canMonitor}
         {@const watched = app.isWatched(b.conn, b.name)}
-        <button onclick={() => (watched ? app.unwatch(b.conn, b.name) : app.watch(b.conn, b.name))}>
+        <button role="menuitem" onclick={() => (watched ? app.unwatch(b.conn, b.name) : app.watch(b.conn, b.name))}>
           {watched ? 'Stop watching' : 'Tell me when online'}
         </button>
       {/if}
       <hr />
-      <p class="menu-label">Notify me about</p>
-      {#each LEVELS as l (l.value)}
-        <button class="check" onclick={() => app.setNotify(b, l.value)}>
-          <span class="tick">{#if b.level === l.value}<Icon name="check" size={13} />{/if}</span>{l.label}
-        </button>
-      {/each}
+      <div role="group" aria-labelledby="notify-label">
+        <p class="menu-label" id="notify-label">Notify me about</p>
+        {#each LEVELS as l (l.value)}
+          <button class="check" role="menuitemradio" aria-checked={b.level === l.value} onclick={() => app.setNotify(b, l.value)}>
+            <span class="tick">{#if b.level === l.value}<Icon name="check" size={13} />{/if}</span>{l.label}
+          </button>
+        {/each}
+      </div>
       <hr />
-      <button onclick={() => app.closeBuffer(b)}>{b.kind === 'channel' && b.joined ? 'Leave channel' : 'Close'}</button>
+      <button role="menuitem" onclick={() => app.closeBuffer(b)}>{b.kind === 'channel' && b.joined ? 'Leave channel' : 'Close'}</button>
     {:else if menu.conn}
       {@const c = menu.conn}
-      <button onclick={() => app.open(c.server)}>Open server log</button>
+      <button role="menuitem" onclick={() => app.open(c.server)}>Open server log</button>
       {#if c.isControl}
-        <button onclick={() => (app.settingsOpen = { tab: 'servers', serverId: c.serverId })}>Manage networks…</button>
+        <button role="menuitem" onclick={() => (app.settingsOpen = { tab: 'servers', serverId: c.serverId })}>Manage networks…</button>
       {:else if c.status === 'connected'}
-        <button onclick={() => app.browseChannels(c)}>Browse channels…</button>
+        <button role="menuitem" onclick={() => app.browseChannels(c)}>Browse channels…</button>
       {/if}
-      <button onclick={() => api.reconnect(c.serverId)}>Reconnect</button>
+      <button role="menuitem" onclick={() => api.reconnect(c.serverId)}>Reconnect</button>
       {#if c.status === 'disconnected' && !c.retryAt}
-        <button onclick={() => api.connect(c.serverId)}>Connect</button>
+        <button role="menuitem" onclick={() => api.connect(c.serverId)}>Connect</button>
       {:else}
-        <button onclick={() => api.disconnect(c.serverId)}>Disconnect</button>
+        <button role="menuitem" onclick={() => api.disconnect(c.serverId)}>Disconnect</button>
       {/if}
       <hr />
-      <button onclick={() => (app.settingsOpen = { tab: 'servers', serverId: c.serverId })}>Edit server…</button>
+      <button role="menuitem" onclick={() => (app.settingsOpen = { tab: 'servers', serverId: c.serverId })}>Edit server…</button>
     {/if}
   </div>
 {/if}
@@ -298,12 +456,40 @@
     color: var(--text);
   }
 
-  section {
+  .tree,
+  .tree :global(ul) {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .net-item {
     margin-top: 10px;
   }
 
-  section.child {
+  .net-item.child {
     margin-top: 6px;
+  }
+
+  .net-item.control {
+    margin-top: 0;
+  }
+
+  /* The item holds its channels too; ring just its own row. */
+  .net-item:focus-visible {
+    outline: none;
+  }
+
+  .net-item:focus-visible > .net-row > .net,
+  .net-item:focus-visible > .group {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  .grip:focus-visible {
+    outline: none;
+    background: var(--accent);
+    opacity: 0.6;
   }
 
   .net-row {

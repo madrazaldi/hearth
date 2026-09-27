@@ -27,7 +27,11 @@ import {
 } from './types';
 
 let seq = 0;
-const MAX_LINES = 4000;
+// Rows are virtualized, so the cap is about memory and the O(n) derivations
+// per new line (unread counts, msgid index, timeline), not DOM size.
+const MAX_LINES = 20_000;
+/** Trimmed in chunks so a busy channel doesn't slice the array on every line. */
+const TRIM_TO = 18_000;
 
 export type BufferKind = 'server' | 'channel' | 'query';
 
@@ -140,7 +144,7 @@ export class Buffer {
     if (!last || last.time <= line.time) next = [...next, line];
     else next = [...next, line].sort((a, b) => a.time - b.time);
     if (next.length > MAX_LINES) {
-      next = next.slice(next.length - MAX_LINES + 500);
+      next = next.slice(next.length - TRIM_TO);
       this.history = 'idle';
     }
     this.messages = next;

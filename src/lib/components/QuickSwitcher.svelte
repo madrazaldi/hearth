@@ -1,10 +1,9 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { app, type Buffer } from '../state.svelte';
+  import { bufferLabel, modal } from '../a11y';
 
   let q = $state('');
   let sel = $state(0);
-  let input = $state<HTMLInputElement>();
   let list = $state<HTMLDivElement>();
 
   function score(name: string, query: string): number {
@@ -56,6 +55,12 @@
       list.scrollTop = el.offsetTop + el.offsetHeight - list.clientHeight;
   });
 
+  function label(b: Buffer): string {
+    const name = b.kind === 'server' ? b.conn.name : b.name;
+    const where = b.kind === 'server' ? (b.conn.isControl ? 'bouncer' : 'network') : b.conn.name;
+    return `${bufferLabel({ name, kind: b.kind, unread: b.unread, highlights: b.highlights, muted: b.level === 'none' })}, ${where}`;
+  }
+
   function choose(r: Result | undefined) {
     if (!r) return;
     if ('buf' in r) app.open(r.buf);
@@ -73,20 +78,47 @@
     } else if (e.key === 'Enter') {
       e.preventDefault();
       choose(results[sel]);
-    } else if (e.key === 'Escape') {
-      app.switcherOpen = false;
     }
   }
-
-  onMount(() => input?.focus());
 </script>
 
 <div class="scrim" onclick={() => (app.switcherOpen = false)} role="presentation">
-  <div class="palette" onclick={(e) => e.stopPropagation()} role="dialog" aria-label="Jump to" tabindex="-1" onkeydown={() => {}}>
-    <input bind:this={input} bind:value={q} onkeydown={onKey} placeholder="Jump to a channel, conversation or network" spellcheck="false" />
-    <div class="results" bind:this={list}>
+  <div
+    class="palette"
+    onclick={(e) => e.stopPropagation()}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Jump to"
+    tabindex="-1"
+    onkeydown={() => {}}
+    use:modal={{ onclose: () => (app.switcherOpen = false) }}
+  >
+    <input
+      bind:value={q}
+      onkeydown={onKey}
+      placeholder="Jump to a channel, conversation or network"
+      spellcheck="false"
+      role="combobox"
+      aria-label="Jump to"
+      aria-expanded={results.length > 0}
+      aria-controls="switcher-results"
+      aria-autocomplete="list"
+      aria-activedescendant={results.length ? `switcher-${sel}` : undefined}
+      data-autofocus
+    />
+    <div class="results" bind:this={list} id="switcher-results" role={results.length ? 'listbox' : undefined} aria-label={results.length ? 'Matches' : undefined}>
       {#each results as r, i ('buf' in r ? r.buf.id : 'join' + r.join)}
-        <button class="result" class:sel={i === sel} onmouseenter={() => (sel = i)} onclick={() => choose(r)}>
+        <button
+          class="result"
+          class:sel={i === sel}
+          id="switcher-{i}"
+          role="option"
+          aria-selected={i === sel}
+          aria-label={'buf' in r ? label(r.buf) : undefined}
+          tabindex="-1"
+          onmouseenter={() => (sel = i)}
+          onclick={() => choose(r)}
+        >
           {#if 'buf' in r}
             {@const b = r.buf}
             <span class="glyph">{b.kind === 'channel' ? '#' : b.kind === 'query' ? '@' : '◆'}</span>
