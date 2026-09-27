@@ -65,4 +65,4 @@ CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. Re
 
 - **Frontend:** `src/lib/test-utils.ts` provides `mockApi`, `connect(app, {caps, isupport})`, `feed(app, ...rawLines)` and `sent` (outgoing lines). Mock `./api` and `./notify` with `vi.mock` as in `state.test.ts`, and test behaviour by feeding raw IRC lines.
 - **Backend:** `src-tauri/tests/actor.rs` runs the actor against a scripted local TCP server. Add a test there for protocol changes such as CAP, SASL, batches or labels.
-- **UI changes:** check them visually with `pnpm dev`. The mock query params `?view=search|channels|settings|switcher`, `?tab=<settings tab>&server=<id>`, `?theme=light`, `?layout=compact` and `?empty` open the matching views.
+- **UI changes:** check them visually with `pnpm dev`. The mock query params `?view=search|channels|settings|switcher`, `?tab=<settings tab>&server=<id>`, `?theme=light`, `?layout=compact` and `?empty` open the matching views. `?stress` opens `#stress`, a channel with about 10k lines and 5k members, for checking performance. `?stress=live` also posts a line every 3 s.

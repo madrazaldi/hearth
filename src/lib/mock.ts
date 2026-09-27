@@ -1,6 +1,9 @@
 // Browser-only preview: fakes the Tauri backend with a scripted IRC session so
 // the UI can be developed and screenshotted outside the app (`pnpm dev`, open
-// http://localhost:1420/?theme=light&view=settings).
+// http://localhost:1420/?theme=light&view=settings). `?stress` adds #stress,
+// a channel with ~10k lines of scrollback and ~5k members, for perf work;
+// `?stress=live` also posts a line every 3s (which trims the buffer to
+// Buffer's live-line cap).
 
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import { emit } from '@tauri-apps/api/event';
@@ -9,6 +12,7 @@ import { defaultServer } from './types';
 
 const params = new URLSearchParams(location.search);
 const empty = params.has('empty');
+const stress = params.has('stress');
 
 const server: ServerConfig = { ...defaultServer(), id: 'soju', name: 'soju', host: 'bouncer.example', port: 443, websocket: true, nick: 'ember' };
 
@@ -89,7 +93,72 @@ function scene(): IrcEvent[] {
   m('soju/1', say('ferris', '#rust', 'anyone around who knows pin projection well?', 1));
   m('soju/1', say('ferris', '#rust', 'ember: you did the tokio actor thing, right?', 1));
   m('soju/2', say('deb', '#debian', 'trixie point release is out', 1));
+
+  if (stress) {
+    const S = '#stress';
+    m(L, msg('ember!ember@user/ember', 'JOIN', [S], { time: at(0) }));
+    const names = STRESS_NICKS.map((n, i) => (i < 12 ? '@' : i < 60 ? '+' : '') + n);
+    for (let i = 0; i < names.length; i += 400) m(L, msg('srv', '353', ['ember', '=', S, names.slice(i, i + 400).join(' ')]));
+    m(L, msg('srv', '366', ['ember', S, 'End']));
+  }
   return ev;
+}
+
+// ── ?stress ─────────────────────────────────────────────────
+// Deterministic so a line's content doesn't change between page loads.
+
+const STRESS_NICKS = Array.from({ length: 5000 }, (_, i) => {
+  const a = ['ash', 'birch', 'cedar', 'dune', 'elm', 'fern', 'gale', 'heath', 'iris', 'juno', 'kite', 'lark', 'moss', 'nova', 'onyx', 'pike'];
+  return i === 0 ? 'ember' : `${a[i % a.length]}${i % 7 === 0 ? '_' : ''}${Math.floor(i / a.length) || ''}`;
+});
+const STRESS_TOTAL = 12_000;
+const STRESS_FIRST = 10_000;
+const STRESS_END = Date.now() - 1000 * 60 * 100;
+const WORDS =
+  'the a scroll anchor websocket parser buffer render frame layout paint row height measure virtual list prepend history bouncer cap sasl batch label nick channel topic kettle tea patch review merge ship release build tokio actor webkit'.split(
+    ' ',
+  );
+
+function rng(seed: number) {
+  let t = seed + 0x6d2b79f5;
+  return () => {
+    t = (t + 0x6d2b79f5) | 0;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Line `i` counts back from the newest (0). */
+const stressTime = (i: number) => STRESS_END - i * 31_000 - (i % 5) * 1000;
+
+function stressLines(i: number): IrcMessage[] {
+  const r = rng(i);
+  const nick = STRESS_NICKS[1 + Math.floor(r() * r() * 400)];
+  const src = `${nick}!${nick}@user/${nick}`;
+  const tags: Record<string, string> = { time: new Date(stressTime(i)).toISOString(), msgid: `s${i}` };
+  const k = r();
+  if (k < 0.05) return [msg(src, ['JOIN', 'PART', 'QUIT'][Math.floor(r() * 3)], k < 0.017 ? ['#stress'] : ['#stress', 'bye'], tags)];
+  let text = Array.from({ length: 3 + Math.floor(r() * (r() < 0.1 ? 90 : 18)) }, () => WORDS[Math.floor(r() * WORDS.length)]).join(' ');
+  if (r() < 0.03) text = 'ember: ' + text;
+  if (r() < 0.02) text += ' https://hearth.example/notes/' + i;
+  if (r() < 0.03) tags['+draft/reply'] = `s${i + 1 + Math.floor(r() * 4)}`;
+  const out = [msg(src, k < 0.08 ? 'NOTICE' : 'PRIVMSG', ['#stress', k < 0.12 && k >= 0.08 ? `\x01ACTION ${text}\x01` : `#${i} ${text}`], tags)];
+  if (r() < 0.02) out.push(msg(`${STRESS_NICKS[7]}!x@y`, 'TAGMSG', ['#stress'], { '+draft/react': '👍', '+draft/reply': `s${i}` }));
+  return out;
+}
+
+function stressHistory(before: number | null, limit: number): IrcMessage[] {
+  let from = 0;
+  let count = STRESS_FIRST;
+  if (before !== null) {
+    from = Math.max(0, Math.ceil((STRESS_END - before) / 31_000) - 1);
+    while (from < STRESS_TOTAL && stressTime(from) >= before) from++;
+    count = limit;
+  }
+  const out: IrcMessage[] = [];
+  for (let i = Math.min(STRESS_TOTAL, from + count) - 1; i >= from; i--) out.push(...stressLines(i));
+  return out;
 }
 
 function history(target: string): IrcMessage[] {
@@ -150,6 +219,8 @@ mockIPC(
       case 'history':
         return a.kind === 'targets' || a.kind === 'search' ? [] : history(a.target as string);
       case 'local_history':
+        if (stress && a.target === '#stress' && a.after === null) return stressHistory((a.before as number | null) ?? null, a.limit as number);
+        return [];
       case 'load_buffers':
         return [];
       case 'search': {
@@ -157,9 +228,11 @@ mockIPC(
         const all = [...history('#hearth')];
         clock = T0 + 60_000 * 30;
         all.push(say('mira', '#hearth', 'morning all — the websocket transport landed on main last night', 0));
+        if (stress) all.push(...stressHistory(null, 0).filter((x) => x.command === 'PRIVMSG'));
         return all
           .filter((x) => x.params[1].toLowerCase().includes(q))
-          .map((x) => ({ network: 'soju/1', target: '#hearth', msg: x }));
+          .slice(-200)
+          .map((x) => ({ network: 'soju/1', target: x.params[0], msg: x }));
       }
       case 'link_preview':
         if (!String(a.url).includes('hearth.example')) throw new Error('no preview');
@@ -198,7 +271,7 @@ mockIPC(
 // Scripted interactions for screenshots.
 setTimeout(async () => {
   const { app } = await import('./state.svelte');
-  const target = params.get('buf') ?? '#hearth';
+  const target = params.get('buf') ?? (stress ? '#stress' : '#hearth');
   const conn = app.conns.get('soju/1');
   const buf = conn?.buffer(target);
   if (buf) app.open(buf);
@@ -221,6 +294,16 @@ setTimeout(async () => {
       ],
     };
     app.browserConn = conn;
+  }
+  if (params.get('stress') === 'live' && conn) {
+    // Live traffic, to check that the view stays pinned to the bottom.
+    let n = 0;
+    setInterval(() => {
+      const nick = STRESS_NICKS[1 + (n % 50)];
+      const text = `live ${++n}: ` + WORDS.slice(0, 3 + (n % 20)).join(' ');
+      const live = msg(`${nick}!${nick}@user/${nick}`, 'PRIVMSG', ['#stress', text], { time: new Date().toISOString() });
+      emit('irc', [{ type: 'message', conn: 'soju/1', msg: live }]);
+    }, 3000);
   }
   if (params.get('tab')) app.settingsOpen = { tab: params.get('tab')!, serverId: params.get('server') ?? undefined };
 }, 400);

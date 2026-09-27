@@ -1,37 +1,30 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { app, type Buffer } from '../state.svelte';
-  import { firstLink, stripFormatting } from '../format';
-  import { nickHue } from '../nickcolor';
-  import { dayKey, formatClock, formatDay, formatDuration, formatFull } from '../time';
-  import type { Line } from '../types';
-  import RichText from './RichText.svelte';
+  import { stripFormatting } from '../format';
+  import { buildItems, itemIndexOf, MEMBERSHIP, type Item } from '../timeline';
+  import { Estimates, indexAt, offsets as prefixSums, rangeFor } from '../virtual';
   import Icon from './Icon.svelte';
-  import LinkPreview from './LinkPreview.svelte';
+  import Divider from './Divider.svelte';
+  import EventRow from './EventRow.svelte';
+  import EventRun from './EventRun.svelte';
+  import MessageRow from './MessageRow.svelte';
+  import { closeMenus } from './MessageTools.svelte';
+  import MotdBlock from './MotdBlock.svelte';
+  import WhoisCard from './WhoisCard.svelte';
 
   let { buf, filter = '', onnick }: { buf: Buffer; filter?: string; onnick: (nick: string, e: MouseEvent) => void } = $props();
 
-  type Item =
-    | { kind: 'day'; key: string; label: string }
-    | { kind: 'unread'; key: string }
-    | { kind: 'line'; key: string; line: Line; cont: boolean }
-    | { kind: 'run'; key: string; lines: Line[] };
-
-  const MEMBERSHIP = new Set(['join', 'part', 'quit', 'nick']);
-  const TALK = new Set(['privmsg', 'action', 'notice']);
-  const PAGE = 150;
+  // Rendered beyond each edge of the viewport, so fast scrolls and the
+  // smooth "Latest" scroll mostly land on measured rows.
+  const OVERSCAN = 1000;
 
   let el = $state<HTMLDivElement>();
-  let limit = $state(PAGE);
+  let list = $state<HTMLDivElement>();
   let atBottom = $state(true);
   const expanded = new SvelteSet<string>();
   let flash = $state<number | null>(null);
-  let reactFor = $state<number | null>(null);
-  let confirmDelete = $state<number | null>(null);
-
-  const EMOJI = ['👍', '❤️', '😂', '🎉', '😮', '😢', '👀', '✅'];
-  const canReply = (l: Line) => !!l.msgid && buf.kind !== 'server' && buf.conn.canTag('draft/reply') && !l.redacted;
 
   const s = $derived(app.settings);
 
@@ -43,75 +36,156 @@
     return lines;
   });
 
-  const items = $derived.by(() => {
-    const lines = source.slice(-limit);
-    const out: Item[] = [];
-    let prev: Line | null = null;
-    let run: Line[] = [];
-    let dividerPlaced = !buf.divider;
+  const items = $derived(buildItems(source, { divider: buf.divider, channel: buf.kind === 'channel', membership: s.membership }));
+  const index = $derived(new Map(items.map((it, i) => [it.key, i])));
 
-    const flush = () => {
-      if (!run.length) return;
-      if (run.length === 1 || s.membership === 'show') for (const l of run) out.push({ kind: 'line', key: 'l' + l.id, line: l, cont: false });
-      else out.push({ kind: 'run', key: 'r' + run[0].id, lines: run });
-      run = [];
-    };
+  // ── Virtualization ───────────────────────────────────────────
+  // Measured heights by item key; anything unmeasured uses a per-category
+  // average. `hv` bumps whenever `heights` changes.
+  const heights = new Map<string, number>();
+  const est = new Estimates({ day: 41, unread: 19, run: 25, msg: 28, cont: 22, event: 24, block: 160 });
+  let hv = $state(0);
 
-    for (const l of lines) {
-      if (!prev || dayKey(prev.time) !== dayKey(l.time)) {
-        flush();
-        out.push({ kind: 'day', key: 'd' + l.id, label: formatDay(l.time) });
-        prev = null;
-      }
-      if (!dividerPlaced && l.time > buf.divider && !l.self) {
-        flush();
-        out.push({ kind: 'unread', key: 'u' });
-        dividerPlaced = true;
-        prev = null;
-      }
-      if (MEMBERSHIP.has(l.type) && buf.kind === 'channel') {
-        run.push(l);
-        prev = l;
-        continue;
-      }
-      flush();
-      const cont =
-        !!prev &&
-        TALK.has(l.type) &&
-        prev.type === l.type &&
-        l.type !== 'action' &&
-        prev.nick === l.nick &&
-        l.time - prev.time < 5 * 60_000;
-      out.push({ kind: 'line', key: 'l' + l.id, line: l, cont });
-      prev = l;
-    }
-    flush();
-    return out;
-  });
-
-  // ── Scroll anchoring (WebKit has no overflow-anchor) ─────────
-  let snap = { h: 0, top: 0, stick: true, first: '' };
-
-  $effect.pre(() => {
-    void items;
-    if (!el) return;
-    snap = { h: el.scrollHeight, top: el.scrollTop, stick: isAtBottom(), first: firstLineKey() };
-  });
-
-  $effect(() => {
-    void items;
-    if (!el) return;
-    if (snap.stick) el.scrollTop = el.scrollHeight;
-    else if (snap.first && firstLineKey() !== snap.first) el.scrollTop = snap.top + (el.scrollHeight - snap.h);
-  });
-
-  function firstLineKey() {
-    const first = items.find((i) => i.kind === 'line' || i.kind === 'run');
-    return first?.key ?? '';
+  function category(it: Item): string {
+    if (it.kind !== 'line') return it.kind;
+    const t = it.line.type;
+    if (t === 'privmsg' || t === 'notice' || t === 'action') return it.cont ? 'cont' : 'msg';
+    return t === 'whois' || it.line.data?.motd !== undefined ? 'block' : 'event';
   }
+
+  const offs = $derived.by(() => {
+    void hv;
+    return prefixSums(items.length, (i) => heights.get(items[i].key) ?? est.get(category(items[i])));
+  });
+
+  // Scroll position and viewport height, in scroller coordinates; `base` is
+  // where the item list starts inside the scroller (below the history header).
+  // Starts far down so the first render is the newest rows.
+  let viewTop = $state(1e12);
+  let viewH = $state(0);
+  let base = $state(0);
+
+  const range = $derived(rangeFor(offs, viewTop - base - OVERSCAN, viewTop - base + viewH + OVERSCAN));
+  // Split out so a scroll that keeps the same rows doesn't re-render.
+  const start = $derived(range[0]);
+  const end = $derived(range[1]);
+  const visible = $derived(items.slice(start, end));
+
+  /** Read the rendered rows' heights; true if anything changed. */
+  function measure(): boolean {
+    if (!list) return false;
+    let changed = false;
+    for (const node of list.children as HTMLCollectionOf<HTMLElement>) {
+      const key = node.dataset.key;
+      if (!key) continue;
+      const i = index.get(key);
+      if (i === undefined) continue;
+      const h = node.getBoundingClientRect().height;
+      const old = heights.get(key);
+      if (old !== undefined && Math.abs(old - h) < 0.5) continue;
+      heights.set(key, h);
+      est.add(category(items[i]), h, old);
+      changed = true;
+    }
+    base = list.offsetTop;
+    // Drop lines that have left the buffer.
+    if (heights.size > 2 * items.length + 1000) for (const k of heights.keys()) if (!index.has(k)) heights.delete(k);
+    return changed;
+  }
+
+  // ── Scroll anchoring ─────────────────────────────────────────
+  // WebKit has no overflow-anchor, and rows change height as they're first
+  // measured, so we keep our own anchor: while pinned we stick to the
+  // bottom, otherwise an item stays at the same distance from the viewport
+  // top across prepends, measurements and resizes.
+  let pinned = true;
+  let anchor: { key: string; time: number; delta: number } | null = null;
+  /** Where restore() last scrolled to, to recognise the scroll event it causes. */
+  let ours = -1;
 
   function isAtBottom() {
     return !!el && el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  }
+
+  function anchorIndex(a: NonNullable<typeof anchor>): number {
+    const i = index.get(a.key);
+    if (i !== undefined) return i;
+    // The item is gone (filtered, or a run/day key changed): use the first
+    // item at or after its time.
+    let lo = 0;
+    let hi = items.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (items[mid].time < a.time) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  function scrollTo(top: number) {
+    if (!el) return;
+    el.scrollTop = top;
+    ours = el.scrollTop;
+  }
+
+  function restore() {
+    if (!el) return;
+    if (pinned) {
+      const max = el.scrollHeight - el.clientHeight;
+      if (el.scrollTop < max - 0.5) scrollTo(max);
+    } else if (anchor && items.length) {
+      const target = base + offs[anchorIndex(anchor)] - anchor.delta;
+      // Only when it moved, so a smooth scroll isn't interrupted.
+      if (Math.abs(el.scrollTop - target) >= 1) scrollTo(target);
+    }
+    viewTop = el.scrollTop;
+  }
+
+  function capture() {
+    if (!el || !items.length) return (anchor = null);
+    const i = indexAt(offs, el.scrollTop - base);
+    anchor = { key: items[i].key, time: items[i].time, delta: base + offs[i] - el.scrollTop };
+  }
+
+  // Sitting at the bottom when new lines come in (say after a jump that
+  // clamped there) means following them.
+  $effect.pre(() => {
+    void items;
+    untrack(() => {
+      if (el && !pinned && isAtBottom()) {
+        pinned = true;
+        anchor = null;
+      }
+    });
+  });
+
+  // After every render: measure what's on screen, and once heights have
+  // settled put the anchor back. Runs before paint, so corrections don't flicker.
+  $effect(() => {
+    void visible;
+    void offs;
+    void buf.history;
+    untrack(() => {
+      if (measure()) hv++;
+      else restore();
+    });
+  });
+
+  function onScroll() {
+    if (!el) return;
+    viewTop = el.scrollTop;
+    // Our own scroll can be dispatched after the content grew again (a link
+    // preview loaded); that's not the user leaving the bottom. The slack
+    // covers the browser re-clamping a fractional scrollHeight.
+    if (Math.abs(el.scrollTop - ours) >= 2) {
+      ours = -1;
+      pinned = isAtBottom();
+      if (pinned) anchor = null;
+      else capture();
+    }
+    atBottom = pinned || isAtBottom();
+    app.atBottom = atBottom;
+    if (el.scrollTop - base < OVERSCAN && buf.history !== 'done' && buf.history !== 'loading' && !filter) app.fetchHistory(buf, 'before');
   }
 
   // Mark as read while the newest messages are on screen.
@@ -120,17 +194,14 @@
     if (atBottom && app.focused && !filter) app.markRead(buf);
   });
 
-  async function onScroll() {
+  /** Put item `i` `delta` px below the viewport top and keep it there. */
+  function scrollToItem(i: number, delta: number) {
     if (!el) return;
+    pinned = false;
+    anchor = { key: items[i].key, time: items[i].time, delta };
+    restore();
     atBottom = isAtBottom();
     app.atBottom = atBottom;
-    if (el.scrollTop < 400) {
-      if (limit < source.length) limit += PAGE;
-      else if (buf.history !== 'done' && buf.history !== 'loading' && !filter) {
-        await app.fetchHistory(buf, 'before');
-        if (source.length > limit) limit += PAGE;
-      }
-    }
   }
 
   // Scroll to a line requested through buf.focus (search results, reply quotes).
@@ -139,331 +210,122 @@
     if (!f) return;
     untrack(() => {
       buf.focus = null;
-      const idx = source.findIndex((l) => (f.msgid ? l.msgid === f.msgid : l.time === f.time));
-      if (idx < 0) return;
-      const line = source[idx];
-      limit = Math.max(limit, source.length - idx + 40);
-      tick().then(() => {
-        const row = el?.querySelector(`[data-line="${line.id}"]`) as HTMLElement | null;
-        if (!row || !el) return;
-        el.scrollTop = row.offsetTop - el.clientHeight / 2;
-        atBottom = isAtBottom();
-        app.atBottom = atBottom;
-        flash = line.id;
-        setTimeout(() => flash === line.id && (flash = null), 1800);
-      });
+      const line = source.find((l) => (f.msgid ? l.msgid === f.msgid : l.time === f.time));
+      if (!line || !el) return;
+      const i = itemIndexOf(items, line);
+      if (i < 0) return;
+      scrollToItem(i, el.clientHeight / 2);
+      flash = line.id;
+      setTimeout(() => flash === line.id && (flash = null), 1800);
     });
   });
 
-  async function copy(l: Line) {
-    try {
-      await navigator.clipboard.writeText(stripFormatting(l.text));
-      app.toast('Copied');
-    } catch (e) {
-      app.toast(String(e), 'error');
-    }
-  }
-
-  function startReply(l: Line) {
-    buf.replyTo = l;
-    window.dispatchEvent(new CustomEvent('hearth:focus-composer'));
+  /** Expand or collapse a run in place, growing downward like any other content. */
+  function toggleRun(key: string) {
+    const i = index.get(key);
+    if (el && i !== undefined) scrollToItem(i, base + offs[i] - el.scrollTop);
+    if (expanded.has(key)) expanded.delete(key);
+    else expanded.add(key);
   }
 
   function toBottom() {
-    limit = PAGE;
-    tick().then(() => el && el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }));
+    if (!el) return;
+    anchor = null;
+    // A long smooth scroll would render every row on the way; jump instead.
+    if (el.scrollHeight - el.scrollTop - el.clientHeight > el.clientHeight) {
+      pinned = true;
+      restore();
+    } else el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  }
+
+  /** Observe rows for size changes we didn't cause: previews, images, expanded runs. */
+  let rowObserver: ResizeObserver | undefined;
+  function observe(node: HTMLElement) {
+    // Deferred to the next frame: rows mounted from inside an observer
+    // callback would otherwise trip the "ResizeObserver loop" error.
+    const raf = requestAnimationFrame(() => rowObserver?.observe(node));
+    return { destroy: () => (cancelAnimationFrame(raf), rowObserver?.unobserve(node)) };
   }
 
   onMount(() => {
     if (!el) return;
-    const divider = el.querySelector('.unread-divider');
-    if (divider) {
-      // Not scrollIntoView: it would also scroll the overflow-hidden page shell.
-      const d = divider as HTMLElement;
-      el.scrollTop = d.offsetTop - el.clientHeight / 3;
-      atBottom = isAtBottom();
-    } else el.scrollTop = el.scrollHeight;
-    const pin = () => {
-      if (atBottom && el) el.scrollTop = el.scrollHeight;
-    };
-    const ro = new ResizeObserver(pin);
+    viewH = el.clientHeight;
+    const u = index.get('u');
+    // A jump requested before we mounted takes precedence.
+    if (u !== undefined && !anchor) scrollToItem(u, el.clientHeight / 3);
+    else restore();
+
+    rowObserver = new ResizeObserver(() => measure() && hv++);
+    let width = el.clientWidth;
+    const ro = new ResizeObserver(() => {
+      if (!el) return;
+      viewH = el.clientHeight;
+      // Rewrapping changes every row's height; forget them so offscreen rows
+      // go back to estimates rather than stale measurements.
+      if (el.clientWidth !== width) {
+        width = el.clientWidth;
+        heights.clear();
+        est.clear();
+      }
+      hv++;
+    });
     ro.observe(el);
-    // Link previews grow rows after render; keep the bottom in view.
-    el.addEventListener('contentgrow', pin);
     if (el.scrollHeight <= el.clientHeight) onScroll();
     return () => {
       ro.disconnect();
-      el?.removeEventListener('contentgrow', pin);
+      rowObserver?.disconnect();
     };
   });
 
-  const clock = (t: number) => formatClock(t, s);
-
-  function summarize(lines: Line[]): string {
-    const joined: string[] = [];
-    const left: string[] = [];
-    const renamed: string[] = [];
-    for (const l of lines) {
-      if (l.type === 'join' && !joined.includes(l.nick)) joined.push(l.nick);
-      else if ((l.type === 'part' || l.type === 'quit') && !left.includes(l.nick)) left.push(l.nick);
-      else if (l.type === 'nick') renamed.push(`${l.nick} → ${l.target}`);
-    }
-    const names = (a: string[]) => (a.length <= 3 ? a.join(', ') : `${a.slice(0, 2).join(', ')} and ${a.length - 2} others`);
-    const parts: string[] = [];
-    if (joined.length) parts.push(`${names(joined)} joined`);
-    if (left.length) parts.push(`${names(left)} left`);
-    if (renamed.length) parts.push(renamed.length <= 2 ? renamed.join(', ') : `${renamed.length} nick changes`);
-    return parts.join(' · ');
-  }
-
-  const glyph: Record<string, string> = {
-    join: '→',
-    part: '←',
-    quit: '←',
-    nick: '↻',
-    kick: '⨯',
-    mode: '±',
-    topic: '¶',
-    invite: '✉',
-    info: '·',
-    error: '!',
-  };
+  // Row heights depend on the layout and font size.
+  $effect(() => {
+    void s.layout;
+    void s.fontSize;
+    untrack(() => {
+      heights.clear();
+      est.clear();
+      hv++;
+    });
+  });
 </script>
 
-{#snippet nickBtn(nick: string, self = false)}
-  <button class="nick" class:me={self} style="--h:{nickHue(nick)}" onclick={(e) => onnick(nick, e)}>{nick}</button>
-{/snippet}
-
-{#snippet event(l: Line)}
-  {#if l.type === 'join'}
-    {@render nickBtn(l.nick)} joined {#if l.data?.host && l.data.host !== '@'}<span class="faint">{l.data.host}</span>{/if}
-  {:else if l.type === 'part'}
-    {@render nickBtn(l.nick)} left{#if l.text}<span class="faint"> ({stripFormatting(l.text)})</span>{/if}
-  {:else if l.type === 'quit'}
-    {@render nickBtn(l.nick)} quit{#if l.text}<span class="faint"> ({stripFormatting(l.text)})</span>{/if}
-  {:else if l.type === 'nick'}
-    {@render nickBtn(l.nick)} is now {@render nickBtn(l.target ?? '')}
-  {:else if l.type === 'kick'}
-    {@render nickBtn(l.nick)} removed {@render nickBtn(l.target ?? '')}{#if l.text}<span class="faint"> ({stripFormatting(l.text)})</span>{/if}
-  {:else if l.type === 'mode'}
-    {#if l.nick}{@render nickBtn(l.nick)} set mode{:else}Mode{/if} <span class="mono">{l.text}</span>
-  {:else if l.type === 'topic'}
-    {@render nickBtn(l.nick)} changed the topic to <span class="quote"><RichText text={l.text} /></span>
-  {:else if l.type === 'invite'}
-    {@render nickBtn(l.nick)} {l.text}
-    {#if l.target}<button class="inline-action" onclick={() => app.join(buf.conn, l.target!)}>Join</button>{/if}
-  {:else}
-    <RichText text={l.text} />
-  {/if}
-{/snippet}
-
-{#snippet body(l: Line)}
-  {#if l.redacted}
-    <span class="faint"><i>message deleted</i></span>
-  {:else}
-    <span class="body"><RichText text={l.text} /></span>
-  {/if}
-{/snippet}
-
-{#snippet quote(l: Line)}
-  {#if l.replyTo && !l.redacted}
-    {@const parent = buf.byMsgid.get(l.replyTo)}
-    <button
-      class="reply-quote"
-      disabled={!parent}
-      onclick={() => parent && app.jumpTo(buf, parent.time, parent.msgid)}
-      title={parent ? 'Show the original message' : undefined}
-    >
-      <span class="reply-arrow">↪</span>
-      {#if parent}
-        <span class="reply-nick" style="--h:{nickHue(parent.nick)}">{parent.nick}</span>
-        <span class="reply-snip">{parent.redacted ? 'message deleted' : stripFormatting(parent.text).slice(0, 140)}</span>
-      {:else}
-        <span class="faint">a message that isn't loaded</span>
-      {/if}
-    </button>
-  {/if}
-{/snippet}
-
-{#snippet extras(l: Line)}
-  {#if l.reactions && !l.redacted}
-    <div class="reactions">
-      {#each Object.entries(l.reactions) as [emoji, nicks] (emoji)}
-        {@const mine = nicks.some((n) => buf.conn.isMe(n))}
-        <button
-          class="chip"
-          class:mine
-          title={nicks.join(', ')}
-          disabled={mine || !app.canReact(buf, l)}
-          onclick={() => app.react(buf, l, emoji)}>{emoji}<span>{nicks.length}</span></button
-        >
-      {/each}
-    </div>
-  {/if}
-  {#if s.linkPreviews && !l.redacted && buf.kind !== 'server'}
-    {@const url = firstLink(l.text)}
-    {#if url}<LinkPreview {url} />{/if}
-  {/if}
-{/snippet}
-
-{#snippet tools(l: Line)}
-  {@const react = app.canReact(buf, l)}
-  {@const redact = app.canRedact(buf, l)}
-  <div class="tools" class:open={reactFor === l.id || confirmDelete === l.id}>
-    {#if canReply(l)}
-      <button title="Reply" onclick={() => startReply(l)}><Icon name="reply" size={14} /></button>
-    {/if}
-    {#if react}
-      <button title="React" class:on={reactFor === l.id} onclick={(e) => { e.stopPropagation(); reactFor = reactFor === l.id ? null : l.id; }}>
-        <Icon name="smile" size={14} />
-      </button>
-    {/if}
-    {#if !l.redacted}
-      <button title="Copy text" onclick={() => copy(l)}><Icon name="copy" size={14} /></button>
-    {/if}
-    {#if redact && !l.redacted}
-      {#if confirmDelete === l.id}
-        <button class="danger wide" onclick={() => { app.redact(buf, l); confirmDelete = null; }}>Delete?</button>
-      {:else}
-        <button title="Delete" class="danger" onclick={(e) => { e.stopPropagation(); confirmDelete = l.id; }}><Icon name="trash" size={14} /></button>
-      {/if}
-    {/if}
-    {#if reactFor === l.id}
-      <div class="emoji" role="menu" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
-        {#each EMOJI as e (e)}
-          <button onclick={() => { app.react(buf, l, e); reactFor = null; }}>{e}</button>
-        {/each}
-      </div>
-    {/if}
-  </div>
-{/snippet}
-
-<svelte:window onclick={() => { reactFor = null; confirmDelete = null; }} />
+<svelte:window onclick={closeMenus} />
 
 <div class="scroller layout-{s.layout}" bind:this={el} onscroll={onScroll}>
   <div class="spacer"></div>
   {#if buf.history === 'loading'}
     <div class="loading"><span></span>Loading history</div>
-  {:else if buf.history === 'done' && buf.kind !== 'server' && limit >= source.length}
+  {:else if buf.history === 'done' && buf.kind !== 'server'}
     <div class="start">
       <p class="eyebrow">Beginning of history</p>
       <p>{buf.kind === 'channel' ? buf.name : buf.kind === 'query' ? `Your conversation with ${buf.name}` : ''}</p>
     </div>
   {/if}
 
-  {#each items as it (it.key)}
-    {#if it.kind === 'day'}
-      <div class="day"><span>{it.label}</span></div>
-    {:else if it.kind === 'unread'}
-      <div class="unread-divider"><span>New</span></div>
-    {:else if it.kind === 'run'}
-      {@const open = expanded.has(it.key)}
-      <div class="row event run" class:open>
-        <time title={formatFull(it.lines[0].time)}>{clock(it.lines[0].time)}</time>
-        <span class="who"><span class="glyph">⇅</span></span>
-        <div class="text">
-          <button
-            class="run-toggle"
-            onclick={() => (open ? expanded.delete(it.key) : expanded.add(it.key))}
-            title={open ? 'Collapse' : 'Show all'}
-          >
-            {summarize(it.lines)}
-            <span class="chev" class:open><Icon name="chevron" size={11} /></span>
-          </button>
-          {#if open}
-            <div class="run-lines">
-              {#each it.lines as l (l.id)}
-                <div class="run-line">
-                  <time>{clock(l.time)}</time>
-                  <span class="glyph">{glyph[l.type]}</span>
-                  <span>{@render event(l)}</span>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      </div>
-    {:else}
-      {@const l = it.line}
-      {#if l.type === 'privmsg' || l.type === 'notice' || l.type === 'action'}
-        <div
-          class="row msg {l.type}"
-          class:cont={it.cont && !l.replyTo}
-          class:hl={l.highlight}
-          class:self={l.self}
-          class:flash={flash === l.id}
-          data-line={l.id}
-        >
-          <time title={formatFull(l.time)}>{clock(l.time)}</time>
-          {#if s.layout === 'columns'}
-            <span class="who">
-              {#if l.type === 'action'}<span class="glyph">*</span>
-              {:else if !it.cont}
-                {#if l.type === 'notice'}<span class="notice-mark">–</span>{/if}{@render nickBtn(l.nick, l.self)}
-              {/if}
-            </span>
-            <div class="text selectable">
-              {@render quote(l)}
-              {#if l.type === 'action'}{@render nickBtn(l.nick, l.self)}{' '}{/if}{@render body(l)}
-              {@render extras(l)}
-            </div>
+  <div class="items" bind:this={list} style="padding-top:{offs[start]}px;padding-bottom:{offs[items.length] - offs[end]}px">
+    {#each visible as it (it.key)}
+      <div class="item" data-key={it.key} use:observe>
+        {#if it.kind === 'day'}
+          <Divider label={it.label} />
+        {:else if it.kind === 'unread'}
+          <Divider />
+        {:else if it.kind === 'run'}
+          <EventRun lines={it.lines} {buf} open={expanded.has(it.key)} {onnick} ontoggle={() => toggleRun(it.key)} />
+        {:else}
+          {@const l = it.line}
+          {#if l.type === 'privmsg' || l.type === 'notice' || l.type === 'action'}
+            <MessageRow {l} cont={it.cont} {buf} flash={flash === l.id} {onnick} />
+          {:else if l.type === 'whois' && l.data}
+            <WhoisCard {l} {onnick} />
+          {:else if l.data?.motd !== undefined}
+            <MotdBlock {l} open={l.data.title !== undefined || buf.messages.length < 40} />
           {:else}
-            <div class="text selectable">
-              {#if !it.cont && l.type !== 'action'}
-                <div class="head">
-                  {@render nickBtn(l.nick, l.self)}
-                  {#if l.type === 'notice'}<span class="tag">notice</span>{/if}
-                  <span class="head-time" title={formatFull(l.time)}>{clock(l.time)}</span>
-                </div>
-              {/if}
-              {@render quote(l)}
-              {#if l.type === 'action'}<span class="glyph">*</span>{' '}{@render nickBtn(l.nick, l.self)}{' '}{/if}{@render body(l)}
-              {@render extras(l)}
-            </div>
+            <EventRow {l} {buf} flash={flash === l.id} {onnick} />
           {/if}
-          {@render tools(l)}
-        </div>
-      {:else if l.type === 'whois' && l.data}
-        {@const w = l.data}
-        <div class="row block">
-          <time title={formatFull(l.time)}>{clock(l.time)}</time>
-          <span class="who"></span>
-          <div class="card selectable">
-            <div class="card-head">
-              {@render nickBtn(w.nick)}
-              <span class="faint mono">{w.user}@{w.host}</span>
-            </div>
-            <dl>
-              {#if w.realname}<dt>Name</dt><dd><RichText text={w.realname} /></dd>{/if}
-              {#if w.account}<dt>Account</dt><dd>{w.account}</dd>{/if}
-              {#if w.server}<dt>Server</dt><dd>{w.server}</dd>{/if}
-              {#if w.channels}<dt>Channels</dt><dd class="mono small">{w.channels}</dd>{/if}
-              {#if w.idle}<dt>Idle</dt><dd>{formatDuration(parseInt(w.idle))}{#if w.signon}<span class="faint"> · online since {formatFull(parseInt(w.signon) * 1000)}</span>{/if}</dd>{/if}
-              {#if w.away}<dt>Away</dt><dd>{w.away}</dd>{/if}
-              {#if w.oper}<dt>Operator</dt><dd>{w.oper}</dd>{/if}
-              {#if w.secure}<dt>Security</dt><dd>{w.secure}</dd>{/if}
-              {#if w.actual}<dt>Actual</dt><dd class="mono small">{w.actual}</dd>{/if}
-            </dl>
-          </div>
-        </div>
-      {:else if l.data?.motd !== undefined}
-        <div class="row block">
-          <time title={formatFull(l.time)}>{clock(l.time)}</time>
-          <span class="who"></span>
-          <details class="motd" open={l.data.title !== undefined || buf.messages.length < 40}>
-            <summary>{l.data.title ?? 'Message of the day'}</summary>
-            <pre class="selectable"><RichText text={l.data.motd} /></pre>
-          </details>
-        </div>
-      {:else}
-        <div class="row event {l.type}" class:hl={l.highlight} class:flash={flash === l.id} data-line={l.id}>
-          <time title={formatFull(l.time)}>{clock(l.time)}</time>
-          <span class="who"><span class="glyph">{glyph[l.type] ?? '·'}</span></span>
-          <div class="text selectable">{@render event(l)}</div>
-        </div>
-      {/if}
-    {/if}
-  {/each}
+        {/if}
+      </div>
+    {/each}
+  </div>
   <div class="end"></div>
 </div>
 
@@ -483,6 +345,8 @@
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
+    /* Anchoring is done by hand (see restore); the browser's would fight it. */
+    overflow-anchor: none;
     display: flex;
     flex-direction: column;
     padding: 0 0 6px;
@@ -492,11 +356,17 @@
     flex: 1;
   }
 
+  /* Own formatting context, so row margins count toward the measured height. */
+  .item {
+    display: flow-root;
+  }
+
   :global(html) .scroller {
     font-size: var(--fs);
   }
 
-  .row {
+  /* ── Row structure, shared by the row components ──────────── */
+  .scroller :global(.row) {
     display: grid;
     grid-template-columns: var(--time-w) var(--who-w) minmax(0, 1fr);
     column-gap: 12px;
@@ -505,20 +375,20 @@
     line-height: 1.5;
   }
 
-  .row:hover {
+  .scroller :global(.row:hover) {
     background: var(--bg-hover);
   }
 
-  .msg {
+  .scroller :global(.msg) {
     padding-top: 3px;
     padding-bottom: 1px;
   }
 
-  .msg.cont {
+  .scroller :global(.msg.cont) {
     padding-top: 0;
   }
 
-  time {
+  .scroller :global(time) {
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text-4);
@@ -528,15 +398,15 @@
     white-space: nowrap;
   }
 
-  .msg.cont time {
+  .scroller :global(.msg.cont time) {
     visibility: hidden;
   }
 
-  .msg.cont:hover time {
+  .scroller :global(.msg.cont:hover time) {
     visibility: visible;
   }
 
-  .who {
+  .scroller :global(.who) {
     text-align: right;
     min-width: 0;
     overflow: hidden;
@@ -544,16 +414,12 @@
     white-space: nowrap;
   }
 
-  .text {
+  .scroller :global(.text) {
     min-width: 0;
     overflow-wrap: anywhere;
   }
 
-  .body {
-    white-space: pre-wrap;
-  }
-
-  .nick {
+  .scroller :global(.nick) {
     font-weight: 500;
     cursor: pointer;
     max-width: 100%;
@@ -562,50 +428,85 @@
     vertical-align: bottom;
   }
 
-  .nick:hover {
+  .scroller :global(.nick:hover) {
     text-decoration: underline;
     text-underline-offset: 2px;
   }
 
-  .who .nick {
+  .scroller :global(.who .nick) {
     font-weight: 600;
   }
 
-  .notice-mark {
-    color: var(--text-4);
-    margin-right: 4px;
-  }
-
-  .notice .text {
+  .scroller :global(.notice .text) {
     color: var(--text-2);
   }
 
-  .action .text {
+  .scroller :global(.action .text) {
     font-style: italic;
     color: var(--text-2);
   }
 
-  .action .text :global(.nick) {
+  .scroller :global(.action .text .nick) {
     font-style: normal;
   }
 
-  .glyph {
+  .scroller :global(.glyph) {
     font-family: var(--font-mono);
     color: var(--text-4);
     font-size: 12px;
   }
 
-  .hl {
+  .scroller :global(.hl) {
     background: var(--mention);
     box-shadow: inset 2px 0 0 var(--accent);
   }
 
-  .hl:hover {
+  .scroller :global(.hl:hover) {
     background: color-mix(in oklab, var(--mention) 100%, var(--bg-hover));
   }
 
-  .flash {
+  .scroller :global(.flash) {
     animation: flash 1.8s var(--ease);
+  }
+
+  /* Events: joins, modes, topics … */
+  .scroller :global(.event) {
+    font-size: 0.9em;
+    color: var(--text-3);
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+
+  .scroller :global(.event .nick) {
+    font-weight: 500;
+    font-size: inherit;
+  }
+
+  .scroller :global(.event.error .text) {
+    color: var(--danger);
+  }
+
+  .scroller :global(.event.error .glyph) {
+    color: var(--danger);
+  }
+
+  .scroller :global(.faint) {
+    color: var(--text-4);
+  }
+
+  .scroller :global(.run-line time) {
+    padding: 0;
+  }
+
+  /* Cards: whois, motd */
+  .scroller :global(.block) {
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .scroller :global(.card-head .nick) {
+    font-weight: 600;
+    font-size: 14px;
   }
 
   @keyframes flash {
@@ -613,333 +514,6 @@
     30% {
       background: var(--accent-soft);
     }
-  }
-
-  /* Hover tools */
-  .tools {
-    position: absolute;
-    right: 16px;
-    top: -14px;
-    display: none;
-    align-items: center;
-    gap: 1px;
-    padding: 2px;
-    border-radius: 7px;
-    background: var(--bg-raised);
-    box-shadow: var(--shadow);
-    z-index: 3;
-  }
-
-  .row.msg:hover .tools,
-  .tools.open {
-    display: flex;
-  }
-
-  .tools button {
-    height: 24px;
-    min-width: 26px;
-    display: grid;
-    place-items: center;
-    border-radius: 5px;
-    color: var(--text-3);
-  }
-
-  .tools button:hover,
-  .tools button.on {
-    background: var(--bg-active);
-    color: var(--text);
-  }
-
-  .tools .danger:hover {
-    color: var(--danger);
-  }
-
-  .tools .wide {
-    padding: 0 8px;
-    font-size: 12px;
-    color: var(--danger);
-  }
-
-  .emoji {
-    position: absolute;
-    right: 0;
-    top: calc(100% + 4px);
-    display: flex;
-    gap: 2px;
-    padding: 4px;
-    border-radius: 8px;
-    background: var(--bg-raised);
-    box-shadow: var(--shadow);
-  }
-
-  .emoji button {
-    font-size: 16px;
-    width: 30px;
-    height: 30px;
-  }
-
-  /* Replies and reactions */
-  .reply-quote {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    max-width: 100%;
-    margin: 1px 0 1px;
-    font-size: 0.86em;
-    color: var(--text-3);
-    text-align: left;
-    white-space: nowrap;
-    overflow: hidden;
-  }
-
-  .reply-quote:not(:disabled):hover .reply-snip {
-    color: var(--text-2);
-  }
-
-  .reply-arrow {
-    color: var(--text-4);
-  }
-
-  .reply-nick {
-    font-weight: 600;
-    color: oklch(var(--nick-l) var(--nick-c) var(--h));
-  }
-
-  :global(.no-nick-colors) .reply-nick {
-    color: var(--text-2);
-  }
-
-  .reply-snip {
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .reactions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin: 3px 0 2px;
-  }
-
-  .chip {
-    height: 22px;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 0 7px;
-    border-radius: 11px;
-    font-size: 13px;
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
-  }
-
-  .chip span {
-    font-size: 11.5px;
-    color: var(--text-2);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .chip.mine {
-    background: var(--accent-soft);
-    box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 50%, transparent) inset;
-  }
-
-  .chip:not(:disabled):hover {
-    background: var(--bg-active);
-  }
-
-  /* Events: joins, modes, topics … */
-  .event {
-    font-size: 0.9em;
-    color: var(--text-3);
-    padding-top: 2px;
-    padding-bottom: 2px;
-  }
-
-  .event .nick {
-    font-weight: 500;
-    font-size: inherit;
-  }
-
-  .event.error .text {
-    color: var(--danger);
-  }
-
-  .event.error .glyph {
-    color: var(--danger);
-  }
-
-  .faint {
-    color: var(--text-4);
-  }
-
-  .quote {
-    color: var(--text-2);
-  }
-
-  .inline-action {
-    margin-left: 8px;
-    font-size: 12px;
-    color: var(--accent);
-  }
-
-  .inline-action:hover {
-    text-decoration: underline;
-  }
-
-  .run-toggle {
-    text-align: left;
-    color: var(--text-3);
-    display: inline;
-  }
-
-  .run-toggle:hover {
-    color: var(--text-2);
-  }
-
-  .chev {
-    display: inline-flex;
-    vertical-align: middle;
-    margin-left: 4px;
-    color: var(--text-4);
-    transition: transform 150ms var(--ease);
-  }
-
-  .chev.open {
-    transform: rotate(90deg);
-  }
-
-  .run-lines {
-    margin: 4px 0 2px;
-    display: grid;
-    gap: 1px;
-  }
-
-  .run-line {
-    display: flex;
-    gap: 8px;
-    align-items: baseline;
-  }
-
-  .run-line time {
-    padding: 0;
-  }
-
-  /* Day and unread separators */
-  .day {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin: 18px 20px 8px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text-3);
-  }
-
-  .day::before,
-  .day::after {
-    content: '';
-    flex: 1;
-    height: 1px;
-    background: var(--line);
-  }
-
-  .unread-divider {
-    position: relative;
-    height: 1px;
-    margin: 10px 20px 8px 14px;
-    background: var(--accent);
-    opacity: 0.8;
-  }
-
-  .unread-divider span {
-    position: absolute;
-    right: 0;
-    top: -8px;
-    padding: 0 6px;
-    background: var(--bg);
-    color: var(--accent);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    line-height: 16px;
-  }
-
-  /* Cards: whois, motd */
-  .block {
-    padding-top: 6px;
-    padding-bottom: 6px;
-  }
-
-  .card,
-  .motd {
-    max-width: 640px;
-    border-radius: 8px;
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
-    padding: 10px 14px;
-    font-size: 13px;
-  }
-
-  .card-head {
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    margin-bottom: 8px;
-  }
-
-  .card-head .nick {
-    font-weight: 600;
-    font-size: 14px;
-  }
-
-  dl {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 3px 16px;
-    margin: 0;
-  }
-
-  dt {
-    color: var(--text-3);
-  }
-
-  dd {
-    margin: 0;
-    color: var(--text-2);
-    overflow-wrap: anywhere;
-  }
-
-  .small {
-    font-size: 12px;
-  }
-
-  .motd summary {
-    color: var(--text-3);
-    font-size: 12px;
-    font-weight: 500;
-    cursor: default;
-    list-style: none;
-  }
-
-  .motd summary::before {
-    content: '▸ ';
-    color: var(--text-4);
-  }
-
-  .motd[open] summary::before {
-    content: '▾ ';
-  }
-
-  .motd pre {
-    margin: 8px 0 2px;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    line-height: 1.5;
-    color: var(--text-2);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
   }
 
   .loading,
@@ -1016,60 +590,46 @@
   }
 
   /* ── Compact layout: nick above grouped lines ─────────────── */
-  .layout-compact .row {
+  .scroller.layout-compact :global(.row) {
     grid-template-columns: var(--time-w) minmax(0, 1fr);
   }
 
-  .layout-compact .row .who {
+  .scroller.layout-compact :global(.row .who) {
     display: none;
   }
 
-  .layout-compact .msg time {
+  .scroller.layout-compact :global(.msg time) {
     visibility: hidden;
   }
 
-  .layout-compact .msg:hover time {
+  .scroller.layout-compact :global(.msg:hover time) {
     visibility: visible;
   }
 
-  .layout-compact .msg:not(.cont) {
+  .scroller.layout-compact :global(.msg:not(.cont)) {
     padding-top: 10px;
   }
 
-  .layout-compact .msg:not(.cont):not(.action) time {
+  .scroller.layout-compact :global(.msg:not(.cont):not(.action) time) {
     padding-top: 1.75em;
   }
 
-  .layout-compact .head {
+  .scroller.layout-compact :global(.head) {
     display: flex;
     align-items: baseline;
     gap: 8px;
   }
 
-  .layout-compact .head .nick {
+  .scroller.layout-compact :global(.head .nick) {
     font-weight: 600;
   }
 
-  .head-time {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-4);
-  }
-
-  .tag {
-    font-size: 10.5px;
-    color: var(--text-3);
-    padding: 0 5px;
-    border-radius: 4px;
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
+  .scroller.layout-compact :global(.event .who) {
+    display: none;
   }
 
   .layout-compact .loading,
   .layout-compact .start {
     padding-left: calc(14px + var(--time-w) + 12px);
-  }
-
-  .layout-compact .event .who {
-    display: none;
   }
 </style>
