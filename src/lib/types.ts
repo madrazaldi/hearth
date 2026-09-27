@@ -17,8 +17,8 @@ export type IrcEvent =
   | { type: 'conn-added'; conn: string; server: string; parent: string | null; netid: string | null }
   | { type: 'conn-removed'; conn: string }
   | { type: 'status'; conn: string; status: ConnStatus; error: string | null; retryIn: number | null }
-  | { type: 'registered'; conn: string; nick: string; caps: string[] }
-  | { type: 'caps'; conn: string; caps: string[] }
+  | { type: 'registered'; conn: string; nick: string; caps: string[]; capValues?: Record<string, string> }
+  | { type: 'caps'; conn: string; caps: string[]; capValues?: Record<string, string> }
   | { type: 'isupport'; conn: string; isupport: Record<string, string> }
   | { type: 'message'; conn: string; msg: IrcMessage };
 
@@ -71,6 +71,8 @@ export interface Settings {
   storeLogs: boolean;
   /** Fetch link and image previews (through the backend, never the webview). */
   linkPreviews: boolean;
+  /** Fetch avatars people set with draft/metadata-2 (through the backend). */
+  loadAvatars: boolean;
   closeToTray: boolean;
   /** Check the release feed on launch and every few hours. */
   checkUpdates: boolean;
@@ -199,6 +201,7 @@ export const defaultSettings = (): Settings => ({
   sidebarWidth: 248,
   storeLogs: true,
   linkPreviews: false,
+  loadAvatars: false,
   closeToTray: false,
   checkUpdates: true,
   autoAwayMinutes: 0,

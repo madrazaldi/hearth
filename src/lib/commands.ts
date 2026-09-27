@@ -292,6 +292,43 @@ export const COMMANDS: Record<string, Command> = {
       app.toast(`Notifications for ${buf.name}: ${level}`);
     },
   },
+  rename: {
+    usage: '/rename [#channel] <#newname> [reason]',
+    help: 'Rename a channel (needs server support)',
+    run: (ctx) => {
+      const conn = ctx.buf.conn;
+      need(conn.has('draft/channel-rename'), 'This server does not support renaming channels');
+      const both = ctx.args.length >= 2 && conn.isChannel(ctx.args[0]) && conn.isChannel(ctx.args[1]);
+      const from = both ? ctx.args[0] : chanOf(ctx);
+      const to = both ? ctx.args[1] : ctx.args[0];
+      need(to && conn.isChannel(to), '/rename [#channel] <#newname> [reason]');
+      const reason = ctx.args.slice(both ? 2 : 1).join(' ');
+      ask(ctx, `RENAME ${from} ${to}${reason ? ` :${reason}` : ''}`);
+    },
+  },
+  register: {
+    usage: '/register <email|*> <password>',
+    help: 'Register an account for your current nick',
+    run: (ctx) => {
+      const conn = ctx.buf.conn;
+      need(conn.has('draft/account-registration'), 'This server does not support registering here; try /msg NickServ help');
+      const [email, password] = ctx.args;
+      need(email && password && ctx.args.length === 2, '/register <email|*> <password>');
+      const caps = (conn.capValues['draft/account-registration'] ?? '').split(',');
+      need(email !== '*' || !caps.includes('email-required'), 'This server needs an email address: /register <email> <password>');
+      conn.registration = { account: conn.nick, password };
+      ask(ctx, `REGISTER * ${email} ${password}`);
+    },
+  },
+  verify: {
+    usage: '/verify <account> <code>',
+    help: 'Confirm an account registration',
+    run: (ctx) => {
+      need(ctx.buf.conn.has('draft/account-registration'), 'This server does not support account registration');
+      need(ctx.args.length === 2, '/verify <account> <code>');
+      ask(ctx, `VERIFY ${ctx.args[0]} ${ctx.args[1]}`);
+    },
+  },
   help: {
     usage: '/help',
     help: 'Show commands',
@@ -409,6 +446,7 @@ export async function runInput(
     app.toast('This is a server buffer — use /raw to send commands', 'error');
     return false;
   }
+  if (app.sendMultiline(buf, text, replyTo)) return true;
   text
     .split('\n')
     .filter((line) => line.trim())

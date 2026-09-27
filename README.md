@@ -5,7 +5,7 @@ A modern IRC client built with Rust, Tauri 2 and Svelte 5.
 ## Features
 
 - **Transports:** plain TCP, TLS (rustls) and IRC-over-WebSocket (`text.ircv3.net`). Self-signed certificates can be allowed per server.
-- **IRCv3:** CAP 302 with `cap-notify`, SASL PLAIN, SCRAM-SHA-256 (falls back to PLAIN) and EXTERNAL, STS (upgrades to TLS and remembers the policy), `labeled-response`, `server-time`, `message-tags`, `batch`, `echo-message`, `away-notify`, `account-notify`, `extended-join`, `chghost`, `setname`, `multi-prefix`, `userhost-in-names`, `invite-notify`, `draft/chathistory`, `draft/event-playback`, `draft/read-marker`, `draft/message-redaction` (receive and delete your own messages), `+typing`, `+draft/reply`, `+draft/react` and `MONITOR` / `extended-monitor`.
+- **IRCv3:** CAP 302 with `cap-notify`, SASL PLAIN, SCRAM-SHA-256 (falls back to PLAIN) and EXTERNAL, STS (upgrades to TLS and remembers the policy), `labeled-response`, `server-time`, `message-tags`, `batch`, `echo-message`, `away-notify`, `account-notify`, `extended-join`, `chghost`, `setname`, `multi-prefix`, `userhost-in-names`, `invite-notify`, `draft/chathistory`, `draft/event-playback`, `draft/read-marker`, `draft/message-redaction` (receive and delete your own messages), `draft/multiline` (messages with line breaks are sent and shown as one), `standard-replies` (FAIL/WARN/NOTE shown next to the command that caused them), `draft/channel-rename`, `draft/account-registration`, `draft/metadata-2` (display names, and avatars in the member list when enabled under Privacy), `+typing`, `+draft/reply`, `+draft/react` and `MONITOR` / `extended-monitor`.
 - **soju bouncer support:** one server entry expands into every bouncer network (`soju.im/bouncer-networks`), and networks added or removed on the bouncer show up live. Networks can be added, edited and removed from the server's settings page. Message search uses `soju.im/search` when available. File uploads go through `soju.im/FILEHOST`, by drag and drop, paste or the paperclip button.
 - **History:** backlog loads when you join a channel and older pages load as you scroll up. Private conversations from the last 14 days are rediscovered with `CHATHISTORY TARGETS`.
 - **Saved scrollback:** messages are stored locally in SQLite (`hearth.db` in the app-data directory), so scrollback survives restarts and works on servers without chathistory. It can be turned off and wiped under Settings → Privacy & data.
@@ -49,7 +49,7 @@ A modern IRC client built with Rust, Tauri 2 and Svelte 5.
 
 ## Commands
 
-Type `/help` in the app for the full list. The main ones are `/join`, `/part`, `/msg`, `/query`, `/me`, `/notice`, `/nick`, `/topic`, `/whois`, `/away`, `/back`, `/invite`, `/kick`, `/ban`, `/unban`, `/op`, `/deop`, `/voice`, `/devoice`, `/mode`, `/names`, `/ctcp`, `/raw`, `/clear`, `/close`, `/reconnect`, `/quit` and `/list` (opens the channel browser). Also: `/search`, `/ignore` and `/unignore` (no argument lists the ignores), `/watch` and `/unwatch` (alias `/monitor`), and `/notify all|mentions|none` (with `/mute` and `/unmute` as shortcuts). Aliases you define in Settings → Aliases work like commands and are listed in `/help`. Anything else is sent to the server verbatim.
+Type `/help` in the app for the full list. The main ones are `/join`, `/part`, `/msg`, `/query`, `/me`, `/notice`, `/nick`, `/topic`, `/whois`, `/away`, `/back`, `/invite`, `/kick`, `/ban`, `/unban`, `/op`, `/deop`, `/voice`, `/devoice`, `/mode`, `/names`, `/ctcp`, `/raw`, `/clear`, `/close`, `/reconnect`, `/quit` and `/list` (opens the channel browser). Also: `/search`, `/ignore` and `/unignore` (no argument lists the ignores), `/watch` and `/unwatch` (alias `/monitor`), `/notify all|mentions|none` (with `/mute` and `/unmute` as shortcuts), `/rename [#channel] <#new> [reason]` on servers with `draft/channel-rename`, and `/register <email|*> <password>` and `/verify <account> <code>` on servers with `draft/account-registration` (a successful registration offers to save the login for SASL). Aliases you define in Settings → Aliases work like commands and are listed in `/help`. Anything else is sent to the server verbatim.
 
 ## Shortcuts
 
@@ -122,13 +122,13 @@ Without Apple secrets the macOS app is ad-hoc signed, so Gatekeeper asks users t
 
 - `irc/message.rs` parses and serializes IRC messages, including tags.
 - `irc/transport.rs` reduces TCP, TLS and WebSocket to a line reader and a line writer.
-- `irc/client.rs` runs one actor per connection. It handles registration, CAP and SASL, STS, keepalive, reconnects, labeled-response routing, chathistory batches and message logging.
+- `irc/client.rs` runs one actor per connection. It handles registration, CAP and SASL, STS, keepalive, reconnects, labeled-response routing, chathistory batches, folding `draft/multiline` batches into single messages, and message logging.
 - `irc/scram.rs` implements SCRAM-SHA-256.
 - `irc/manager.rs` owns all connections and spawns a child connection for each bouncer network.
 - `irc/events.rs` batches events into a single payload per burst before sending them to the UI.
 - `store.rs` is the SQLite log. It holds messages with an FTS5 index, saved buffers and STS policies, and a writer thread batches inserts.
 - `secrets.rs` stores and loads keychain entries. `certs.rs` generates client certificates and computes their fingerprints.
-- `preview.rs` fetches link previews, with SSRF guards and a cache.
+- `preview.rs` fetches link previews and metadata avatars, with SSRF guards and a cache.
 - `tests/actor.rs` drives the connection actor against a scripted local server.
 
 ### Frontend (`src/lib`)
@@ -142,7 +142,7 @@ Without Apple secrets the macOS app is ad-hoc signed, so Gatekeeper asks users t
 - `unread.ts` counts unread messages and highlights and syncs read markers.
 - `ignore.ts` matches ignore masks.
 - `*.test.ts` are Vitest suites. `test-utils.ts` feeds raw IRC lines into a mocked backend.
-- `commands.ts` implements slash commands.
+- `commands.ts` implements slash commands. `multiline.ts` splits composer text into `draft/multiline` batches.
 - `format.ts` parses mIRC formatting and finds links.
 - `components/` holds the UI.
 

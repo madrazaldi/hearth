@@ -231,6 +231,11 @@
             label="Show link previews"
             hint="Hearth fetches linked pages and images itself, so those sites see your IP address. Links to local or private addresses are never fetched."
           />
+          <Switch
+            bind:checked={() => app.settings.loadAvatars, (v) => app.updateSettings({ loadAvatars: v })}
+            label="Show profile pictures"
+            hint="People can publish an avatar on servers that support it. Hearth fetches the image itself, so its host sees your IP address."
+          />
           <div class="field">
             <span>Ignored people</span>
             {#if app.settings.ignores.length}

@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Buffer, Member } from '../state.svelte';
   import { nickHue } from '../nickcolor';
+  import { app } from '../state.svelte';
+  import Avatar from './Avatar.svelte';
 
   let { buf, onnick }: { buf: Buffer; onnick: (nick: string, e: MouseEvent) => void } = $props();
 
@@ -69,6 +71,7 @@
           title={m.user ? `${m.nick}!${m.user}@${m.host}${m.account ? ` · ${m.account}` : ''}` : m.nick}
         >
           <span class="prefix">{m.prefix[0] ?? ''}</span>
+          {#if app.settings.loadAvatars}<Avatar conn={buf.conn} nick={m.nick} />{/if}
           <span class="nick" style="--h:{nickHue(m.nick)}">{m.nick}</span>
         </button>
       {/each}
@@ -147,8 +150,13 @@
     white-space: nowrap;
   }
 
-  .away .nick {
+  .away .nick,
+  .away :global(.avatar) {
     opacity: 0.42;
+  }
+
+  .member :global(.avatar) {
+    margin-right: 3px;
   }
 
   .empty {

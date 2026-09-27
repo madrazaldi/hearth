@@ -37,10 +37,14 @@ pub enum Event {
         conn: String,
         nick: String,
         caps: Vec<String>,
+        /// Values of enabled caps that have one, e.g. `draft/multiline` limits.
+        cap_values: BTreeMap<String, String>,
     },
     Caps {
         conn: String,
         caps: Vec<String>,
+        /// Values of enabled caps that have one, e.g. `draft/multiline` limits.
+        cap_values: BTreeMap<String, String>,
     },
     Isupport {
         conn: String,

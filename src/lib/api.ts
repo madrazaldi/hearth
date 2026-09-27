@@ -23,6 +23,8 @@ export const api = {
   saveBuffers: (conn: string, buffers: SavedBuffer[]) => invoke<void>('save_buffers', { conn, buffers }),
   clearLogs: () => invoke<void>('clear_logs'),
   linkPreview: (url: string) => invoke<Preview>('link_preview', { url }),
+  /** A metadata avatar URL, fetched by the backend, as a data: URL. */
+  avatar: (url: string) => invoke<string>('avatar', { url }),
   generateCert: (server: string) => invoke<CertInfo>('generate_cert', { server }),
   certInfo: (path: string) => invoke<CertInfo>('cert_info', { path }),
   uploadFile: (server: string, url: string, path: string) => invoke<string>('upload_file', { server, url, path }),
