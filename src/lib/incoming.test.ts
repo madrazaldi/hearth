@@ -204,6 +204,16 @@ describe('MODE', () => {
     expect(buf('#a').member('ann')!.prefix).toBe('@+');
     expect(nicks('#a')).toEqual(['~@bob', '@+ann', '%cat', '+zed', 'me']);
   });
+
+  it("stamps the sender's highest prefix on channel messages", () => {
+    connect(app, { caps: ['multi-prefix'], isupport: { PREFIX: '(ov)@+' } });
+    joinWith('#a', 'me @+ann zed');
+    feed(app, ':ann!a@h PRIVMSG #a :hi', ':zed!z@h PRIVMSG #a :yo', ':ann!a@h PART #a');
+    expect(lines('#a').map((l) => l.prefix)).toEqual(['@', undefined, undefined]);
+    // The prefix is what they had at the time, not what they have now.
+    feed(app, ':srv MODE #a +o zed', ':zed!z@h PRIVMSG #a :op now');
+    expect(lines('#a').filter((l) => l.nick === 'zed').map((l) => l.prefix)).toEqual([undefined, '@']);
+  });
 });
 
 describe('IRCv3 membership updates', () => {

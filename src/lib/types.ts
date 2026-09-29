@@ -131,6 +131,8 @@ export interface Line {
   /** Extra subject: kicked nick, new nick, whois payload, … */
   target?: string;
   account?: string;
+  /** The sender's highest channel prefix (@, %, +, …) when the line arrived. */
+  prefix?: string;
   redacted?: boolean;
   data?: Record<string, string>;
   /** msgid of the message this one replies to (+draft/reply). */

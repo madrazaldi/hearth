@@ -250,7 +250,19 @@ struct MembershipTests {
     #expect(h.buf("#a").member("me")?.prefix == "@")
   }
 
-  @Test("keeps away and account across a NAMES refresh")
+  @Test("stamps the sender's highest prefix on channel messages")
+  func stampsPrefix() async {
+    let h = Harness()
+    await h.connect(caps: ["multi-prefix"], isupport: ["PREFIX": "(ov)@+"])
+    await h.joinWith("#a", "me @+ann zed")
+    await h.feed(":ann!a@h PRIVMSG #a :hi", ":zed!z@h PRIVMSG #a :yo", ":ann!a@h PART #a")
+    #expect(h.buf("#a").messages.map(\.prefix) == ["@", nil, nil])
+    // The prefix is what they had at the time, not what they have now.
+    await h.feed(":srv MODE #a +o zed", ":zed!z@h PRIVMSG #a :op now")
+    #expect(h.buf("#a").messages.filter { $0.nick == "zed" }.map(\.prefix) == [nil, "@"])
+  }
+
+    @Test("keeps away and account across a NAMES refresh")
   func namesRefresh() async {
     let h = Harness()
     await h.connect(caps: ["away-notify", "account-notify"])

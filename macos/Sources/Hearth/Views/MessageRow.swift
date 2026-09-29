@@ -114,11 +114,14 @@ struct MessageRow: View {
   private var nickButton: some View {
     // A tap, not a Button: buttons join the focus store, and every row
     // scrolling in or out then invalidates all the others.
-    NickText(nick: line.nick)
-      .onTapGesture { nickCard = true }
-      .accessibilityAddTraits(.isButton)
-      .accessibilityAction { nickCard = true }
-      .popover(isPresented: $nickCard, arrowEdge: .bottom) { NickCard(buf: buf, nick: line.nick) { nickCard = false } }
+    HStack(alignment: .firstTextBaseline, spacing: 0) {
+      if let pre = line.prefix { Text(String(pre)).font(.system(size: size, weight: .medium)).foregroundStyle(p.text3) }
+      NickText(nick: line.nick)
+    }
+    .onTapGesture { nickCard = true }
+    .accessibilityAddTraits(.isButton)
+    .accessibilityAction { nickCard = true }
+    .popover(isPresented: $nickCard, arrowEdge: .bottom) { NickCard(buf: buf, nick: line.nick) { nickCard = false } }
   }
 
   private var columnsBody: some View {

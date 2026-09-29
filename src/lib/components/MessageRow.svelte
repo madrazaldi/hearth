@@ -77,7 +77,7 @@
     <span class="who">
       {#if l.type === 'action'}<span class="glyph">*</span>
       {:else if !cont}
-        {#if l.type === 'notice'}<span class="notice-mark">–</span>{/if}<Nick nick={l.nick} self={l.self} {onnick} />
+        {#if l.type === 'notice'}<span class="notice-mark">–</span>{/if}{#if l.prefix}<span class="mode-prefix">{l.prefix}</span>{/if}<Nick nick={l.nick} self={l.self} {onnick} />
       {/if}
     </span>
     <div class="text selectable">
@@ -91,7 +91,7 @@
         <div class="head" title={displayName && displayName !== l.nick ? `${displayName} (${l.nick})` : undefined}>
           <!-- Always the same size, image or initial, so row heights don't shift. -->
           {#if s.loadAvatars}<Avatar conn={buf.conn} nick={l.nick} size={18} />{/if}
-          <Nick nick={l.nick} self={l.self} {onnick} />
+          <span>{#if l.prefix}<span class="mode-prefix">{l.prefix}</span>{/if}<Nick nick={l.nick} self={l.self} {onnick} /></span>
           {#if l.type === 'notice'}<span class="tag">notice</span>{/if}
           <span class="head-time" title={formatFull(l.time)}>{clock}</span>
         </div>
@@ -107,6 +107,11 @@
 <style>
   .body {
     white-space: pre-wrap;
+  }
+
+  .mode-prefix {
+    color: var(--text-3);
+    font-weight: 500;
   }
 
   .notice-mark {

@@ -138,6 +138,7 @@ export class Buffer {
   });
 
   push(line: Line) {
+    this.stampPrefix(line);
     let next = this.messages;
     // Live lines are almost always newest; keep order if a server-time tag says otherwise.
     const last = next[next.length - 1];
@@ -152,6 +153,7 @@ export class Buffer {
 
   /** Add lines from history, skipping ones already present. */
   merge(lines: Line[]) {
+    for (const l of lines) this.stampPrefix(l);
     const next = mergeLines(this.messages, lines);
     if (next) this.messages = next;
   }
@@ -166,6 +168,17 @@ export class Buffer {
     const next = [...this.messages];
     next[i] = { ...l, reactions: { ...(l.reactions ?? {}), [emoji]: [...who, nick] } };
     this.messages = next;
+  }
+
+  /**
+   * Stamped on the line rather than looked up when rendering, so rows don't
+   * re-render on every join and mode change. History gets the current prefix.
+   */
+  private stampPrefix(l: Line) {
+    if (this.kind !== 'channel' || l.prefix !== undefined || !l.nick) return;
+    if (l.type !== 'privmsg' && l.type !== 'action' && l.type !== 'notice') return;
+    const p = this.member(l.nick)?.prefix[0];
+    if (p) l.prefix = p;
   }
 
   member(nick: string): Member | undefined {

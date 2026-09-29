@@ -136,6 +136,7 @@ final class Buffer: Identifiable, Hashable {
   }
 
   func push(_ line: Line) {
+    let line = stampPrefix(line)
     var next = messages
     // Live lines are almost always newest; keep order if a server-time tag says otherwise.
     if let last = next.last, last.time > line.time {
@@ -153,6 +154,7 @@ final class Buffer: Identifiable, Hashable {
 
   /// Add lines from history, skipping ones already present.
   func merge(_ lines: [Line]) {
+    let lines = lines.map(stampPrefix)
     if let next = mergeLines(messages, lines) { messages = next }
   }
 
@@ -167,6 +169,17 @@ final class Buffer: Identifiable, Hashable {
       l.reactions.append(Reaction(emoji: emoji, nicks: [nick]))
     }
     messages[i] = l
+  }
+
+  /// Stamped on the line rather than looked up when rendering, so rows don't
+  /// re-render on every join and mode change. History gets the current prefix.
+  private func stampPrefix(_ l: Line) -> Line {
+    guard kind == .channel, l.prefix == nil, !l.nick.isEmpty, l.type.isTalk,
+      let p = members[conn.fold(l.nick)]?.prefix.first
+    else { return l }
+    var l = l
+    l.prefix = p
+    return l
   }
 
   func member(_ nick: String) -> Member? { members[conn.fold(nick)] }

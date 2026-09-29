@@ -35,6 +35,8 @@ struct Line: Identifiable, Equatable, Sendable {
   /// Extra subject: kicked nick, new nick, invite channel, …
   var target: String?
   var account: String?
+  /// The sender's highest channel prefix (@, %, +, …) when the line arrived.
+  var prefix: Character?
   var redacted = false
   /// WHOIS fields, MOTD text (`motd`, `title`), standard-reply `code`, join `host`.
   var data: [String: String]?
