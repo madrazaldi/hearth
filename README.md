@@ -25,6 +25,7 @@ A modern IRC client with a Rust core. On macOS it is a native SwiftUI app (`maco
 - **Commands on connect:** raw lines to send after each connection, per server (Advanced section of the server form).
 - **Composer:**
   - Tab completion for nicks (most recent speakers first), channels, commands and aliases.
+  - Emoji suggestions while typing `:name` (for example `:j` offers `:joy:`), and `:name:` turns into its emoji.
   - Command and alias suggestions as you type.
   - Spellcheck, which can be turned off. Autocorrect and auto-capitalization stay off.
   - Input history.

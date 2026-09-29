@@ -1,6 +1,6 @@
 // The message box (Composer.svelte): Enter sends, Shift+Enter breaks the line,
-// Tab completes commands, channels and nicks, ↑/↓ walk the input history, and
-// pasted or dropped files go to the server's FILEHOST.
+// Tab completes commands, channels and nicks, `:name` suggests emoji, ↑/↓ walk the
+// input history, and pasted or dropped files go to the server's FILEHOST.
 
 import AppKit
 import SwiftUI
@@ -17,6 +17,10 @@ struct Composer: View {
   @LocalState private var uploading = 0
   @LocalState private var dragging = false
   @LocalState private var focusSeq = 0
+  @LocalState private var caret = 0
+  @LocalState private var emojiIndex = 0
+  // The colon position whose suggestions Escape closed.
+  @LocalState private var emojiDismissed = -1
 
   private var conn: Conn { buf.conn }
   private var filehost: String { conn.isupport["soju.im/FILEHOST"] ?? conn.isupport["FILEHOST"] ?? "" }
@@ -34,11 +38,32 @@ struct Composer: View {
     return Array(commandInfos(app.settings.aliases).filter { $0.name.hasPrefix(q) }.prefix(7))
   }
 
+  struct EmojiMatch {
+    let start: Int
+    let query: String
+    let matches: [Emoji]
+  }
+
+  private func emojiMatch(_ cmds: [CommandInfo]) -> EmojiMatch? {
+    guard cmds.isEmpty else { return nil }
+    let ns = text as NSString
+    guard let q = Emojis.query(ns.substring(to: min(caret, ns.length))), q.start != emojiDismissed else { return nil }
+    let matches = Emojis.search(q.query)
+    return matches.isEmpty ? nil : EmojiMatch(start: q.start, query: q.query, matches: matches)
+  }
+
   var body: some View {
     let matches = cmdMatches
+    let emoji = emojiMatch(matches)
     VStack(spacing: 0) {
       if !matches.isEmpty {
         CommandSuggestions(matches: matches, index: min(cmdIndex, matches.count - 1)) { text = "/\($0.name) " }
+      }
+      if let emoji {
+        EmojiSuggestions(matches: emoji.matches, index: min(emojiIndex, emoji.matches.count - 1)) {
+          pickEmoji($0, from: emoji.start)
+          focusSeq += 1
+        }
       }
       if let reply = buf.replyTo {
         HStack(spacing: 6) {
@@ -79,8 +104,9 @@ struct Composer: View {
             spellcheck: app.settings.spellcheck,
             fontSize: CGFloat(app.settings.fontSize),
             textColor: NSColor(p.text),
-            keys: keyHandler(matches),
+            keys: keyHandler(matches, emoji),
             onChange: changed,
+            onCaret: { if caret != $0 { caret = $0 } },
             onFiles: { files in upload(files) }
           )
           .frame(height: height)
@@ -114,13 +140,23 @@ struct Composer: View {
       buf.draft = text
       cmdIndex = 0
     }
+    .onChange(of: emoji.map { "\($0.start):\($0.query)" }) { emojiIndex = 0 }
     .onChange(of: bridge?.focus) { focusSeq += 1 }
     .onChange(of: app.composerFocus) { focusSeq += 1 }
     .onChange(of: buf.replyTo?.id) { if buf.replyTo != nil { focusSeq += 1 } }
   }
 
-  private func changed() {
+  private func changed(_ tv: NSTextView) {
+    memo.tv = tv
     history = -1
+    let ns = tv.string as NSString
+    let pos = min(tv.selectedRange().location, ns.length)
+    let before = ns.substring(to: pos)
+    if !tv.hasMarkedText(), let sc = Emojis.typed(before) {
+      replace(tv, NSRange(location: sc.start, length: pos - sc.start), with: sc.char)
+    } else if Emojis.query(before) == nil {
+      emojiDismissed = -1
+    }
     if text.hasPrefix("/") || text.isEmpty { app.sendTyping(buf, .done) } else { app.sendTyping(buf, .active) }
   }
 
@@ -129,15 +165,36 @@ struct Composer: View {
   private final class Memo {
     var history = -1
     var completion: Completion?
+    weak var tv: NSTextView?
   }
   private var history: Int {
     get { memo.history }
     nonmutating set { memo.history = newValue }
   }
 
-  private func keyHandler(_ matches: [CommandInfo]) -> (ComposerKey, NSTextView) -> Bool {
+  private func keyHandler(_ matches: [CommandInfo], _ emoji: EmojiMatch?) -> (ComposerKey, NSTextView) -> Bool {
     { key, tv in
+      memo.tv = tv
       if key != .tab && key != .backtab { memo.completion = nil }
+      if let emoji {
+        let i = min(emojiIndex, emoji.matches.count - 1)
+        switch key {
+        case .up, .down:
+          emojiIndex = (i + (key == .up ? -1 : 1) + emoji.matches.count) % emoji.matches.count
+          return true
+        // Enter still sends a lone `:D` or `:P`; Tab always picks.
+        case .tab, .backtab:
+          pickEmoji(emoji.matches[i], from: emoji.start)
+          return true
+        case .enter where emoji.query.count > 1:
+          pickEmoji(emoji.matches[i], from: emoji.start)
+          return true
+        case .escape:
+          emojiDismissed = emoji.start
+          return true
+        default: break
+        }
+      }
       if !matches.isEmpty {
         let i = min(cmdIndex, matches.count - 1)
         switch key {
@@ -270,6 +327,26 @@ struct Composer: View {
     tv.setSelectedRange(NSRange(location: c.end, length: 0))
   }
 
+  // ─── Emoji ───────────────────────────────────────────────────
+
+  private func pickEmoji(_ e: Emoji, from start: Int) {
+    guard let tv = memo.tv else { return }
+    let ns = tv.string as NSString
+    let end = min(tv.selectedRange().location, ns.length)
+    guard start <= end else { return }
+    var range = NSRange(location: start, length: end - start)
+    if end < ns.length && ns.character(at: end) == 0x20 { range.length += 1 }
+    replace(tv, range, with: e.char + " ")
+  }
+
+  /// Edits through the text system so undo can take it back.
+  private func replace(_ tv: NSTextView, _ range: NSRange, with s: String) {
+    guard tv.shouldChangeText(in: range, replacementString: s) else { return }
+    tv.replaceCharacters(in: range, with: s)
+    tv.didChangeText()
+    tv.setSelectedRange(NSRange(location: range.location + (s as NSString).length, length: 0))
+  }
+
   // ─── Uploads ─────────────────────────────────────────────────
 
   private func insertText(_ s: String) {
@@ -321,6 +398,38 @@ enum ComposerFile {
 
 enum ComposerKey { case enter, tab, backtab, up, down, escape }
 
+private struct EmojiSuggestions: View {
+  let matches: [Emoji]
+  let index: Int
+  let pick: (Emoji) -> Void
+  @Environment(\.palette) private var p
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      ForEach(Array(matches.enumerated()), id: \.element.name) { i, e in
+        Button {
+          pick(e)
+        } label: {
+          HStack(spacing: 10) {
+            Text(e.char).font(.system(size: 15)).frame(width: 20)
+            Text(":\(e.name):").font(.system(size: 12, weight: .medium, design: .monospaced)).foregroundStyle(p.text)
+            Spacer(minLength: 0)
+          }
+          .padding(.horizontal, 10)
+          .padding(.vertical, 4)
+          .background(RoundedRectangle(cornerRadius: 6).fill(i == index ? p.active : .clear))
+          .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+      }
+    }
+    .padding(4)
+    .background(RoundedRectangle(cornerRadius: 9).fill(p.raised))
+    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(p.line))
+    .padding(.bottom, 6)
+  }
+}
+
 private struct CommandSuggestions: View {
   let matches: [CommandInfo]
   let index: Int
@@ -364,7 +473,8 @@ private struct ComposerField: NSViewRepresentable {
   var fontSize: CGFloat
   var textColor: NSColor
   var keys: (ComposerKey, NSTextView) -> Bool
-  var onChange: () -> Void
+  var onChange: (NSTextView) -> Void
+  var onCaret: (Int) -> Void
   var onFiles: ([ComposerFile]) -> Void
 
   func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -442,8 +552,15 @@ private struct ComposerField: NSViewRepresentable {
     func textDidChange(_ notification: Notification) {
       guard let tv else { return }
       parent.text = tv.string
-      parent.onChange()
+      parent.onChange(tv)
       measure()
+    }
+
+    func textViewDidChangeSelection(_ notification: Notification) {
+      guard let tv else { return }
+      // Also fires while updateNSView sets the text, where SwiftUI state can't change.
+      let loc = tv.selectedRange().location
+      DispatchQueue.main.async { [parent] in parent.onCaret(loc) }
     }
 
     /// Grow with the text up to about ten lines, then scroll.

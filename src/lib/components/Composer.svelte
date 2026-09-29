@@ -3,6 +3,7 @@
   import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { app, type Buffer } from '../state.svelte';
   import { commandInfos, runInput } from '../commands';
+  import { emojiQuery, searchEmoji, typedShortcode, type Emoji } from '../emoji';
   import { api } from '../api';
   import { stripFormatting } from '../format';
   import { nickHue } from '../nickcolor';
@@ -19,6 +20,10 @@
   let histIndex = -1;
   let completion: { start: number; end: number; options: string[]; index: number; suffix: string } | null = null;
   let cmdIndex = $state(0);
+  let caret = $state(0);
+  let emojiIndex = $state(0);
+  // The colon position whose suggestions Escape closed.
+  let emojiDismissed = $state(-1);
 
   const conn = $derived(buf.conn);
   const filehost = $derived(conn.isupport['soju.im/FILEHOST'] || conn.isupport['FILEHOST'] || '');
@@ -38,9 +43,23 @@
     return commands.filter((c) => c.name.startsWith(q)).slice(0, 7);
   });
 
+  const emoji = $derived.by(() => {
+    if (cmdMatches.length) return null;
+    const q = emojiQuery(text.slice(0, caret));
+    if (!q || q.start === emojiDismissed) return null;
+    const matches = searchEmoji(q.query);
+    return matches.length ? { ...q, matches } : null;
+  });
+  const emojiKey = $derived(emoji ? `${emoji.start}:${emoji.query}` : '');
+
   $effect(() => {
     void cmdMatches;
     cmdIndex = 0;
+  });
+
+  $effect(() => {
+    void emojiKey;
+    emojiIndex = 0;
   });
 
   $effect(() => {
@@ -125,7 +144,38 @@
     tick().then(() => ta?.setSelectionRange(c.end, c.end));
   }
 
+  function setCaret(pos: number) {
+    caret = pos;
+    tick().then(() => ta?.setSelectionRange(pos, pos));
+  }
+
+  function pickEmoji(em: Emoji) {
+    if (!emoji) return;
+    const insert = em.char + ' ';
+    text = text.slice(0, emoji.start) + insert + text.slice(caret).replace(/^ /, '');
+    setCaret(emoji.start + insert.length);
+  }
+
   function onKeydown(e: KeyboardEvent) {
+    if (emoji && !e.isComposing) {
+      const n = emoji.matches.length;
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        emojiIndex = (emojiIndex + (e.key === 'ArrowUp' ? -1 : 1) + n) % n;
+        return;
+      }
+      // Enter still sends a lone `:D` or `:P`; Tab always picks.
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && emoji.query.length > 1)) {
+        e.preventDefault();
+        pickEmoji(emoji.matches[emojiIndex]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        emojiDismissed = emoji.start;
+        return;
+      }
+    }
     if (cmdMatches.length && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       e.preventDefault();
       cmdIndex = (cmdIndex + (e.key === 'ArrowUp' ? -1 : 1) + cmdMatches.length) % cmdMatches.length;
@@ -168,6 +218,18 @@
 
   function onInput() {
     histIndex = -1;
+    if (ta) {
+      const pos = ta.selectionStart;
+      const before = ta.value.slice(0, pos);
+      const sc = typedShortcode(before);
+      if (sc) {
+        text = ta.value.slice(0, sc.start) + sc.char + ta.value.slice(pos);
+        setCaret(sc.start + sc.char.length);
+      } else {
+        caret = pos;
+        if (!emojiQuery(before)) emojiDismissed = -1;
+      }
+    }
     if (text.startsWith('/') || !text) app.sendTyping(buf, 'done');
     else app.sendTyping(buf, 'active');
   }
@@ -275,6 +337,25 @@
       {/each}
     </div>
   {/if}
+  {#if emoji}
+    <div class="suggest" role="listbox" aria-label="Emoji">
+      {#each emoji.matches as em, i (em.name)}
+        <button
+          class:sel={i === emojiIndex}
+          role="option"
+          aria-selected={i === emojiIndex}
+          onmousedown={(e) => {
+            e.preventDefault();
+            pickEmoji(em);
+            ta?.focus({ preventScroll: true });
+          }}
+        >
+          <span class="emoji" aria-hidden="true">{em.char}</span>
+          <span class="mono">:{em.name}:</span>
+        </button>
+      {/each}
+    </div>
+  {/if}
   {#if buf.replyTo}
     {@const r = buf.replyTo}
     <div class="replying">
@@ -297,6 +378,8 @@
       {...{ autocorrect: 'off' }}
       autocapitalize="off"
       onkeydown={onKeydown}
+      onkeyup={() => ta && (caret = ta.selectionStart)}
+      onclick={() => ta && (caret = ta.selectionStart)}
       oninput={onInput}
       onpaste={onPaste}
     ></textarea>
@@ -462,6 +545,13 @@
     font-size: 12.5px;
     color: var(--text);
     white-space: nowrap;
+  }
+
+  .suggest .emoji {
+    width: 20px;
+    font-size: 16px;
+    line-height: 1;
+    text-align: center;
   }
 
   .suggest .help {

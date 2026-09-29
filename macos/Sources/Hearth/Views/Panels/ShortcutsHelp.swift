@@ -37,6 +37,7 @@ let keyboardShortcutGroups: [KeyboardShortcutGroup] = [
     title: "Composer",
     items: [
       .init(keys: ["⇥", "⇧⇥"], label: "Complete a nick, channel, command or alias"),
+      .init(keys: [":name"], label: "Suggest emoji (⇥ or ↩ picks, :name: inserts)"),
       .init(keys: ["↑", "↓"], label: "Input history"),
       .init(keys: ["⇧↩"], label: "New line"),
     ]),

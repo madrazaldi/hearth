@@ -37,6 +37,7 @@ export const SHORTCUT_GROUPS: { title: string; items: Shortcut[] }[] = [
     title: 'Composer',
     items: [
       { keys: [['Tab'], ['⇧', 'Tab']], label: 'Complete nick, channel, command or alias' },
+      { keys: [[':', 'name']], label: 'Suggest emoji (Tab or ↵ picks, :name: inserts)' },
       { keys: [['↑'], ['↓']], label: 'Input history' },
       { keys: [['⇧', '↵']], label: 'New line' },
     ],
