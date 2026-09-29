@@ -49,6 +49,17 @@ private struct RowBackground: ViewModifier {
   }
 }
 
+extension View {
+  @ViewBuilder fileprivate func selectable(_ on: Bool) -> some View {
+    if on { textSelection(.enabled) } else { self }
+  }
+}
+
+/// Scrolling moves rows under a resting pointer, and each one gets a hover.
+/// Waiting for the pointer to settle before showing the tools keeps a scroll
+/// from rebuilding every row it passes.
+@MainActor private var pendingHover: (id: Int, task: Task<Void, Never>)?
+
 struct MessageRow: View {
   let line: Line
   let cont: Bool
@@ -57,6 +68,10 @@ struct MessageRow: View {
   @Environment(AppModel.self) private var app
   @Environment(\.palette) private var p
   @LocalState private var hover = false
+  /// Selectable text is costly to lay out, so a row only turns it on once
+  /// the pointer has rested on it, and keeps it on so a selection survives
+  /// the pointer leaving.
+  @LocalState private var selectable = false
   @LocalState private var nickCard = false
 
   private var size: CGFloat { CGFloat(app.settings.fontSize) }
@@ -75,14 +90,34 @@ struct MessageRow: View {
     .overlay(alignment: .topTrailing) {
       if hover { MessageTools(line: line, buf: buf).padding(.trailing, 12).offset(y: -10) }
     }
-    .onHover { hover = $0 }
+    .onHover(perform: hovering)
     .contextMenu { MessageMenu(line: line, buf: buf) }
     .modifier(NickLinks(buf: buf))
   }
 
+  private func hovering(_ inside: Bool) {
+    if inside {
+      pendingHover?.task.cancel()
+      pendingHover = (line.id, Task {
+        try? await Task.sleep(for: .milliseconds(100))
+        if !Task.isCancelled {
+          hover = true
+          selectable = true
+        }
+      })
+    } else {
+      if pendingHover?.id == line.id { pendingHover?.task.cancel() }
+      if hover { hover = false }
+    }
+  }
+
   private var nickButton: some View {
-    Button { nickCard = true } label: { NickText(nick: line.nick) }
-      .buttonStyle(.plain)
+    // A tap, not a Button: buttons join the focus store, and every row
+    // scrolling in or out then invalidates all the others.
+    NickText(nick: line.nick)
+      .onTapGesture { nickCard = true }
+      .accessibilityAddTraits(.isButton)
+      .accessibilityAction { nickCard = true }
       .popover(isPresented: $nickCard, arrowEdge: .bottom) { NickCard(buf: buf, nick: line.nick) { nickCard = false } }
   }
 
@@ -167,7 +202,7 @@ struct MessageRow: View {
         }
       }
       .foregroundStyle(line.type == .notice ? p.text2 : p.text)
-      .textSelection(.enabled)
+      .selectable(selectable)
       .fixedSize(horizontal: false, vertical: true)
     }
   }
@@ -472,16 +507,17 @@ struct EventRun: View {
         } else {
           Text("⇅").foregroundStyle(p.text4).frame(width: 14)
         }
-        Button(action: toggle) {
-          HStack(spacing: 4) {
-            Text(summary).foregroundStyle(p.text3).lineLimit(open ? nil : 1)
-            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(p.text4)
-              .rotationEffect(.degrees(open ? 90 : 0))
-          }
-          .font(.system(size: size))
-          .contentShape(Rectangle())
+        // A tap rather than a Button, for the same reason as MessageRow's nick.
+        HStack(spacing: 4) {
+          Text(summary).foregroundStyle(p.text3).lineLimit(open ? nil : 1)
+          Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold)).foregroundStyle(p.text4)
+            .rotationEffect(.degrees(open ? 90 : 0))
         }
-        .buttonStyle(.plain)
+        .font(.system(size: size))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: toggle)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { toggle() }
         .help(open ? "Collapse" : "Show all")
         Spacer(minLength: 0)
       }

@@ -67,7 +67,10 @@ final class Boot {
       self.core = core
       Boot.current = self
       AppDelegate.shared?.attach(app: app, core: core)
-      Task { await app.start() }
+      Task {
+        await app.start()
+        if let mode = ProcessInfo.processInfo.environment["HEARTH_STRESS"] { startStress(app, mode: mode) }
+      }
     } catch {
       self.error = String(describing: error)
     }
