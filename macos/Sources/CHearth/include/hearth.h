@@ -1,1 +1,0 @@
-../../../../crates/hearth-ffi/include/hearth.h

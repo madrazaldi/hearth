@@ -1,6 +1,5 @@
 //! The tokio runtime every connection actor runs on. It is process-wide so the
-//! core works the same under Tauri (which is handed this runtime) and when
-//! driven over the C ABI by the native macOS app.
+//! core works the same under Tauri (which is handed this runtime) and in tests.
 
 use std::future::Future;
 use std::sync::OnceLock;

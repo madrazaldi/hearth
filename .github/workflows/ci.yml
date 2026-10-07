@@ -48,17 +48,3 @@ jobs:
         run: mkdir -p dist && touch dist/index.html
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
-
-  macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build -p hearth-ffi
-      - run: swift build
-        working-directory: macos
-      - run: swift test
-        working-directory: macos

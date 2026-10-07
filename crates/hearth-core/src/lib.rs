@@ -1,6 +1,5 @@
-//! Hearth's engine. Frontends (Tauri + Svelte on Windows and Linux, the
-//! SwiftUI app on macOS) drive it through [`app::Core`], whose methods are the
-//! command API both of them share.
+//! Hearth's engine. The Tauri frontend drives it through [`app::Core`],
+//! whose methods are the command API.
 
 pub mod app;
 pub mod certs;
