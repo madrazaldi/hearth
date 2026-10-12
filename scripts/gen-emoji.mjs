@@ -1,5 +1,5 @@
 // Regenerates the emoji shortcode table from GitHub's gemoji, the `:joy:` names
-// Slack and Discord also use: src/lib/emoji-data.ts. Run with `node scripts/gen-emoji.mjs`.
+// Slack and Discord also use: src/lib/emoji-data.ts. Run with `bun scripts/gen-emoji.mjs`.
 
 import { writeFileSync } from 'node:fs';
 

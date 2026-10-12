@@ -76,15 +76,15 @@ On Windows and Linux, use Ctrl instead of ⌘ and Alt instead of ⌥.
 ## Development
 
 ```sh
-pnpm install
-pnpm tauri dev      # run the app
-pnpm check          # svelte-check + tsc
-pnpm test           # Vitest: state and message handling
+bun install
+bun run tauri dev      # run the app
+bun run check          # svelte-check + tsc
+bun run test           # Vitest: state and message handling
 cargo test --workspace && cargo clippy --workspace --all-targets   # unit tests + actor tests against a scripted server
-pnpm tauri build    # release bundle (needs TAURI_SIGNING_PRIVATE_KEY, see Releasing)
+bun run tauri build    # release bundle (needs TAURI_SIGNING_PRIVATE_KEY, see Releasing)
 ```
 
-When `pnpm dev` runs in a plain browser instead of inside Tauri, Hearth replays a scripted IRC session from `src/lib/mock.ts`. This lets you work on the UI without a server. Query parameters control the preview: `?theme=light`, `?layout=compact`, `?view=settings`, `?view=switcher`, `?view=search`, `?view=channels`, `?view=shortcuts`, `?tab=privacy` (open a Settings tab; add `&server=<id>` to edit a server), `?update=none` (the mock updater reports no update; by default it offers 0.2.0), `?empty` (first-run screen) and `?stress` (a `#stress` channel with about 10k lines of scrollback and 5k members, for performance work; `?stress=live` adds a new line every 3 seconds).
+When `bun run dev` runs in a plain browser instead of inside Tauri, Hearth replays a scripted IRC session from `src/lib/mock.ts`. This lets you work on the UI without a server. Query parameters control the preview: `?theme=light`, `?layout=compact`, `?view=settings`, `?view=switcher`, `?view=search`, `?view=channels`, `?view=shortcuts`, `?tab=privacy` (open a Settings tab; add `&server=<id>` to edit a server), `?update=none` (the mock updater reports no update; by default it offers 0.2.0), `?empty` (first-run screen) and `?stress` (a `#stress` channel with about 10k lines of scrollback and 5k members, for performance work; `?stress=live` adds a new line every 3 seconds).
 
 CI (`.github/workflows/ci.yml`) runs the checks and tests on Linux, macOS and Windows.
 
@@ -100,7 +100,7 @@ HEARTH_HOST=irc.libera.chat HEARTH_NICK=someone cargo run -p hearth-core --examp
 2. `.github/workflows/release.yml` builds Windows and Linux bundles into a **draft** GitHub Release, together with `latest.json` for the Tauri updater. It can also be started by hand from the Actions tab.
 3. Check the draft and publish it. The in-app updater polls `https://github.com/madrazaldi/hearth/releases/latest/download/latest.json`, which only sees published releases.
 
-Updates are verified against the public key in `tauri.conf.json` (`plugins.updater.pubkey`). The matching private key lives outside the repo at `~/.tauri/hearth-updater.key` (no password). Back it up: if it is lost, installed copies can no longer be updated. For a local `pnpm tauri build`, export it first: `TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/hearth-updater.key)`.
+Updates are verified against the public key in `tauri.conf.json` (`plugins.updater.pubkey`). The matching private key lives outside the repo at `~/.tauri/hearth-updater.key` (no password). Back it up: if it is lost, installed copies can no longer be updated. For a local `bun run tauri build`, export it first: `TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/hearth-updater.key)`.
 
 Repository secrets (Settings > Secrets and variables > Actions). Each group is optional. Without it the workflow still builds, just unsigned:
 

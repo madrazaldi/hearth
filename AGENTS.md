@@ -5,23 +5,23 @@ Guidance for coding agents working in this repo. See README.md for features and 
 ## Stack
 
 Hearth is an IRC client with a Rust engine (`crates/hearth-core`) and one frontend:
-Tauri 2 (`src-tauri/`) + Svelte 5 runes + TypeScript (`src/`), built with Vite and pnpm.
+Tauri 2 (`src-tauri/`) + Svelte 5 runes + TypeScript (`src/`), built with Vite and Bun.
 
 The root `Cargo.toml` is a workspace of the Rust crates.
 
 ## Commands
 
 ```sh
-pnpm install
-pnpm tauri dev                 # full app
-pnpm dev                       # UI only, in a browser, against the scripted mock (src/lib/mock.ts)
-pnpm check                     # svelte-check + tsc — must report 0 errors
-pnpm test                      # Vitest
+bun install
+bun run tauri dev              # full app
+bun run dev                    # UI only, in a browser, against the scripted mock (src/lib/mock.ts)
+bun run check                  # svelte-check + tsc — must report 0 errors
+bun run test                   # Vitest
 cargo test --workspace         # unit tests + crates/hearth-core/tests
 cargo clippy --workspace --all-targets -- -D warnings   # CI runs with -D warnings
 ```
 
-Run a single test: `pnpm vitest run -t "name"` / `cargo test name`. Headless backend smoke test: `HEARTH_HOST=… HEARTH_NICK=… cargo run -p hearth-core --example probe`.
+Run a single test: `bun x vitest run -t "name"` / `cargo test name`. Headless backend smoke test: `HEARTH_HOST=… HEARTH_NICK=… cargo run -p hearth-core --example probe`.
 
 CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. Releases come from `.github/workflows/release.yml` on a `v*` tag (see README "Releasing"). Never commit the updater private key (`~/.tauri/hearth-updater.key`). Releases ship Tauri bundles on Windows/Linux. The frontend updater lives in `src/lib/updater.svelte.ts`, and `mock.ts` fakes its `plugin:updater|*` calls. MSRV is `rust-version` in the root `Cargo.toml` (1.90); clippy lints depend on it.
 
@@ -70,4 +70,4 @@ CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. Re
 
 - **Frontend:** `src/lib/test-utils.ts` provides `mockApi`, `connect(app, {caps, isupport})`, `feed(app, ...rawLines)` and `sent` (outgoing lines). Mock `./api` and `./notify` with `vi.mock` as in `state.test.ts`, and test behaviour by feeding raw IRC lines.
 - **Backend:** `crates/hearth-core/tests/` runs the actor against a scripted local TCP server. Add a test there for protocol changes such as CAP, SASL, batches or labels.
-- **UI changes:** check them visually with `pnpm dev`. The mock query params `?view=search|channels|settings|switcher|shortcuts`, `?tab=<settings tab>&server=<id>`, `?theme=light`, `?layout=compact`, `?update=none` and `?empty` open the matching views; `?noavatars` turns off mock avatars. `?stress` opens `#stress`, a channel with about 10k lines and 5k members, for checking performance. `?stress=live` also posts a line every 3 s.
+- **UI changes:** check them visually with `bun run dev`. The mock query params `?view=search|channels|settings|switcher|shortcuts`, `?tab=<settings tab>&server=<id>`, `?theme=light`, `?layout=compact`, `?update=none` and `?empty` open the matching views; `?noavatars` turns off mock avatars. `?stress` opens `#stress`, a channel with about 10k lines and 5k members, for checking performance. `?stress=live` also posts a line every 3 s.

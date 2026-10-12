@@ -79,16 +79,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 12
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
+      - uses: oven-sh/setup-bun@v2
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: pnpm install --frozen-lockfile
+      - run: bun install --frozen-lockfile
 
       # Secrets that are unset expand to empty strings, and the Tauri bundler
       # treats an empty-but-present variable as "sign with this", so only export
@@ -114,7 +108,7 @@ jobs:
           else
             echo "::warning::TAURI_SIGNING_PRIVATE_KEY not set: building without updater artifacts"
             # Without the key the bundler refuses to build updater artifacts at all.
-            node -e 'const f="src-tauri/tauri.conf.json",fs=require("fs"),c=JSON.parse(fs.readFileSync(f));c.bundle.createUpdaterArtifacts=false;fs.writeFileSync(f,JSON.stringify(c,null,2))'
+            bun -e 'const f="src-tauri/tauri.conf.json",fs=require("fs"),c=JSON.parse(fs.readFileSync(f));c.bundle.createUpdaterArtifacts=false;fs.writeFileSync(f,JSON.stringify(c,null,2))'
             echo "updater=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -149,6 +143,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          tauriScript: bun run tauri
           releaseId: ${{ needs.create-release.outputs.id }}
           args: ${{ matrix.args }}
           includeUpdaterJson: ${{ steps.signing.outputs.updater == 'true' }}

@@ -5,5 +5,5 @@ export default defineConfig({
   plugins: [svelte()],
   // Resolve Svelte's client build so runes are reactive in tests.
   resolve: { conditions: ['browser'] },
-  test: { environment: 'jsdom', include: ['src/**/*.test.ts'] },
+  test: { environment: 'happy-dom', include: ['src/**/*.test.ts'] },
 });

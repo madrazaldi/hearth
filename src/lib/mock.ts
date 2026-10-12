@@ -1,5 +1,5 @@
 // Browser-only preview: fakes the Tauri backend with a scripted IRC session so
-// the UI can be developed and screenshotted outside the app (`pnpm dev`, open
+// the UI can be developed and screenshotted outside the app (`bun run dev`, open
 // http://localhost:1420/?theme=light&view=settings). `?stress` adds #stress,
 // a channel with ~10k lines of scrollback and ~5k members, for perf work;
 // `?stress=live` also posts a line every 3s (which trims the buffer to
