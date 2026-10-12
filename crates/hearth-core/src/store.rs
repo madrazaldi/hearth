@@ -87,6 +87,23 @@ pub struct SearchHit {
     pub msg: Message,
 }
 
+/// A log search. Every field but `limit` narrows it; without `text` it lists
+/// the messages the other filters match.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SearchQuery {
+    pub text: String,
+    pub network: Option<String>,
+    /// Case-folded buffer name.
+    pub target: Option<String>,
+    /// Sender nick, compared case-insensitively.
+    pub from: Option<String>,
+    /// Bounds in ms, exclusive.
+    pub before: Option<i64>,
+    pub after: Option<i64>,
+    pub limit: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StsPolicy {
     pub port: u16,
@@ -188,20 +205,39 @@ impl Db {
         Ok(rows.filter_map(|r| r.ok()).filter_map(|raw| serde_json::from_str(&raw).ok()).collect())
     }
 
-    /// Full-text search, newest first. `network` and `target` narrow the scope.
-    pub fn search(&self, query: &str, network: Option<&str>, target: Option<&str>, limit: usize) -> Result<Vec<SearchHit>> {
-        let Some(fts) = fts_query(query) else { return Ok(Vec::new()) };
-        let db = self.read.lock().unwrap();
-        let mut stmt = db.prepare_cached(
-            "SELECT m.network, m.target, m.raw FROM messages_fts f JOIN messages m ON m.id = f.rowid
-             WHERE messages_fts MATCH ?1
-               AND (?2 IS NULL OR m.network = ?2 OR m.network LIKE ?2 || '/%')
+    /// Search the log, newest first.
+    pub fn search(&self, q: &SearchQuery) -> Result<Vec<SearchHit>> {
+        let fts = fts_query(&q.text);
+        if fts.is_none() && (!q.text.trim().is_empty() || (q.from.is_none() && q.target.is_none() && q.before.is_none() && q.after.is_none())) {
+            return Ok(Vec::new());
+        }
+        const FILTERS: &str = "(?2 IS NULL OR m.network = ?2 OR m.network LIKE ?2 || '/%')
                AND (?3 IS NULL OR m.target = ?3)
-             ORDER BY m.time DESC LIMIT ?4",
-        )?;
-        let rows = stmt.query_map(params![fts, network, target, limit as i64], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
-        })?;
+               AND (?4 IS NULL OR m.nick = ?4 COLLATE NOCASE)
+               AND m.time < ?5 AND m.time > ?6";
+        let sql = if fts.is_some() {
+            format!(
+                "SELECT m.network, m.target, m.raw FROM messages_fts f JOIN messages m ON m.id = f.rowid
+                 WHERE messages_fts MATCH ?1 AND {FILTERS} ORDER BY m.time DESC LIMIT ?7"
+            )
+        } else {
+            format!(
+                "SELECT m.network, m.target, m.raw FROM messages m
+                 WHERE ?1 IS NULL AND m.command IN ('PRIVMSG', 'NOTICE') AND {FILTERS} ORDER BY m.time DESC LIMIT ?7"
+            )
+        };
+        let db = self.read.lock().unwrap();
+        let mut stmt = db.prepare_cached(&sql)?;
+        let args = params![
+            fts,
+            q.network,
+            q.target,
+            q.from,
+            q.before.unwrap_or(i64::MAX),
+            q.after.unwrap_or(i64::MIN),
+            q.limit as i64
+        ];
+        let rows = stmt.query_map(args, |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
         Ok(rows
             .filter_map(|r| r.ok())
             .filter_map(|(network, target, raw)| Some(SearchHit { network, target, msg: serde_json::from_str(&raw).ok()? }))
@@ -461,17 +497,45 @@ mod tests {
         let after = db.history_after("srv", "#a", parse_ms("2026-01-01T00:00:01.000Z").unwrap(), 10).unwrap();
         assert_eq!(after.len(), 1);
 
-        let hits = db.search("worl", None, None, 10).unwrap();
+        let hits = db.search(&text("worl")).unwrap();
         assert_eq!(hits.len(), 2, "prefix match across buffers, formatting stripped");
         assert_eq!(hits[0].target, "#b", "newest first");
-        assert_eq!(db.search("waves", Some("srv"), Some("#a"), 10).unwrap().len(), 1);
-        assert!(db.search("   ", None, None, 10).unwrap().is_empty());
-        assert!(db.search("\"unbalanced", None, None, 10).is_ok());
+        let scoped = SearchQuery { network: Some("srv".into()), target: Some("#a".into()), ..text("waves") };
+        assert_eq!(db.search(&scoped).unwrap().len(), 1);
+        assert!(db.search(&text("   ")).unwrap().is_empty());
+        assert!(db.search(&text("\"unbalanced")).is_ok());
 
         db.redact("srv", "m1");
         db.flush();
         assert_eq!(db.history("srv", "#a", None, 10).unwrap().len(), 1);
-        assert!(db.search("hello", None, None, 10).unwrap().is_empty());
+        assert!(db.search(&text("hello")).unwrap().is_empty());
+    }
+
+    fn text(t: &str) -> SearchQuery {
+        SearchQuery { text: t.into(), limit: 10, ..Default::default() }
+    }
+
+    #[test]
+    fn search_filters() {
+        let db = Db::memory().unwrap();
+        log(&db, "#a", privmsg("2026-01-01T00:00:01.000Z", "Ann", "#a", "deploy one", None));
+        log(&db, "#a", privmsg("2026-01-01T00:00:02.000Z", "bob", "#a", "deploy two", None));
+        log(&db, "#b", privmsg("2026-01-01T00:00:03.000Z", "ann", "#b", "deploy three", None));
+        log(&db, "#b", privmsg("2026-01-01T00:00:04.000Z", "ann", "#b", "unrelated", None));
+        db.flush();
+        let texts = |q: SearchQuery| db.search(&q).unwrap().iter().map(|h| h.msg.param(1).to_string()).collect::<Vec<_>>();
+
+        assert_eq!(texts(SearchQuery { from: Some("ANN".into()), ..text("deploy") }), ["deploy three", "deploy one"]);
+        let t2 = parse_ms("2026-01-01T00:00:02.000Z");
+        assert_eq!(texts(SearchQuery { before: t2, ..text("deploy") }), ["deploy one"]);
+        assert_eq!(texts(SearchQuery { after: t2, ..text("deploy") }), ["deploy three"]);
+        // Paging: the next page starts before the oldest hit so far.
+        let page = SearchQuery { limit: 2, ..text("deploy") };
+        assert_eq!(texts(page.clone()), ["deploy three", "deploy two"]);
+        assert_eq!(texts(SearchQuery { before: t2, ..page }), ["deploy one"]);
+        // Filters alone list everything they match; no filters at all, nothing.
+        assert_eq!(texts(SearchQuery { from: Some("ann".into()), target: Some("#b".into()), ..text("") }), ["unrelated", "deploy three"]);
+        assert!(texts(text("")).is_empty());
     }
 
     #[test]

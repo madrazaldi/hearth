@@ -1,11 +1,13 @@
 import type { Line } from './types';
+import type { Gap } from './history';
 import { formatDay } from './time';
 
 export type Item =
   | { kind: 'day'; key: string; time: number; label: string }
   | { kind: 'unread'; key: string; time: number }
   | { kind: 'line'; key: string; time: number; line: Line; cont: boolean }
-  | { kind: 'run'; key: string; time: number; lines: Line[] };
+  | { kind: 'run'; key: string; time: number; lines: Line[] }
+  | { kind: 'gap'; key: string; time: number; gap: Gap };
 
 export const MEMBERSHIP = new Set(['join', 'part', 'quit', 'nick']);
 const TALK = new Set(['privmsg', 'action', 'notice']);
@@ -16,6 +18,8 @@ export interface TimelineOpts {
   /** Membership changes are only grouped in channels. */
   channel: boolean;
   membership: 'show' | 'collapse' | 'hide';
+  /** Unloaded stretches, oldest first; each gets a row before the first line past it. */
+  gaps?: Gap[];
 }
 
 /** Turn a buffer's lines into rows: day and unread dividers, grouped runs of joins/parts. */
@@ -27,6 +31,8 @@ export function buildItems(lines: Line[], o: TimelineOpts): Item[] {
   // Local-day bounds of the current day, so we only touch Date at day changes.
   let dayStart = Infinity;
   let dayEnd = -Infinity;
+  const gaps = o.gaps ?? [];
+  let g = 0;
 
   const flush = () => {
     if (!run.length) return;
@@ -37,6 +43,14 @@ export function buildItems(lines: Line[], o: TimelineOpts): Item[] {
   };
 
   for (const l of lines) {
+    while (g < gaps.length && gaps[g].before <= l.time) {
+      flush();
+      out.push({ kind: 'gap', key: 'g' + gaps[g].after, time: gaps[g].after, gap: gaps[g] });
+      g++;
+      prev = null;
+      // Repeat the day after a gap, which can span days.
+      dayStart = Infinity;
+    }
     if (l.time < dayStart || l.time >= dayEnd) {
       const d = new Date(l.time);
       dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();

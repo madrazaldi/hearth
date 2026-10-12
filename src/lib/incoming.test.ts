@@ -434,6 +434,15 @@ describe('typing and read markers', () => {
     expect(buf('#a').readMarker).toBe(Date.parse('2026-01-01T00:00:10.000Z'));
   });
 
+  it('asks for the read marker of a new query', () => {
+    connect(app, { caps: ['draft/read-marker'] });
+    sent.length = 0;
+    feed(app, '@time=2026-01-01T00:00:01.000Z :ann!a@h PRIVMSG me :hi');
+    expect(sent).toContain('MARKREAD ann');
+    feed(app, ':srv MARKREAD ann timestamp=2026-01-01T00:00:01.000Z');
+    expect(buf('ann').unread).toBe(0);
+  });
+
   it('counts unread lines after the marker and syncs markRead', async () => {
     vi.useFakeTimers();
     connect(app, { caps: ['draft/read-marker'] });

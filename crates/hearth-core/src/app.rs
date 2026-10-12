@@ -10,7 +10,7 @@ use crate::irc::message::Message;
 use crate::preview::{Preview, Previewer};
 use crate::runtime::blocking;
 use crate::secrets;
-use crate::store::{Db, SavedBuffer, SearchHit};
+use crate::store::{Db, SavedBuffer, SearchHit, SearchQuery};
 use crate::upload;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -182,15 +182,10 @@ impl Core {
         .map_err(err)
     }
 
-    pub async fn search(
-        &self,
-        query: String,
-        network: Option<String>,
-        target: Option<String>,
-        limit: usize,
-    ) -> CmdResult<Vec<SearchHit>> {
+    pub async fn search(&self, mut query: SearchQuery) -> CmdResult<Vec<SearchHit>> {
         let db = self.db().clone();
-        blocking(move || db.search(&query, network.as_deref(), target.as_deref(), limit.clamp(1, 500))).await?.map_err(err)
+        query.limit = query.limit.clamp(1, 500);
+        blocking(move || db.search(&query)).await?.map_err(err)
     }
 
     pub fn load_buffers(&self, conn: &str) -> CmdResult<Vec<SavedBuffer>> {
@@ -268,7 +263,7 @@ mod tests {
         assert!(cfg.servers.is_empty());
         assert!(core.connect("nope").unwrap_err().contains("unknown server"));
         assert!(core.send("nope", vec![]).is_err());
-        let hits = crate::runtime::handle().block_on(core.search("x".into(), None, None, 5)).unwrap();
+        let hits = crate::runtime::handle().block_on(core.search(SearchQuery { text: "x".into(), limit: 5, ..Default::default() })).unwrap();
         assert!(hits.is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }

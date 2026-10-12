@@ -9,7 +9,7 @@ A modern IRC client with a Rust core and a Tauri 2 + Svelte 5 app (`src-tauri/`,
 - **soju bouncer support:** one server entry expands into every bouncer network (`soju.im/bouncer-networks`), and networks added or removed on the bouncer show up live. Networks can be added, edited and removed from the server's settings page. Message search uses `soju.im/search` when available. File uploads go through `soju.im/FILEHOST`, by drag and drop, paste or the paperclip button.
 - **History:** backlog loads when you join a channel and older pages load as you scroll up. Private conversations from the last 14 days are rediscovered with `CHATHISTORY TARGETS`.
 - **Saved scrollback:** messages are stored locally in SQLite (`hearth.db` in the app-data directory), so scrollback survives restarts and works on servers without chathistory. It can be turned off and wiped under Settings → Privacy & data.
-- **Search:** ⌘⇧F searches every buffer, one network or the current buffer, using the local full-text index plus bouncer search. Choosing a result jumps to the message.
+- **Search:** ⌘⇧F searches every buffer, one network or the current buffer, using the local full-text index plus bouncer search. Narrow it with `from:nick`, `in:#channel`, `on:`, `before:` and `after:` (a `YYYY-MM-DD` date, `today` or `yesterday`); `from:` and `in:` autocomplete. Older results load as you scroll. Choosing a result jumps to the message even if it was never loaded: the history around it is fetched, and the messages between it and the present fill in as you scroll. Reopening search brings back the last query and results.
 - **Replies and reactions:** hover a message to reply, react, copy it or delete your own.
 - **Link previews** (opt-in): pages and images are fetched by the Rust backend, which refuses local and private addresses at every redirect.
 - **Inline images**: with link previews on, image links (including soju FILEHOST uploads) show as thumbnails you can open full size. Images are checked by their bytes (PNG, JPEG, GIF, WebP; at most 8 MB), animations play on hover unless autoplay is on, and images in messages that mention NSFW stay blurred until clicked. Video and audio links get a compact card that opens in your browser; nothing is streamed into the app.
@@ -141,8 +141,8 @@ src                  the Svelte UI
 
 - `state.svelte.ts` holds all client state (connections, buffers, members) using Svelte 5 runes.
 - `incoming.ts` turns server messages into state changes.
-- `history.ts` loads chathistory, falls back to the local log and dedupes merged lines.
-- `search.ts` searches the local log and the bouncer.
+- `history.ts` loads chathistory, falls back to the local log and dedupes merged lines. It also tracks the gaps a jump leaves between loaded stretches and fills them.
+- `search.ts` parses search filters and pages through the local log and the bouncer (buffer by buffer where the bouncer requires `in`).
 - `saved.ts` saves and restores open buffers.
 - `monitor.ts` tracks watched nicks with MONITOR.
 - `unread.ts` counts unread messages and highlights and syncs read markers.

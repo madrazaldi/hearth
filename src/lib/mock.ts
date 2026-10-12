@@ -321,7 +321,7 @@ mockIPC(
       case 'load_buffers':
         return [];
       case 'search': {
-        const q = String(a.query).toLowerCase();
+        const q = String((a.query as { text: string }).text).toLowerCase();
         const all = [...history('#hearth')];
         clock = T0 + 60_000 * 30;
         all.push(say('mira', '#hearth', 'morning all — the websocket transport landed on main last night', 0));

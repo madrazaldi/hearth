@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { CertInfo, Config, IrcEvent, IrcMessage, Preview, SavedBuffer, SearchHit, ServerConfig, Settings } from './types';
+import type { CertInfo, Config, IrcEvent, IrcMessage, Preview, SavedBuffer, SearchHit, SearchQuery, ServerConfig, Settings } from './types';
 
 export const api = {
   getConfig: () => invoke<Config>('get_config'),
@@ -17,8 +17,7 @@ export const api = {
   /** From the local log; `target` is the case-folded buffer name. */
   localHistory: (conn: string, target: string, opts: { before?: number; after?: number; limit: number }) =>
     invoke<IrcMessage[]>('local_history', { conn, target, before: opts.before ?? null, after: opts.after ?? null, limit: opts.limit }),
-  search: (query: string, network: string | null, target: string | null, limit = 200) =>
-    invoke<SearchHit[]>('search', { query, network, target, limit }),
+  search: (query: SearchQuery) => invoke<SearchHit[]>('search', { query }),
   loadBuffers: (conn: string) => invoke<SavedBuffer[]>('load_buffers', { conn }),
   saveBuffers: (conn: string, buffers: SavedBuffer[]) => invoke<void>('save_buffers', { conn, buffers }),
   clearLogs: () => invoke<void>('clear_logs'),

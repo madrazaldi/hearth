@@ -5,8 +5,8 @@ import { isIgnored, normalizeMask } from './ignore';
 import { mentions, stripFormatting } from './format';
 import { notify } from './notify';
 import { handleMessage } from './incoming';
-import { fetchHistory, fetchTargets, loadAround, mergeLines } from './history';
-import { search } from './search';
+import { fetchHistory, fetchTargets, fillGap, loadAround, mergeLines, type Gap } from './history';
+import { search, type SearchPage } from './search';
 import { isWatched, syncMonitor, unwatch, watch } from './monitor';
 import { rejoinCommands, restoreBuffers, saveBuffersSoon } from './saved';
 import { countHighlights, countUnread, markRead } from './unread';
@@ -80,6 +80,8 @@ export class Buffer {
   readMarker = $state(0);
   divider = $state(0);
   history = $state<'idle' | 'loading' | 'done'>('idle');
+  /** Unloaded stretches between loaded lines, oldest first. */
+  gaps = $state.raw<Gap[]>([]);
   typing = new SvelteMap<string, number>();
   /** The message the composer is replying to. */
   replyTo = $state<Line | null>(null);
@@ -95,6 +97,10 @@ export class Buffer {
   namesAcc: Map<string, Member> | null = null;
   lastTypingSent = 0;
   markTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The history request in flight, if any. */
+  pending: Promise<void> | null = null;
+  fillingGap = false;
+  gapRetryAt = 0;
 
   constructor(conn: Conn, kind: BufferKind, name: string) {
     this.conn = conn;
@@ -147,6 +153,8 @@ export class Buffer {
     if (next.length > MAX_LINES) {
       next = next.slice(next.length - TRIM_TO);
       this.history = 'idle';
+      // Paging back from the new oldest line covers a gap that was cut off.
+      if (this.gaps.length) this.gaps = this.gaps.filter((g) => g.after >= next[0].time);
     }
     this.messages = next;
   }
@@ -231,6 +239,8 @@ export class Conn {
   /** labeled-response: label → buffer that issued the command. */
   labels = new Map<string, Buffer>();
   ctcpTimes: number[] = [];
+  /** The bouncer's SEARCH needs `in`, so search buffer by buffer. */
+  searchPerTarget = false;
   ctcpWarned = 0;
   /**
    * draft/account-registration: credentials from /register, kept in memory
@@ -314,6 +324,8 @@ export class Conn {
     if (b.kind === 'query') {
       this.app.saveBuffersSoon(this);
       if (this.canMonitor && this.status === 'connected') this.send(`MONITOR + ${name}`);
+      // Servers only push markers for joined channels; queries must ask.
+      if (this.has('draft/read-marker') && this.status === 'connected') this.send(`MARKREAD ${name}`);
     }
     return b;
   }
@@ -503,8 +515,13 @@ export class App {
   /** Open `buf` and scroll to a message, loading history around it if needed. */
   async jumpTo(buf: Buffer, time: number, msgid?: string) {
     this.open(buf);
-    const present = buf.messages.some((l) => (msgid ? l.msgid === msgid : l.time === time));
-    if (!present) await loadAround(this, buf, time, msgid);
+    const present = () => buf.messages.some((l) => (msgid && l.msgid ? l.msgid === msgid : l.time === time));
+    if (!present()) {
+      // A buffer that's still loading its newest lines: let them land first,
+      // so the jump knows where the gap to the present is.
+      await buf.pending;
+      if (!present()) await loadAround(this, buf, time, msgid);
+    }
     buf.focus = { time, msgid, seq: nextSeq() };
   }
 
@@ -778,9 +795,13 @@ export class App {
     return fetchHistory(this, buf, mode);
   }
 
+  fillGap(buf: Buffer, gap: Gap, from: 'after' | 'before'): Promise<void> {
+    return fillGap(this, buf, gap, from);
+  }
+
   /** Search the local log and, where supported, the bouncer. Newest first. */
-  search(query: string, scope: { conn?: Conn; buf?: Buffer }): Promise<SearchHit[]> {
-    return search(this, query, scope);
+  search(query: string, scope: { conn?: Conn; buf?: Buffer }, before?: number): Promise<SearchPage> {
+    return search(this, query, scope, before);
   }
 
   // ─── Incoming ────────────────────────────────────────────────
@@ -854,6 +875,10 @@ export class App {
     if (!this.active) this.open(conn.server);
     if (conn.isControl) return;
     if (!conn.buffersLoaded) await restoreBuffers(this, conn);
+    else if (conn.has('draft/read-marker')) {
+      // Reconnecting: queries already exist, so ensure() won't ask for their markers.
+      for (const b of conn.buffers.values()) if (b.kind === 'query') conn.send(`MARKREAD ${b.name}`);
+    }
     // Rejoin channels on direct connections; bouncers restore them on their own.
     if (!conn.netid) {
       const auto = new Set((conn.config?.autojoin ?? []).map((c) => conn.fold(c.trim())));

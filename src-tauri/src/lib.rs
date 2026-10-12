@@ -2,7 +2,7 @@ use hearth_core::certs::CertInfo;
 use hearth_core::config::{Config, ServerConfig};
 use hearth_core::irc::message::Message;
 use hearth_core::preview::Preview;
-use hearth_core::store::{SavedBuffer, SearchHit};
+use hearth_core::store::{SavedBuffer, SearchHit, SearchQuery};
 use hearth_core::Core;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -76,14 +76,8 @@ async fn local_history(
 }
 
 #[tauri::command]
-async fn search(
-    core: State<'_, Core>,
-    query: String,
-    network: Option<String>,
-    target: Option<String>,
-    limit: usize,
-) -> CmdResult<Vec<SearchHit>> {
-    core.search(query, network, target, limit).await
+async fn search(core: State<'_, Core>, query: SearchQuery) -> CmdResult<Vec<SearchHit>> {
+    core.search(query).await
 }
 
 #[tauri::command]

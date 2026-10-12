@@ -147,6 +147,18 @@ export interface SavedBuffer {
   key: string;
 }
 
+/** A local log search; see `SearchQuery` in store.rs. */
+export interface SearchQuery {
+  text: string;
+  network: string | null;
+  /** Case-folded buffer name. */
+  target: string | null;
+  from: string | null;
+  before: number | null;
+  after: number | null;
+  limit: number;
+}
+
 export interface SearchHit {
   network: string;
   target: string;

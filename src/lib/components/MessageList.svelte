@@ -7,6 +7,7 @@
   import { formatClock } from '../time';
   import type { Line } from '../types';
   import { buildItems, itemIndexOf, MEMBERSHIP, type Item } from '../timeline';
+  import { canFill } from '../history';
   import { Estimates, indexAt, offsets as prefixSums, rangeFor } from '../virtual';
   import Icon from './Icon.svelte';
   import Divider from './Divider.svelte';
@@ -39,7 +40,9 @@
     return lines;
   });
 
-  const items = $derived(buildItems(source, { divider: buf.divider, channel: buf.kind === 'channel', membership: s.membership }));
+  const items = $derived(
+    buildItems(source, { divider: buf.divider, channel: buf.kind === 'channel', membership: s.membership, gaps: buf.gaps }),
+  );
   const index = $derived(new Map(items.map((it, i) => [it.key, i])));
 
   // ── Virtualization ───────────────────────────────────────────
@@ -47,7 +50,7 @@
   // average. `hv` bumps whenever `heights` changes. The category is kept with
   // the height because a row can move between `msg` and `cont` on a rebuild.
   const heights = new Map<string, { h: number; cat: string }>();
-  const est = new Estimates({ day: 41, unread: 19, run: 25, msg: 28, cont: 22, event: 24, block: 160 });
+  const est = new Estimates({ day: 41, unread: 19, run: 25, msg: 28, cont: 22, event: 24, block: 160, gap: 44 });
   let hv = $state(0);
 
   function category(it: Item): string {
@@ -198,7 +201,31 @@
     atBottom = pinned || isAtBottom();
     app.atBottom = atBottom;
     if (el.scrollTop - base < OVERSCAN && buf.history !== 'done' && buf.history !== 'loading' && !filter) app.fetchHistory(buf, 'before');
+    fillGaps();
   }
+
+  /**
+   * Load into any gap that's rendered (on screen or within the overscan),
+   * from the side we're looking at it from, so lines grow away from the view.
+   */
+  function fillGaps() {
+    if (!el || filter || !buf.gaps.length) return;
+    for (let i = start; i < end; i++) {
+      const it = items[i];
+      if (it.kind !== 'gap') continue;
+      const below = base + offs[i] > el.scrollTop + el.clientHeight / 2;
+      app.fillGap(buf, it.gap, below ? 'after' : 'before');
+      return;
+    }
+  }
+
+  // Also when a gap comes into range without a scroll: after a jump, or as a fill lands.
+  $effect(() => {
+    void start;
+    void end;
+    void buf.gaps;
+    untrack(fillGaps);
+  });
 
   // Mark as read while the newest messages are on screen.
   $effect(() => {
@@ -222,11 +249,15 @@
     if (!f) return;
     untrack(() => {
       buf.focus = null;
-      const line = source.find((l) => (f.msgid ? l.msgid === f.msgid : l.time === f.time));
+      // The exact line can be missing (deleted, or past the server's history);
+      // land on the nearest one after it instead, without the flash.
+      const exact = source.find((l) => (f.msgid && l.msgid ? l.msgid === f.msgid : l.time === f.time));
+      const line = exact ?? source.find((l) => l.time >= f.time) ?? source[source.length - 1];
       if (!line || !el) return;
       const i = itemIndexOf(items, line);
       if (i < 0) return;
       scrollToItem(i, el.clientHeight / 2);
+      if (!exact) return;
       flash = line.id;
       setTimeout(() => flash === line.id && (flash = null), 1800);
     });
@@ -491,6 +522,10 @@
     <Divider label={it.label} />
   {:else if it.kind === 'unread'}
     <Divider />
+  {:else if it.kind === 'gap'}
+    <div class="gap">
+      {#if canFill(app, buf)}<span class="spin"></span>Loading messages{:else}Messages here aren't loaded. Reconnect to load them.{/if}
+    </div>
   {:else if it.kind === 'run'}
     <EventRun lines={it.lines} {buf} open={expanded.has(it.key)} {onnick} ontoggle={() => toggleRun(it.key)} />
   {:else}
@@ -575,7 +610,7 @@
 {#if !atBottom}
   <button class="jump" onclick={toBottom}>
     <Icon name="arrowDown" size={14} />
-    {buf.unread > 0 ? `${buf.unread} new` : 'Latest'}
+    {buf.unread > 0 ? `${buf.unread} new` : buf.gaps.length ? 'Jump to present' : 'Latest'}
   </button>
 {/if}
 
@@ -789,7 +824,18 @@
     gap: 10px;
   }
 
-  .loading span {
+  .gap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 20px 12px calc(14px + var(--time-w) + var(--who-w) + 24px);
+    border-block: 1px dashed var(--line);
+    color: var(--text-3);
+    font-size: 13px;
+  }
+
+  .loading span,
+  .gap .spin {
     width: 12px;
     height: 12px;
     border-radius: 50%;

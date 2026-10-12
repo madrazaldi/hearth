@@ -43,8 +43,8 @@ CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. Re
 **Frontend (`src/lib`)**
 - `state.svelte.ts`: the `App`, `Conn` and `Buffer` classes using `$state` runes, a single `app` instance.
 - `incoming.ts`: turns each server message into state changes (`handleMessage`, `historyLine`).
-- `history.ts`: CHATHISTORY paging with the local-log fallback, and `mergeLines` (history dedupe).
-- `search.ts`: search across the local FTS log and `soju.im/search`, deduped and newest first.
+- `history.ts`: CHATHISTORY paging with the local-log fallback, `mergeLines` (history dedupe), and gaps: `loadAround` for jumps, `addWindow`/`fillGap` for the unloaded stretch between a jump and the present.
+- `search.ts`: search across the local FTS log and `soju.im/search`, deduped and newest first. `parseQuery` handles `from:`/`in:`/date filters; `mergePages` pages across sources. soju requires `in=`, so it falls back to one SEARCH per buffer.
 - `saved.ts`: saving and restoring the buffer list, and rejoin commands.
 - `monitor.ts`: MONITOR subscriptions and the watch list.
 - `unread.ts`: unread and highlight counts, and read markers.

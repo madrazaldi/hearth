@@ -11,6 +11,7 @@
     "core:window:allow-is-focused",
     "notification:default",
     "opener:allow-open-url",
+    "opener:allow-default-urls",
     "updater:default",
     "process:allow-restart"
   ]
