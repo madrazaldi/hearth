@@ -6,7 +6,7 @@ mod common;
 use common::*;
 use hearth_core::config::{SaslMechanism, ServerConfig};
 use hearth_core::irc::events::Event;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 
