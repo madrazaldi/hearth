@@ -6,6 +6,8 @@ resolver = "2"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.90"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/madrazaldi/hearth"
 
 [profile.release]
 lto = "thin"

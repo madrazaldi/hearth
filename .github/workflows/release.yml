@@ -1,7 +1,8 @@
 name: Release
 
-# Builds installers for every platform into a draft GitHub Release, together
-# with the updater's latest.json: the Tauri app for Windows and Linux.
+# Runs CI, then builds installers for Windows, Linux and macOS into a draft
+# GitHub Release, together with the updater's latest.json. The release notes
+# are generated from the commits since the previous tag (cliff.toml).
 # Publish the draft to ship it: the in-app
 # updater reads releases/latest, which never points at a draft.
 #
@@ -9,6 +10,8 @@ name: Release
 # (unsigned) builds:
 #   updater:  TAURI_SIGNING_PRIVATE_KEY [+ TAURI_SIGNING_PRIVATE_KEY_PASSWORD]
 #   Windows:  WINDOWS_CERTIFICATE (base64 .pfx), WINDOWS_CERTIFICATE_PASSWORD
+#   macOS:    APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
+#             APPLE_SIGNING_IDENTITY [+ APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID to notarize]
 
 on:
   push:
@@ -23,12 +26,27 @@ permissions:
   contents: write
 
 jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   create-release:
+    needs: ci
     runs-on: ubuntu-latest
     outputs:
       id: ${{ steps.release.outputs.id }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generate release notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          # A tag run takes that tag's commits; a manual run takes everything since the last tag.
+          args: ${{ github.ref_type == 'tag' && '--current' || '--unreleased' }} --strip all
+        env:
+          OUTPUT: CHANGES.md
+          GITHUB_REPO: ${{ github.repository }}
       - name: Create draft release
         id: release
         env:
@@ -53,9 +71,19 @@ jobs:
             echo "::error::A release for $tag already exists; delete the draft to rebuild it"
             exit 1
           fi
+          cat CHANGES.md - > notes.md <<'EOF'
+
+          ### Install
+
+          - **Windows:** the `.msi` or `-setup.exe` installer.
+          - **macOS:** the universal `.dmg` (Apple silicon and Intel). Builds that are not notarized need right-click → Open on first launch, or `xattr -dr com.apple.quarantine /Applications/Hearth.app`.
+          - **Linux:** the `.AppImage`, `.deb` or `.rpm`.
+
+          Installed copies update themselves from Settings › General.
+          EOF
           id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
             -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" -f name="Hearth $version" \
-            -F draft=true -F generate_release_notes=true --jq .id)
+            -F body=@notes.md -F draft=true --jq .id)
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
   build:
@@ -69,6 +97,9 @@ jobs:
             args: ''
           - os: windows-latest
             args: ''
+          # One universal bundle for Apple silicon and Intel; the updater serves it to both.
+          - os: macos-latest
+            args: '--target universal-apple-darwin'
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -81,6 +112,8 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@v2
       - run: bun install --frozen-lockfile
 
@@ -95,6 +128,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           put() {
             local d="EOF_$RANDOM$RANDOM"
@@ -117,6 +156,24 @@ jobs:
               echo "wincert=true" >> "$GITHUB_OUTPUT"
             else
               echo "::warning::Windows signing secrets not set: building unsigned installers"
+            fi
+          fi
+
+          # tauri-action signs, and notarizes, when these are in the environment.
+          if [ "$RUNNER_OS" = macOS ]; then
+            if [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+              put APPLE_CERTIFICATE "$APPLE_CERTIFICATE"
+              put APPLE_CERTIFICATE_PASSWORD "$APPLE_CERTIFICATE_PASSWORD"
+              put APPLE_SIGNING_IDENTITY "$APPLE_SIGNING_IDENTITY"
+              if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+                put APPLE_ID "$APPLE_ID"
+                put APPLE_PASSWORD "$APPLE_PASSWORD"
+                put APPLE_TEAM_ID "$APPLE_TEAM_ID"
+              else
+                echo "::warning::Apple notarization secrets not set: signing without notarizing"
+              fi
+            else
+              echo "::warning::Apple signing secrets not set: building an unsigned app"
             fi
           fi
 

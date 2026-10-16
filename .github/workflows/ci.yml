@@ -4,10 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow runs these checks before it builds anything.
+  workflow_call:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   frontend:
@@ -16,6 +21,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      - name: Check versions agree
+        run: bun scripts/version.mjs
       - run: bun run check
       - run: bun run test
 
@@ -42,3 +49,23 @@ jobs:
         run: mkdir -p dist && touch dist/index.html
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+
+  # Builds with the oldest supported toolchain, so rust-version in Cargo.toml stays honest.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev
+      - name: Read rust-version
+        id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Stub frontend dist
+        run: mkdir -p dist && touch dist/index.html
+      - run: cargo check --workspace --all-targets --locked

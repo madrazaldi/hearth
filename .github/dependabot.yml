@@ -1,0 +1,28 @@
+# Monthly, grouped so a month's routine bumps arrive as one PR per ecosystem.
+# tauri-plugin-process and tauri-plugin-updater must stay on the same minor as
+# their npm packages (see src-tauri/Cargo.toml), so bump those pairs together.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      cargo:
+        update-types: [minor, patch]
+
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      npm:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ['*']

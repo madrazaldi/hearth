@@ -1,0 +1,16 @@
+name: Feature request
+description: Suggest an improvement or an IRCv3 extension to support
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like Hearth to do?
+      description: The problem you're running into, and how you'd like it solved.
+    validations:
+      required: true
+  - type: input
+    id: spec
+    attributes:
+      label: Related spec
+      description: An IRCv3 spec or bouncer extension, if there is one.
