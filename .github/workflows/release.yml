@@ -35,7 +35,7 @@ jobs:
     outputs:
       id: ${{ steps.release.outputs.id }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Generate release notes
@@ -102,7 +102,7 @@ jobs:
             args: '--target universal-apple-darwin'
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -196,7 +196,7 @@ jobs:
             timestampUrl = 'http://timestamp.digicert.com'
           } } } | ConvertTo-Json -Depth 5 | Set-Content src-tauri/tauri.windows.conf.json
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
