@@ -28,7 +28,7 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 sha2 = "0.10.9"
 hmac = "0.12.1"
-pbkdf2 = "0.12.2"
+pbkdf2 = "0.13.0"
 rcgen = "0.14.7"
 getrandom = "0.4.3"
 url = "2.5.8"
