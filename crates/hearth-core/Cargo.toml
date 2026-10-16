@@ -26,9 +26,9 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 uuid = { version = "1", features = ["v4"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
-sha2 = "0.10.9"
-hmac = "0.12.1"
-pbkdf2 = "0.12.2"
+sha2 = "0.11"
+hmac = "0.13"
+pbkdf2 = "0.13"
 rcgen = "0.14.7"
 getrandom = "0.4.3"
 url = "2.5.8"
