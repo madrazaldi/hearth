@@ -4,6 +4,8 @@ description = "Hearth's IRC engine: connections, storage and the command API sha
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [lib]
 name = "hearth_core"

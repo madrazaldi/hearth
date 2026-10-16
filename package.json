@@ -1,14 +1,17 @@
 {
   "name": "hearth",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "bump": "bun scripts/version.mjs",
+    "screenshots": "bun scripts/screenshots.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
@@ -16,6 +19,7 @@
     "@tsconfig/svelte": "^5.0.8",
     "@types/node": "^24.13.3",
     "happy-dom": "^21.0.1",
+    "playwright-core": "^1",
     "svelte": "^5.57.0",
     "svelte-check": "^4.7.6",
     "typescript": "~6.0.2",

@@ -19,11 +19,12 @@ bun run check                  # svelte-check + tsc — must report 0 errors
 bun run test                   # Vitest
 cargo test --workspace         # unit tests + crates/hearth-core/tests
 cargo clippy --workspace --all-targets -- -D warnings   # CI runs with -D warnings
+bun run screenshots            # regenerate docs/screenshots (needs `bun run dev` running)
 ```
 
 Run a single test: `bun x vitest run -t "name"` / `cargo test name`. Headless backend smoke test: `HEARTH_HOST=… HEARTH_NICK=… cargo run -p hearth-core --example probe`.
 
-CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. Releases come from `.github/workflows/release.yml` on a `v*` tag (see README "Releasing"). Never commit the updater private key (`~/.tauri/hearth-updater.key`). Releases ship Tauri bundles on Windows/Linux. The frontend updater lives in `src/lib/updater.svelte.ts`, and `mock.ts` fakes its `plugin:updater|*` calls. MSRV is `rust-version` in the root `Cargo.toml` (1.90); clippy lints depend on it.
+CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. Releases come from `.github/workflows/release.yml` on a `v*` tag (see README "Releasing"): it reruns CI, then builds Windows, Linux and universal macOS bundles into a draft release with git-cliff notes (`cliff.toml`). Bump versions with `bun run bump <x.y.z>`, which keeps `tauri.conf.json`, the root `Cargo.toml` and `package.json` in sync (CI checks this). Use conventional commit prefixes; the release notes are grouped by them. Never commit the updater private key (`~/.tauri/hearth-updater.key`). The frontend updater lives in `src/lib/updater.svelte.ts`, and `mock.ts` fakes its `plugin:updater|*` calls. MSRV is `rust-version` in the root `Cargo.toml` (1.90); clippy lints depend on it.
 
 ## Architecture
 
