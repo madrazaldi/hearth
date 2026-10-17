@@ -458,8 +458,8 @@
 
   .box:focus-within {
     box-shadow:
-      0 0 0 1px color-mix(in oklab, var(--accent) 45%, var(--line-strong)) inset,
-      0 0 0 3px var(--accent-soft);
+      0 0 0 1px color-mix(in oklab, var(--brand) 45%, var(--line-strong)) inset,
+      0 0 0 3px var(--brand-soft);
   }
 
   .nickname {
@@ -505,7 +505,7 @@
     margin: 0 6px;
     border-radius: 50%;
     border: 1.5px solid var(--line-strong);
-    border-top-color: var(--accent);
+    border-top-color: var(--brand);
     animation: spin 0.8s linear infinite;
   }
 
@@ -568,9 +568,9 @@
     display: grid;
     place-items: center;
     border-radius: 10px;
-    border: 1.5px dashed var(--accent);
-    background: color-mix(in oklab, var(--bg) 85%, var(--accent));
-    color: var(--accent);
+    border: 1.5px dashed var(--brand);
+    background: color-mix(in oklab, var(--bg) 85%, var(--brand));
+    color: var(--brand);
     font-size: 13px;
     font-weight: 500;
   }

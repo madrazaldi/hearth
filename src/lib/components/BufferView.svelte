@@ -253,7 +253,7 @@
   }
 
   .filter:focus-within {
-    box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 60%, var(--line)) inset, 0 0 0 3px var(--accent-soft);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--brand) 60%, var(--line)) inset, 0 0 0 3px var(--brand-soft);
   }
 
   .filter input {

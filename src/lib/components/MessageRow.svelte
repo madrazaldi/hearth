@@ -198,8 +198,8 @@
   }
 
   .chip.mine {
-    background: var(--accent-soft);
-    box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 50%, transparent) inset;
+    background: var(--brand-soft);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--brand) 50%, transparent) inset;
   }
 
   .chip:not(:disabled):hover {

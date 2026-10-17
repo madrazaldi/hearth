@@ -177,8 +177,8 @@
   }
 
   .actions button:hover {
-    background: var(--accent);
-    color: var(--accent-text);
+    background: var(--brand);
+    color: var(--brand-text);
   }
 
   .actions .danger {

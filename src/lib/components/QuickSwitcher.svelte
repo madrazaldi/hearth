@@ -251,8 +251,8 @@
     height: 17px;
     padding: 0 5px;
     border-radius: 9px;
-    background: var(--accent);
-    color: var(--accent-text);
+    background: var(--brand);
+    color: var(--brand-text);
     font-size: 11px;
     font-weight: 600;
     display: grid;

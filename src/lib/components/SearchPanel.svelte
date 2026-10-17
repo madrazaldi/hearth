@@ -495,7 +495,7 @@
   }
 
   mark {
-    background: var(--accent-soft);
+    background: var(--brand-soft);
     color: var(--text);
     border-radius: 2px;
   }
@@ -508,7 +508,7 @@
   }
 
   .link {
-    color: var(--accent);
+    color: var(--brand);
   }
 
   footer {

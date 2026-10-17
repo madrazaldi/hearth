@@ -742,7 +742,7 @@
 
   .scroller :global(.hl) {
     background: var(--mention);
-    box-shadow: inset 2px 0 0 var(--accent);
+    box-shadow: inset 2px 0 0 var(--brand);
   }
 
   .scroller :global(.hl:hover) {
@@ -796,7 +796,7 @@
   @keyframes flash {
     0%,
     30% {
-      background: var(--accent-soft);
+      background: var(--brand-soft);
     }
   }
 
@@ -840,7 +840,7 @@
     height: 12px;
     border-radius: 50%;
     border: 1.5px solid var(--line-strong);
-    border-top-color: var(--accent);
+    border-top-color: var(--brand);
     animation: spin 0.8s linear infinite;
   }
 

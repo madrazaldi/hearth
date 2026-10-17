@@ -119,7 +119,7 @@
   }
 
   .hit {
-    color: var(--accent) !important;
+    color: var(--brand) !important;
   }
 
   code {

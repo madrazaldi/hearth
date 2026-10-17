@@ -405,7 +405,7 @@
     justify-content: center;
     padding: 64px 24px 48px;
     background:
-      radial-gradient(1200px 400px at 50% -10%, color-mix(in oklab, var(--accent) 6%, transparent), transparent 70%),
+      radial-gradient(1200px 400px at 50% -10%, color-mix(in oklab, var(--brand) 6%, transparent), transparent 70%),
       var(--bg);
   }
 
@@ -488,8 +488,8 @@
   }
 
   .done .dot {
-    background: var(--accent-soft);
-    color: var(--accent);
+    background: var(--brand-soft);
+    color: var(--brand);
     box-shadow: none;
   }
 
@@ -734,8 +734,8 @@
   }
 
   .done .tick {
-    background: var(--accent-soft);
-    color: var(--accent);
+    background: var(--brand-soft);
+    color: var(--brand);
     box-shadow: none;
   }
 
@@ -744,7 +744,7 @@
     height: 12px;
     border-radius: 50%;
     border: 1.5px solid var(--line-strong);
-    border-top-color: var(--accent);
+    border-top-color: var(--brand);
     animation: spin 800ms linear infinite;
   }
 

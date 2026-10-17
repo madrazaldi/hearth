@@ -482,13 +482,13 @@
 
   .net-item:focus-visible > .net-row > .net,
   .net-item:focus-visible > .group {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--brand);
     outline-offset: -2px;
   }
 
   .grip:focus-visible {
     outline: none;
-    background: var(--accent);
+    background: var(--brand);
     opacity: 0.6;
   }
 
@@ -632,7 +632,7 @@
     bottom: 7px;
     width: 2px;
     border-radius: 2px;
-    background: var(--accent);
+    background: var(--brand);
   }
 
   .buf.muted {
@@ -726,8 +726,8 @@
     height: 17px;
     padding: 0 5px;
     border-radius: 9px;
-    background: var(--accent);
-    color: var(--accent-text);
+    background: var(--brand);
+    color: var(--brand-text);
     font-size: 11px;
     font-weight: 600;
     display: grid;
@@ -851,8 +851,8 @@
   }
 
   .menu button:hover {
-    background: var(--accent);
-    color: var(--accent-text);
+    background: var(--brand);
+    color: var(--brand-text);
   }
 
   .menu hr {

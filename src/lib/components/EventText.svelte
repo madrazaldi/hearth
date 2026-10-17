@@ -52,7 +52,7 @@
   .inline-action {
     margin-left: 8px;
     font-size: 12px;
-    color: var(--accent);
+    color: var(--brand);
   }
 
   .inline-action:hover {

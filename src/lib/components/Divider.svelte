@@ -33,7 +33,7 @@
     position: relative;
     height: 1px;
     margin: 10px 20px 8px 14px;
-    background: var(--accent);
+    background: var(--brand);
     opacity: 0.8;
   }
 
@@ -43,7 +43,7 @@
     top: -8px;
     padding: 0 6px;
     background: var(--bg);
-    color: var(--accent);
+    color: var(--brand);
     font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.08em;

@@ -75,7 +75,7 @@
     border-radius: 2px;
   }
   .link {
-    color: var(--accent);
+    color: var(--brand);
     text-decoration: none;
     word-break: break-all;
     cursor: pointer;

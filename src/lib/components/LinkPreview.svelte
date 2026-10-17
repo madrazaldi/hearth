@@ -117,8 +117,8 @@
     display: grid;
     place-items: center;
     border-radius: 6px;
-    color: var(--accent);
-    background: var(--accent-soft);
+    color: var(--brand);
+    background: var(--brand-soft);
   }
 
   .file-meta {
@@ -153,7 +153,7 @@
     gap: 12px;
     padding: 10px 12px;
     align-items: flex-start;
-    border-left: 3px solid var(--accent);
+    border-left: 3px solid var(--brand);
     background: var(--bg-side);
   }
 
@@ -177,7 +177,7 @@
   .title {
     font-weight: 600;
     font-size: 13.5px;
-    color: var(--accent);
+    color: var(--brand);
   }
 
   .desc {
