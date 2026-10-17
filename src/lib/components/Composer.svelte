@@ -8,12 +8,17 @@
   import { stripFormatting } from '../format';
   import { nickHue } from '../nickcolor';
   import Icon from './Icon.svelte';
+  import { cn } from '$lib/utils';
+  import * as InputGroup from '$lib/components/ui/input-group';
+  import { Button } from '$lib/components/ui/button';
+  import { Spinner } from '$lib/components/ui/spinner';
+  import * as Tooltip from '$lib/components/ui/tooltip';
 
   let { buf }: { buf: Buffer } = $props();
 
   // svelte-ignore state_referenced_locally
   let text = $state(buf.draft);
-  let ta = $state<HTMLTextAreaElement>();
+  let ta = $state<HTMLTextAreaElement | null>(null);
   let fileInput = $state<HTMLInputElement>();
   let dragging = $state(false);
   let uploading = $state(0);
@@ -24,6 +29,11 @@
   let emojiIndex = $state(0);
   // The colon position whose suggestions Escape closed.
   let emojiDismissed = $state(-1);
+
+  // Suggestion popups float above the box, like a shadcn popover.
+  const suggestClass =
+    'absolute inset-x-4 bottom-[calc(100%-8px)] z-10 grid rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10';
+  const suggestItem = 'flex items-center gap-3.5 rounded-md px-2.5 py-1.5 text-left';
 
   const conn = $derived(buf.conn);
   const filehost = $derived(conn.isupport['soju.im/FILEHOST'] || conn.isupport['FILEHOST'] || '');
@@ -317,12 +327,12 @@
   });
 </script>
 
-<div class="composer" class:dragging>
+<div class="relative px-4 pb-3.5">
   {#if cmdMatches.length}
-    <div class="suggest" role="listbox" aria-label="Commands">
+    <div class={suggestClass} role="listbox" aria-label="Commands">
       {#each cmdMatches as c, i (c.name)}
         <button
-          class:sel={i === cmdIndex}
+          class={cn(suggestItem, i === cmdIndex && 'bg-accent')}
           role="option"
           aria-selected={i === cmdIndex}
           onmousedown={(e) => {
@@ -331,17 +341,17 @@
             ta?.focus({ preventScroll: true });
           }}
         >
-          <span class="mono">{c.usage}</span>
-          <span class="help">{c.help}</span>
+          <span class="mono text-[12.5px] whitespace-nowrap">{c.usage}</span>
+          <span class="truncate text-[12.5px] text-muted-foreground">{c.help}</span>
         </button>
       {/each}
     </div>
   {/if}
   {#if emoji}
-    <div class="suggest" role="listbox" aria-label="Emoji">
+    <div class={suggestClass} role="listbox" aria-label="Emoji">
       {#each emoji.matches as em, i (em.name)}
         <button
-          class:sel={i === emojiIndex}
+          class={cn(suggestItem, i === emojiIndex && 'bg-accent')}
           role="option"
           aria-selected={i === emojiIndex}
           onmousedown={(e) => {
@@ -350,228 +360,84 @@
             ta?.focus({ preventScroll: true });
           }}
         >
-          <span class="emoji" aria-hidden="true">{em.char}</span>
-          <span class="mono">:{em.name}:</span>
+          <span class="w-5 text-center text-base leading-none" aria-hidden="true">{em.char}</span>
+          <span class="mono text-[12.5px]">:{em.name}:</span>
         </button>
       {/each}
     </div>
   {/if}
   {#if buf.replyTo}
     {@const r = buf.replyTo}
-    <div class="replying">
+    <div class="flex items-center gap-2 rounded-t-lg border border-b-0 bg-muted/50 py-1 pr-1.5 pl-3 text-[12.5px] text-muted-foreground">
       <Icon name="reply" size={13} />
-      <span>Replying to <b class="nick" style="--h:{nickHue(r.nick)}">{r.nick}</b></span>
-      <span class="snip">{stripFormatting(r.text)}</span>
-      <button class="icon-btn" title="Cancel reply (Esc)" aria-label="Cancel reply" onclick={() => (buf.replyTo = null)}><Icon name="x" size={13} /></button>
+      <span>Replying to <b class="nick font-semibold" style="--h:{nickHue(r.nick)}">{r.nick}</b></span>
+      <span class="min-w-0 flex-1 truncate">{stripFormatting(r.text)}</span>
+      <Button variant="ghost" size="icon-xs" title="Cancel reply (Esc)" aria-label="Cancel reply" onclick={() => (buf.replyTo = null)}><Icon name="x" size={13} /></Button>
     </div>
   {/if}
-  <div class="box" class:with-reply={!!buf.replyTo}>
-    <button class="nickname mono" title="Change nickname" aria-label="Your nickname, {conn.nick}. Change nickname" onclick={() => (text = `/nick ${conn.nick}`)}>{conn.nick || '…'}</button>
-    <textarea
-      bind:this={ta}
+  <InputGroup.Root class={cn('items-end', buf.replyTo && 'rounded-t-none')}>
+    <InputGroup.Addon class="self-end py-1">
+      <InputGroup.Button
+        class="mono max-w-36 justify-start text-xs font-normal text-muted-foreground"
+        title="Change nickname"
+        aria-label="Your nickname, {conn.nick}. Change nickname"
+        onclick={() => (text = `/nick ${conn.nick}`)}
+      >
+        <span class="truncate">{conn.nick || '…'}</span>
+      </InputGroup.Button>
+    </InputGroup.Addon>
+    <InputGroup.Textarea
+      bind:ref={ta}
       bind:value={text}
-      rows="1"
+      rows={1}
       {placeholder}
       aria-label={placeholder}
       spellcheck={app.settings.spellcheck}
       autocomplete="off"
       {...{ autocorrect: 'off' }}
       autocapitalize="off"
+      class="field-sizing-fixed max-h-[40vh] min-h-8 py-[7px] leading-[1.45] select-text md:text-(length:--fs)"
+      style="font-size:var(--fs)"
       onkeydown={onKeydown}
       onkeyup={() => ta && (caret = ta.selectionStart)}
       onclick={() => ta && (caret = ta.selectionStart)}
       oninput={onInput}
       onpaste={onPaste}
-    ></textarea>
-    {#if uploading}
-      <span class="uploading" title="Uploading" role="status" aria-label="Uploading"></span>
+    />
+    {#if uploading || (filehost && buf.kind !== 'server')}
+      <InputGroup.Addon align="inline-end" class="self-end py-1">
+        {#if uploading}
+          <Spinner class="size-3.5 text-muted-foreground" aria-label="Uploading" />
+        {/if}
+        {#if filehost && buf.kind !== 'server'}
+          <Tooltip.Root>
+            <Tooltip.Trigger>
+              {#snippet child({ props })}
+                <InputGroup.Button {...props} size="icon-xs" aria-label="Attach file" onclick={() => fileInput?.click()}>
+                  <Icon name="clip" />
+                </InputGroup.Button>
+              {/snippet}
+            </Tooltip.Trigger>
+            <Tooltip.Content side="top">Attach file</Tooltip.Content>
+          </Tooltip.Root>
+          <input
+            type="file"
+            hidden
+            multiple
+            bind:this={fileInput}
+            onchange={(e) => {
+              const input = e.currentTarget;
+              [...(input.files ?? [])].forEach(uploadBytes);
+              input.value = '';
+            }}
+          />
+        {/if}
+      </InputGroup.Addon>
     {/if}
-    {#if filehost && buf.kind !== 'server'}
-      <button class="icon-btn" title="Attach file" aria-label="Attach file" onclick={() => fileInput?.click()}><Icon name="clip" /></button>
-      <input
-        type="file"
-        hidden
-        multiple
-        bind:this={fileInput}
-        onchange={(e) => {
-          const input = e.currentTarget;
-          [...(input.files ?? [])].forEach(uploadBytes);
-          input.value = '';
-        }}
-      />
-    {/if}
-  </div>
+  </InputGroup.Root>
   {#if dragging}
-    <div class="drop">Drop to upload to {conn.name}</div>
+    <div class="absolute inset-x-4 top-0 bottom-3.5 grid place-items-center rounded-lg border-2 border-dashed border-brand bg-background/85 text-[13px] font-medium text-brand">
+      Drop to upload to {conn.name}
+    </div>
   {/if}
 </div>
-
-<style>
-  .composer {
-    position: relative;
-    padding: 0 16px 14px;
-  }
-
-  .box {
-    display: flex;
-    align-items: flex-end;
-    gap: 10px;
-    padding: 6px 6px 6px 12px;
-    background: var(--bg-raised);
-    border-radius: 10px;
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
-    transition: box-shadow 120ms;
-  }
-
-  .replying {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 6px 5px 12px;
-    font-size: 12.5px;
-    color: var(--text-3);
-    background: var(--bg-side);
-    border-radius: 10px 10px 0 0;
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
-  }
-
-  .replying b {
-    font-weight: 600;
-  }
-
-  .replying .snip {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .replying .icon-btn {
-    width: 22px;
-    height: 22px;
-  }
-
-  .box.with-reply {
-    border-radius: 0 0 10px 10px;
-  }
-
-  .box:focus-within {
-    box-shadow:
-      0 0 0 1px color-mix(in oklab, var(--brand) 45%, var(--line-strong)) inset,
-      0 0 0 3px var(--brand-soft);
-  }
-
-  .nickname {
-    flex: none;
-    height: 28px;
-    font-size: 12px;
-    color: var(--text-3);
-    padding: 0 8px 0 0;
-    border-right: 1px solid var(--line);
-    max-width: 140px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .nickname:hover {
-    color: var(--text);
-  }
-
-  textarea {
-    flex: 1;
-    min-height: 28px;
-    max-height: 40vh;
-    padding: 4px 0;
-    border: 0;
-    outline: none;
-    resize: none;
-    background: none;
-    line-height: 1.45;
-    font-size: var(--fs);
-    user-select: text;
-    -webkit-user-select: text;
-  }
-
-  textarea::placeholder {
-    color: var(--text-4);
-  }
-
-  .uploading {
-    align-self: center;
-    width: 14px;
-    height: 14px;
-    margin: 0 6px;
-    border-radius: 50%;
-    border: 1.5px solid var(--line-strong);
-    border-top-color: var(--brand);
-    animation: spin 0.8s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  .suggest {
-    position: absolute;
-    left: 16px;
-    right: 16px;
-    bottom: calc(100% - 8px);
-    padding: 4px;
-    background: var(--bg-raised);
-    border-radius: 10px;
-    box-shadow: var(--shadow);
-    display: grid;
-    z-index: 10;
-  }
-
-  .suggest button {
-    display: flex;
-    align-items: baseline;
-    gap: 14px;
-    padding: 6px 10px;
-    border-radius: 6px;
-    text-align: left;
-  }
-
-  .suggest button.sel {
-    background: var(--bg-active);
-  }
-
-  .suggest .mono {
-    font-size: 12.5px;
-    color: var(--text);
-    white-space: nowrap;
-  }
-
-  .suggest .emoji {
-    width: 20px;
-    font-size: 16px;
-    line-height: 1;
-    text-align: center;
-  }
-
-  .suggest .help {
-    font-size: 12.5px;
-    color: var(--text-3);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .drop {
-    position: absolute;
-    inset: 0 16px 14px;
-    display: grid;
-    place-items: center;
-    border-radius: 10px;
-    border: 1.5px dashed var(--brand);
-    background: color-mix(in oklab, var(--bg) 85%, var(--brand));
-    color: var(--brand);
-    font-size: 13px;
-    font-weight: 500;
-  }
-</style>

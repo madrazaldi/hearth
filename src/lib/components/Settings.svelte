@@ -11,7 +11,13 @@
   import AliasEditor from './AliasEditor.svelte';
   import ShortcutList from './ShortcutList.svelte';
   import { updater } from '../updater.svelte';
-  import { modal } from '../a11y';
+  import * as Dialog from '$lib/components/ui/dialog';
+  import * as Card from '$lib/components/ui/card';
+  import * as Field from '$lib/components/ui/field';
+  import { Button } from '$lib/components/ui/button';
+  import { Badge } from '$lib/components/ui/badge';
+  import { Input } from '$lib/components/ui/input';
+  import { Separator } from '$lib/components/ui/separator';
 
   const tabs = [
     { id: 'servers', label: 'Servers', icon: 'server' },
@@ -23,6 +29,7 @@
     { id: 'shortcuts', label: 'Shortcuts', icon: 'layers' },
   ];
 
+  const uid = $props.id();
   const tab = $derived(app.settingsOpen?.tab ?? 'appearance');
   const editing = $derived(app.settingsOpen?.serverId);
   const editServer = $derived<ServerConfig | null>(
@@ -31,7 +38,32 @@
   let words = $state(app.settings.highlightWords.join(', '));
   let newIgnore = $state('');
   let confirmClear = $state(false);
+  let nav = $state<HTMLElement | null>(null);
   const bouncer = $derived(editing && editing !== 'new' ? app.conns.get(editing) : undefined);
+
+  const title = $derived.by(() => {
+    if (tab === 'servers' && editServer) return editing === 'new' ? 'Add a server' : `Edit ${editServer.name}`;
+    return tabs.find((t) => t.id === tab)?.label ?? 'Settings';
+  });
+
+  const descriptions: Record<string, string> = {
+    servers: 'Networks and bouncers Hearth connects to. A soju bouncer expands into all of its networks automatically.',
+    general: 'Startup behavior, presence and updates.',
+    appearance: 'Theme, message layout and how the conversation is displayed.',
+    notifications: 'Choose what gets your attention.',
+    privacy: 'What Hearth stores on this computer and what it fetches on your behalf.',
+    shortcuts: 'Keyboard shortcuts available throughout Hearth.',
+  };
+
+  // Status colours are listed in full so Tailwind sees the class names.
+  const dots: Record<string, string> = {
+    connected: 'bg-ok',
+    connecting: 'bg-warn',
+    registering: 'bg-warn',
+    disconnected: 'bg-destructive',
+  };
+
+  const rows = 'flex flex-col divide-y divide-border *:py-3.5 *:first:pt-0 *:last:pb-0';
 
   async function clearLogs() {
     confirmClear = false;
@@ -78,551 +110,327 @@
   }
 </script>
 
-<div class="scrim" onclick={close} role="presentation">
-  <div
-    class="sheet"
-    onclick={(e) => e.stopPropagation()}
-    role="dialog"
-    aria-modal="true"
-    aria-label="Settings"
-    tabindex="-1"
-    onkeydown={() => {}}
-    use:modal={{ onclose: close }}
+{#snippet code(text: string)}<code class="font-mono text-[11px] whitespace-nowrap text-foreground/80">{text}</code>{/snippet}
+
+<Dialog.Root open onOpenChange={(o) => !o && close()}>
+  <Dialog.Content
+    class="h-[min(640px,88vh)] w-full grid-cols-[208px_minmax(0,1fr)] grid-rows-1 gap-0 overflow-hidden p-0 sm:max-w-4xl"
+    onOpenAutoFocus={(e) => {
+      // Land on the current section so arrow/tab navigation starts there.
+      const el = nav?.querySelector<HTMLElement>('[data-autofocus]');
+      if (!el) return;
+      e.preventDefault();
+      el.focus({ preventScroll: true });
+    }}
   >
-    <nav aria-label="Settings sections">
-      <p class="eyebrow" aria-hidden="true">Settings</p>
+    <nav bind:this={nav} aria-label="Settings sections" class="flex min-h-0 flex-col gap-0.5 border-r border-border bg-sidebar p-3 text-sidebar-foreground">
+      <Dialog.Title class="px-2 pt-1 pb-2 text-xs leading-none font-medium text-muted-foreground">Settings</Dialog.Title>
       {#each tabs as t (t.id)}
-        <button class:on={tab === t.id} aria-current={tab === t.id ? 'page' : undefined} data-autofocus={tab === t.id || undefined} onclick={() => go(t.id)}>
+        <Button
+          variant="ghost"
+          class="h-8 justify-start gap-2.5 px-2 text-[13.5px] font-normal text-muted-foreground hover:bg-accent hover:text-accent-foreground {tab === t.id ? 'bg-accent text-accent-foreground' : ''}"
+          aria-current={tab === t.id ? 'page' : undefined}
+          data-autofocus={tab === t.id || undefined}
+          onclick={() => go(t.id)}
+        >
           <Icon name={t.icon} size={15} />{t.label}
-        </button>
+        </Button>
       {/each}
-      <div class="about">
-        <p>Hearth <span>{updater.current || '0.1.0'}</span></p>
-      </div>
+      <p class="mt-auto px-2 text-xs text-muted-foreground">Hearth <span class="mono text-muted-foreground/70">{updater.current || '0.1.0'}</span></p>
     </nav>
 
-    <section>
-      <button class="icon-btn close" onclick={close} aria-label="Close"><Icon name="x" /></button>
-
-      {#if tab === 'servers'}
-        {#if editServer}
-          <h2>{editing === 'new' ? 'Add a server' : `Edit ${editServer.name}`}</h2>
-          {#key editing}
-            <ServerForm
-              server={editServer}
-              submitLabel={editing === 'new' ? 'Add & connect' : 'Save & reconnect'}
-              oncancel={() => go('servers')}
-              ondelete={editing !== 'new'
-                ? async () => {
-                    await app.deleteServer(editServer.id);
-                    go('servers');
-                  }
-                : undefined}
-              onsave={async (s) => {
-                await app.saveServer(s, true);
-                go('servers');
-              }}
-            />
-          {/key}
-          {#if bouncer?.isControl}
-            <BouncerNetworks conn={bouncer} />
-          {/if}
-          {#if editing !== 'new'}
-            {#key editing}
-              <NetworkHighlights serverId={editServer.id} nick={editServer.nick} />
-            {/key}
-          {/if}
+    <section class="flex min-h-0 min-w-0 flex-col">
+      <header class="grid gap-1 border-b border-border px-8 pt-6 pr-14 pb-4">
+        <h2 class="m-0 truncate text-lg font-semibold tracking-tight">{title}</h2>
+        {#if tab === 'aliases'}
+          <p class="m-0 text-[13px] text-muted-foreground">
+            Your own slash commands. {@render code('/j')} → {@render code('/join $1')}, {@render code('/ns')} → {@render code('/msg NickServ $*')}. They show up in command suggestions and Tab completion.
+          </p>
+        {:else if tab === 'servers' && editServer}
+          <p class="m-0 text-[13px] text-muted-foreground">Connection, identity and authentication for this network.</p>
         {:else}
-          <h2>Servers</h2>
-          <p class="lede">Networks and bouncers Hearth connects to. A soju bouncer expands into all of its networks automatically.</p>
-          <div class="servers">
-            {#each app.servers as s (s.id)}
-              {@const st = statusOf(s.id)}
-              <div class="server">
-                <span class="dot {st}"></span>
-                <div class="server-main">
-                  <div class="server-name">{s.name}</div>
-                  <div class="server-host mono">{s.websocket ? (s.tls ? 'wss://' : 'ws://') : ''}{s.host}:{s.port}{s.websocket ? s.websocketPath : ''}</div>
-                </div>
-                {#if st === 'offline' || st === 'disconnected'}
-                  <button class="btn ghost" onclick={() => api.connect(s.id)}>Connect</button>
-                {:else}
-                  <button class="btn ghost" onclick={() => api.disconnect(s.id)}>Disconnect</button>
-                {/if}
-                <button class="btn" onclick={() => go('servers', s.id)}>Edit</button>
-              </div>
-            {/each}
-          </div>
-          <button class="btn primary add" onclick={() => go('servers', 'new')}><Icon name="plus" size={14} />Add server</button>
+          <p class="m-0 text-[13px] text-muted-foreground">{descriptions[tab]}</p>
         {/if}
-      {:else if tab === 'general'}
-        <h2>General</h2>
-        <div class="rows">
-          <Switch
-            bind:checked={() => app.settings.closeToTray, (v) => app.updateSettings({ closeToTray: v })}
-            label="Keep running when the window is closed"
-            hint="Hearth stays connected in the menu bar or system tray. Quit from the tray icon."
-          />
-          <div class="row">
-            <div>
-              <div class="label">Mark me away</div>
-              <div class="hint">When Hearth has been in the background this long. You're marked back when you return.</div>
-            </div>
-            <Segmented label="Mark me away after"
-              bind:value={autoAway.get, autoAway.set}
-              options={[
-                { value: 0, label: 'Never' },
-                { value: 10, label: '10 min' },
-                { value: 30, label: '30 min' },
-                { value: 60, label: '1 hour' },
-              ]}
-            />
-          </div>
-          <Switch
-            bind:checked={() => app.settings.spellcheck, (v) => app.updateSettings({ spellcheck: v })}
-            label="Check spelling as I type"
-            hint="Underlines misspelled words in the message box. Autocorrect and auto-capitalization stay off."
-          />
-          <Switch
-            bind:checked={() => app.settings.checkUpdates, (v) => app.updateSettings({ checkUpdates: v })}
-            label="Check for updates automatically"
-            hint="Looks for a new release when Hearth starts and every few hours. Nothing is installed without asking."
-          />
-          <div class="row">
-            <div>
-              <div class="label">Hearth {updater.current}</div>
-              <div class="hint" class:error={updater.phase === 'error'}>
-                {#if updater.phase === 'checking'}
-                  Checking for updates…
-                {:else if updater.phase === 'current'}
-                  You're up to date.
-                {:else if updater.phase === 'available'}
-                  Version {updater.version} is available.
-                {:else if updater.phase === 'installing'}
-                  Installing {updater.version}{updater.progress != null ? ` · ${Math.round(updater.progress * 100)}%` : '…'}
-                {:else if updater.phase === 'error'}
-                  Couldn't update: {updater.error}
-                {:else}
-                  Updates come from GitHub releases and are verified before installing.
-                {/if}
-              </div>
-            </div>
-            {#if updater.phase === 'available' || updater.phase === 'installing'}
-              <button class="btn primary" disabled={updater.busy} onclick={() => updater.installAndRestart()}>Install and restart</button>
+      </header>
+
+      <div class="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+        <div class="max-w-xl">
+          {#if tab === 'servers'}
+            {#if editServer}
+              {#key editing}
+                <ServerForm
+                  server={editServer}
+                  submitLabel={editing === 'new' ? 'Add & connect' : 'Save & reconnect'}
+                  oncancel={() => go('servers')}
+                  ondelete={editing !== 'new'
+                    ? async () => {
+                        await app.deleteServer(editServer.id);
+                        go('servers');
+                      }
+                    : undefined}
+                  onsave={async (s) => {
+                    await app.saveServer(s, true);
+                    go('servers');
+                  }}
+                />
+              {/key}
+              {#if bouncer?.isControl}
+                <Separator class="my-6" />
+                <BouncerNetworks conn={bouncer} />
+              {/if}
+              {#if editing !== 'new'}
+                <Separator class="my-6" />
+                {#key editing}
+                  <NetworkHighlights serverId={editServer.id} nick={editServer.nick} />
+                {/key}
+              {/if}
             {:else}
-              <button class="btn" disabled={updater.busy} onclick={() => updater.check()}>Check now</button>
-            {/if}
-          </div>
-        </div>
-      {:else if tab === 'privacy'}
-        <h2>Privacy & data</h2>
-        <div class="rows">
-          <Switch
-            bind:checked={() => app.settings.storeLogs, (v) => app.updateSettings({ storeLogs: v })}
-            label="Save messages on this computer"
-            hint="Keeps scrollback across restarts and makes messages searchable. Stored only on this device."
-          />
-          <div class="row">
-            <div>
-              <div class="label">Saved messages</div>
-              <div class="hint">Deleting them doesn't affect history kept by a server or bouncer.</div>
-            </div>
-            {#if confirmClear}
-              <button class="btn danger" onclick={clearLogs}>Delete all?</button>
-              <button class="btn ghost" onclick={() => (confirmClear = false)}>Cancel</button>
-            {:else}
-              <button class="btn ghost danger" onclick={() => (confirmClear = true)}>Delete saved messages</button>
-            {/if}
-          </div>
-          <Switch
-            bind:checked={() => app.settings.linkPreviews, (v) => app.updateSettings({ linkPreviews: v })}
-            label="Show link previews"
-            hint="Hearth fetches linked pages and images itself, so those sites see your IP address. Links to local or private addresses are never fetched."
-          />
-          <Switch
-            bind:checked={() => app.settings.loadAvatars, (v) => app.updateSettings({ loadAvatars: v })}
-            label="Show profile pictures"
-            hint="People can publish an avatar on servers that support it. Hearth fetches the image itself, so its host sees your IP address."
-          />
-          {#if app.settings.linkPreviews}
-            <Switch
-              bind:checked={() => app.settings.inlineImages, (v) => app.updateSettings({ inlineImages: v })}
-              label="Show inline images"
-              hint="Image links appear under the message. Images in messages that mention NSFW stay blurred until clicked. Video and audio are only described."
-            />
-            <Switch
-              bind:checked={() => app.settings.autoplayAnimations, (v) => app.updateSettings({ autoplayAnimations: v })}
-              label="Play animations automatically"
-              hint="Otherwise animated images play while the pointer is over them. Never when your system asks for reduced motion."
-            />
-          {/if}
-          <div class="field">
-            <span>Ignored people</span>
-            {#if app.settings.ignores.length}
-              <div class="ignores">
-                {#each app.settings.ignores as mask (mask)}
-                  <div class="ignore">
-                    <span class="mono">{mask}</span>
-                    <button class="icon-btn" title="Stop ignoring" aria-label="Stop ignoring {mask}" onclick={() => app.unignore(mask)}><Icon name="x" size={13} /></button>
-                  </div>
+              <div class="grid gap-2.5">
+                {#each app.servers as s (s.id)}
+                  {@const st = statusOf(s.id)}
+                  <Card.Root size="sm">
+                    <Card.Content class="flex items-center gap-3">
+                      <div class="min-w-0 flex-1">
+                        <div class="truncate text-sm font-medium">{s.name}</div>
+                        <div class="mono truncate text-xs text-muted-foreground">{s.websocket ? (s.tls ? 'wss://' : 'ws://') : ''}{s.host}:{s.port}{s.websocket ? s.websocketPath : ''}</div>
+                      </div>
+                      <Badge variant="outline" class="gap-1.5 text-muted-foreground capitalize">
+                        <span class="size-1.5 rounded-full {dots[st] ?? 'bg-muted-foreground/60'}"></span>{st}
+                      </Badge>
+                      {#if st === 'offline' || st === 'disconnected'}
+                        <Button variant="ghost" size="sm" onclick={() => api.connect(s.id)}>Connect</Button>
+                      {:else}
+                        <Button variant="ghost" size="sm" onclick={() => api.disconnect(s.id)}>Disconnect</Button>
+                      {/if}
+                      <Button variant="outline" size="sm" onclick={() => go('servers', s.id)}>Edit</Button>
+                    </Card.Content>
+                  </Card.Root>
                 {/each}
               </div>
+              <Button class="mt-4" onclick={() => go('servers', 'new')}><Icon name="plus" size={14} />Add server</Button>
             {/if}
-            <form class="add-ignore" onsubmit={addIgnore}>
-              <input class="input mono" bind:value={newIgnore} placeholder="nick or nick!user@host" aria-label="Nick or mask to ignore" spellcheck="false" />
-              <button class="btn" type="submit" disabled={!newIgnore.trim()}>Ignore</button>
-            </form>
-            <small>Hides their messages, notices, invites and reactions everywhere. <code>*</code> and <code>?</code> are wildcards.</small>
-          </div>
-        </div>
-      {:else if tab === 'appearance'}
-        <h2>Appearance</h2>
-        <div class="rows">
-          <div class="row">
-            <div><div class="label">Theme</div></div>
-            <Segmented label="Theme"
-              bind:value={theme.get, theme.set}
-              options={[
-                { value: 'system', label: 'System' },
-                { value: 'light', label: 'Light' },
-                { value: 'dark', label: 'Dark' },
-              ]}
-            />
-          </div>
-          <div class="row">
-            <div>
-              <div class="label">Message layout</div>
-              <div class="hint">Columns aligns nicks in a gutter; compact stacks them above messages.</div>
+          {:else if tab === 'general'}
+            <div class={rows}>
+              <Switch
+                bind:checked={() => app.settings.closeToTray, (v) => app.updateSettings({ closeToTray: v })}
+                label="Keep running when the window is closed"
+                hint="Hearth stays connected in the menu bar or system tray. Quit from the tray icon."
+              />
+              <Field.Field orientation="horizontal" class="has-[>[data-slot=field-content]]:items-center">
+                <Field.Content>
+                  <Field.Title class="text-[13.5px] font-normal">Mark me away</Field.Title>
+                  <Field.Description class="text-xs">When Hearth has been in the background this long. You're marked back when you return.</Field.Description>
+                </Field.Content>
+                <Segmented label="Mark me away after"
+                  bind:value={autoAway.get, autoAway.set}
+                  options={[
+                    { value: 0, label: 'Never' },
+                    { value: 10, label: '10 min' },
+                    { value: 30, label: '30 min' },
+                    { value: 60, label: '1 hour' },
+                  ]}
+                />
+              </Field.Field>
+              <Switch
+                bind:checked={() => app.settings.spellcheck, (v) => app.updateSettings({ spellcheck: v })}
+                label="Check spelling as I type"
+                hint="Underlines misspelled words in the message box. Autocorrect and auto-capitalization stay off."
+              />
+              <Switch
+                bind:checked={() => app.settings.checkUpdates, (v) => app.updateSettings({ checkUpdates: v })}
+                label="Check for updates automatically"
+                hint="Looks for a new release when Hearth starts and every few hours. Nothing is installed without asking."
+              />
+              <Field.Field orientation="horizontal" class="has-[>[data-slot=field-content]]:items-center">
+                <Field.Content>
+                  <Field.Title class="text-[13.5px] font-normal">Hearth {updater.current}</Field.Title>
+                  <Field.Description class="text-xs {updater.phase === 'error' ? 'text-destructive' : ''}">
+                    {#if updater.phase === 'checking'}
+                      Checking for updates…
+                    {:else if updater.phase === 'current'}
+                      You're up to date.
+                    {:else if updater.phase === 'available'}
+                      Version {updater.version} is available.
+                    {:else if updater.phase === 'installing'}
+                      Installing {updater.version}{updater.progress != null ? ` · ${Math.round(updater.progress * 100)}%` : '…'}
+                    {:else if updater.phase === 'error'}
+                      Couldn't update: {updater.error}
+                    {:else}
+                      Updates come from GitHub releases and are verified before installing.
+                    {/if}
+                  </Field.Description>
+                </Field.Content>
+                {#if updater.phase === 'available' || updater.phase === 'installing'}
+                  <Button class="shrink-0" disabled={updater.busy} onclick={() => updater.installAndRestart()}>Install and restart</Button>
+                {:else}
+                  <Button variant="outline" class="shrink-0" disabled={updater.busy} onclick={() => updater.check()}>Check now</Button>
+                {/if}
+              </Field.Field>
             </div>
-            <Segmented label="Message layout"
-              bind:value={layout.get, layout.set}
-              options={[
-                { value: 'columns', label: 'Columns' },
-                { value: 'compact', label: 'Compact' },
-              ]}
-            />
-          </div>
-          <div class="row">
-            <div><div class="label">Text size</div></div>
-            <Segmented label="Text size"
-              bind:value={fontSize.get, fontSize.set}
-              options={[
-                { value: 13, label: 'S' },
-                { value: 14, label: 'M' },
-                { value: 15, label: 'L' },
-                { value: 16, label: 'XL' },
-              ]}
-            />
-          </div>
-          <div class="row">
-            <div><div class="label">Clock</div></div>
-            <Segmented label="Clock"
-              bind:value={clock.get, clock.set}
-              options={[
-                { value: '24h', label: '24-hour' },
-                { value: '12h', label: '12-hour' },
-              ]}
-            />
-          </div>
-          <div class="row">
-            <div>
-              <div class="label">Joins, parts and quits</div>
-              <div class="hint">Collapse folds consecutive events into one line.</div>
+          {:else if tab === 'privacy'}
+            <div class={rows}>
+              <Switch
+                bind:checked={() => app.settings.storeLogs, (v) => app.updateSettings({ storeLogs: v })}
+                label="Save messages on this computer"
+                hint="Keeps scrollback across restarts and makes messages searchable. Stored only on this device."
+              />
+              <Field.Field orientation="horizontal" class="has-[>[data-slot=field-content]]:items-center">
+                <Field.Content>
+                  <Field.Title class="text-[13.5px] font-normal">Saved messages</Field.Title>
+                  <Field.Description class="text-xs">Deleting them doesn't affect history kept by a server or bouncer.</Field.Description>
+                </Field.Content>
+                {#if confirmClear}
+                  <div class="flex shrink-0 gap-2">
+                    <Button variant="destructive" class="bg-destructive text-white hover:bg-destructive/90" onclick={clearLogs}>Delete all?</Button>
+                    <Button variant="ghost" onclick={() => (confirmClear = false)}>Cancel</Button>
+                  </div>
+                {:else}
+                  <Button variant="destructive" class="shrink-0" onclick={() => (confirmClear = true)}>Delete saved messages</Button>
+                {/if}
+              </Field.Field>
+              <Switch
+                bind:checked={() => app.settings.linkPreviews, (v) => app.updateSettings({ linkPreviews: v })}
+                label="Show link previews"
+                hint="Hearth fetches linked pages and images itself, so those sites see your IP address. Links to local or private addresses are never fetched."
+              />
+              <Switch
+                bind:checked={() => app.settings.loadAvatars, (v) => app.updateSettings({ loadAvatars: v })}
+                label="Show profile pictures"
+                hint="People can publish an avatar on servers that support it. Hearth fetches the image itself, so its host sees your IP address."
+              />
+              {#if app.settings.linkPreviews}
+                <Switch
+                  bind:checked={() => app.settings.inlineImages, (v) => app.updateSettings({ inlineImages: v })}
+                  label="Show inline images"
+                  hint="Image links appear under the message. Images in messages that mention NSFW stay blurred until clicked. Video and audio are only described."
+                />
+                <Switch
+                  bind:checked={() => app.settings.autoplayAnimations, (v) => app.updateSettings({ autoplayAnimations: v })}
+                  label="Play animations automatically"
+                  hint="Otherwise animated images play while the pointer is over them. Never when your system asks for reduced motion."
+                />
+              {/if}
+              <Field.Field>
+                <Field.Label for="{uid}-ignore">Ignored people</Field.Label>
+                {#if app.settings.ignores.length}
+                  <ul class="m-0 list-none divide-y divide-border overflow-hidden rounded-lg border border-border p-0">
+                    {#each app.settings.ignores as mask (mask)}
+                      <li class="flex items-center justify-between py-1 pr-1.5 pl-3 text-[12.5px]">
+                        <span class="mono">{mask}</span>
+                        <Button variant="ghost" size="icon-xs" title="Stop ignoring" aria-label="Stop ignoring {mask}" onclick={() => app.unignore(mask)}><Icon name="x" size={13} /></Button>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+                <form class="flex gap-2" onsubmit={addIgnore}>
+                  <Input id="{uid}-ignore" class="flex-1 font-mono" bind:value={newIgnore} placeholder="nick or nick!user@host" aria-label="Nick or mask to ignore" spellcheck="false" />
+                  <Button variant="outline" type="submit" disabled={!newIgnore.trim()}>Ignore</Button>
+                </form>
+                <Field.Description class="text-xs">Hides their messages, notices, invites and reactions everywhere. {@render code('*')} and {@render code('?')} are wildcards.</Field.Description>
+              </Field.Field>
             </div>
-            <Segmented label="Joins, parts and quits"
-              bind:value={membership.get, membership.set}
-              options={[
-                { value: 'show', label: 'Show' },
-                { value: 'collapse', label: 'Collapse' },
-                { value: 'hide', label: 'Hide' },
-              ]}
-            />
-          </div>
-          <Switch bind:checked={() => app.settings.showSeconds, (v) => app.updateSettings({ showSeconds: v })} label="Show seconds in timestamps" />
-          <Switch bind:checked={() => app.settings.nickColors, (v) => app.updateSettings({ nickColors: v })} label="Colored nicknames" />
-          <Switch
-            bind:checked={() => app.settings.showTyping, (v) => app.updateSettings({ showTyping: v })}
-            label="Show when others are typing"
-          />
-          <Switch
-            bind:checked={() => app.settings.sendTyping, (v) => app.updateSettings({ sendTyping: v })}
-            label="Let others see when I'm typing"
-          />
+          {:else if tab === 'appearance'}
+            <div class={rows}>
+              <Field.Field orientation="horizontal" class="has-[>[data-slot=field-content]]:items-center">
+                <Field.Content><Field.Title class="text-[13.5px] font-normal">Theme</Field.Title></Field.Content>
+                <Segmented label="Theme"
+                  bind:value={theme.get, theme.set}
+                  options={[
+                    { value: 'system', label: 'System' },
+                    { value: 'light', label: 'Light' },
+                    { value: 'dark', label: 'Dark' },
+                  ]}
+                />
+              </Field.Field>
+              <Field.Field orientation="horizontal" class="has-[>[data-slot=field-content]]:items-center">
+                <Field.Content>
+                  <Field.Title class="text-[13.5px] font-normal">Message layout</Field.Title>
+                  <Field.Description class="text-xs">Columns aligns nicks in a gutter; compact stacks them above messages.</Field.Description>
+                </Field.Content>
+                <Segmented label="Message layout"
+                  bind:value={layout.get, layout.set}
+                  options={[
+                    { value: 'columns', label: 'Columns' },
+                    { value: 'compact', label: 'Compact' },
+                  ]}
+                />
+              </Field.Field>
+              <Field.Field orientation="horizontal" class="has-[>[data-slot=field-content]]:items-center">
+                <Field.Content><Field.Title class="text-[13.5px] font-normal">Text size</Field.Title></Field.Content>
+                <Segmented label="Text size"
+                  bind:value={fontSize.get, fontSize.set}
+                  options={[
+                    { value: 13, label: 'S' },
+                    { value: 14, label: 'M' },
+                    { value: 15, label: 'L' },
+                    { value: 16, label: 'XL' },
+                  ]}
+                />
+              </Field.Field>
+              <Field.Field orientation="horizontal" class="has-[>[data-slot=field-content]]:items-center">
+                <Field.Content><Field.Title class="text-[13.5px] font-normal">Clock</Field.Title></Field.Content>
+                <Segmented label="Clock"
+                  bind:value={clock.get, clock.set}
+                  options={[
+                    { value: '24h', label: '24-hour' },
+                    { value: '12h', label: '12-hour' },
+                  ]}
+                />
+              </Field.Field>
+              <Field.Field orientation="horizontal" class="has-[>[data-slot=field-content]]:items-center">
+                <Field.Content>
+                  <Field.Title class="text-[13.5px] font-normal">Joins, parts and quits</Field.Title>
+                  <Field.Description class="text-xs">Collapse folds consecutive events into one line.</Field.Description>
+                </Field.Content>
+                <Segmented label="Joins, parts and quits"
+                  bind:value={membership.get, membership.set}
+                  options={[
+                    { value: 'show', label: 'Show' },
+                    { value: 'collapse', label: 'Collapse' },
+                    { value: 'hide', label: 'Hide' },
+                  ]}
+                />
+              </Field.Field>
+              <Switch bind:checked={() => app.settings.showSeconds, (v) => app.updateSettings({ showSeconds: v })} label="Show seconds in timestamps" />
+              <Switch bind:checked={() => app.settings.nickColors, (v) => app.updateSettings({ nickColors: v })} label="Colored nicknames" />
+              <Switch
+                bind:checked={() => app.settings.showTyping, (v) => app.updateSettings({ showTyping: v })}
+                label="Show when others are typing"
+              />
+              <Switch
+                bind:checked={() => app.settings.sendTyping, (v) => app.updateSettings({ sendTyping: v })}
+                label="Let others see when I'm typing"
+              />
+            </div>
+          {:else if tab === 'notifications'}
+            <div class={rows}>
+              <Switch
+                bind:checked={() => app.settings.notifyHighlights, (v) => app.updateSettings({ notifyHighlights: v })}
+                label="Mentions"
+                hint="When someone says your nickname or a highlight word."
+              />
+              <Switch
+                bind:checked={() => app.settings.notifyPrivate, (v) => app.updateSettings({ notifyPrivate: v })}
+                label="Private messages"
+              />
+              <Field.Field>
+                <Field.Label for="{uid}-words">Highlight words</Field.Label>
+                <Input
+                  id="{uid}-words"
+                  bind:value={words}
+                  onchange={() => app.updateSettings({ highlightWords: words.split(',').map((w) => w.trim()).filter(Boolean) })}
+                  placeholder="hearth, deploy"
+                />
+                <Field.Description class="text-xs">Comma-separated. Your nickname always counts. Add per-server words and exceptions on each server's settings page.</Field.Description>
+              </Field.Field>
+            </div>
+          {:else if tab === 'aliases'}
+            <AliasEditor />
+          {:else if tab === 'shortcuts'}
+            <ShortcutList />
+          {/if}
         </div>
-      {:else if tab === 'notifications'}
-        <h2>Notifications</h2>
-        <div class="rows">
-          <Switch
-            bind:checked={() => app.settings.notifyHighlights, (v) => app.updateSettings({ notifyHighlights: v })}
-            label="Mentions"
-            hint="When someone says your nickname or a highlight word."
-          />
-          <Switch
-            bind:checked={() => app.settings.notifyPrivate, (v) => app.updateSettings({ notifyPrivate: v })}
-            label="Private messages"
-          />
-          <label class="field">
-            <span>Highlight words</span>
-            <input
-              class="input"
-              bind:value={words}
-              onchange={() => app.updateSettings({ highlightWords: words.split(',').map((w) => w.trim()).filter(Boolean) })}
-              placeholder="hearth, deploy"
-            />
-            <small>Comma-separated. Your nickname always counts. Add per-server words and exceptions on each server's settings page.</small>
-          </label>
-        </div>
-      {:else if tab === 'aliases'}
-        <h2>Aliases</h2>
-        <p class="lede">Your own slash commands. <code>/j</code> → <code>/join $1</code>, <code>/ns</code> → <code>/msg NickServ $*</code>. They show up in command suggestions and Tab completion.</p>
-        <AliasEditor />
-      {:else if tab === 'shortcuts'}
-        <h2>Shortcuts</h2>
-        <div class="keys"><ShortcutList /></div>
-      {/if}
+      </div>
     </section>
-  </div>
-</div>
-
-<style>
-  .scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 90;
-    background: rgb(0 0 0 / 0.35);
-    display: grid;
-    place-items: center;
-    animation: fade 120ms;
-  }
-
-  @keyframes fade {
-    from {
-      opacity: 0;
-    }
-  }
-
-  .sheet {
-    width: min(860px, 94vw);
-    height: min(640px, 88vh);
-    display: grid;
-    grid-template-columns: 200px 1fr;
-    background: var(--bg);
-    border-radius: 14px;
-    box-shadow: var(--shadow);
-    overflow: hidden;
-    animation: rise 180ms var(--ease);
-  }
-
-  @keyframes rise {
-    from {
-      transform: translateY(8px) scale(0.995);
-      opacity: 0;
-    }
-  }
-
-  nav {
-    background: var(--bg-side);
-    border-right: 1px solid var(--line);
-    padding: 20px 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  nav .eyebrow {
-    margin: 0 10px 10px;
-  }
-
-  nav button {
-    height: 32px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 0 10px;
-    border-radius: 7px;
-    font-size: 13.5px;
-    color: var(--text-2);
-    text-align: left;
-  }
-
-  nav button:hover {
-    background: var(--bg-hover);
-    color: var(--text);
-  }
-
-  nav button.on {
-    background: var(--bg-active);
-    color: var(--text);
-  }
-
-  .about {
-    margin-top: auto;
-    padding: 0 10px;
-    font-size: 12px;
-    color: var(--text-3);
-  }
-
-  .about span {
-    color: var(--text-4);
-    font-family: var(--font-mono);
-  }
-
-  section {
-    position: relative;
-    overflow-y: auto;
-    padding: 28px 36px 36px;
-    user-select: none;
-  }
-
-  .close {
-    position: absolute;
-    top: 14px;
-    right: 14px;
-  }
-
-  h2 {
-    margin: 0 0 6px;
-    font-size: 20px;
-    font-weight: 600;
-    letter-spacing: -0.015em;
-  }
-
-  .lede {
-    margin: 0 0 20px;
-    color: var(--text-3);
-    font-size: 13px;
-    max-width: 52ch;
-  }
-
-  h2 + :global(form),
-  h2 + .rows,
-  h2 + .keys {
-    margin-top: 20px;
-  }
-
-  .servers {
-    display: grid;
-    border-radius: 10px;
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
-    overflow: hidden;
-  }
-
-  .server {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 14px;
-  }
-
-  .server + .server {
-    border-top: 1px solid var(--line);
-  }
-
-  .server-main {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .server-name {
-    font-weight: 500;
-  }
-
-  .server-host {
-    font-size: 12px;
-    color: var(--text-3);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--text-4);
-  }
-
-  .dot.connected {
-    background: var(--ok);
-  }
-
-  .dot.connecting,
-  .dot.registering {
-    background: var(--warn);
-  }
-
-  .dot.disconnected {
-    background: var(--danger);
-  }
-
-  .add {
-    margin-top: 16px;
-  }
-
-  .rows {
-    display: grid;
-    gap: 10px;
-    max-width: 560px;
-  }
-
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 6px 0;
-  }
-
-  .row > div:first-child {
-    flex: 1;
-  }
-
-  .label {
-    font-size: 13.5px;
-  }
-
-  .hint {
-    font-size: 12px;
-    color: var(--text-3);
-  }
-
-  .hint.error {
-    color: var(--danger);
-  }
-
-  .ignores {
-    display: grid;
-    border-radius: 8px;
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
-    overflow: hidden;
-  }
-
-  .ignore {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 3px 4px 3px 12px;
-    font-size: 12.5px;
-  }
-
-  .ignore + .ignore {
-    border-top: 1px solid var(--line);
-  }
-
-  .add-ignore {
-    display: flex;
-    gap: 8px;
-  }
-
-  .add-ignore .input {
-    flex: 1;
-  }
-
-  code {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-  }
-
-  .lede code {
-    white-space: nowrap;
-  }
-</style>
+  </Dialog.Content>
+</Dialog.Root>

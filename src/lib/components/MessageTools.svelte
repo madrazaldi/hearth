@@ -44,9 +44,19 @@
 
 <script lang="ts">
   import { emojiName, menu as menuNav } from '../a11y';
+  import { cn } from '$lib/utils';
+  import { buttonVariants } from '$lib/components/ui/button';
   import Icon from './Icon.svelte';
 
   let { l, buf }: { l: Line; buf: Buffer } = $props();
+
+  // Computed once, not per row: the toolbar is in every row's DOM (shown by CSS
+  // on hover), so the buttons are plain elements wearing shadcn's classes
+  // instead of component instances.
+  const tool = cn(buttonVariants({ variant: 'ghost', size: 'icon-xs' }), 'text-muted-foreground [&_svg]:size-3.5!');
+  const danger = cn(tool, 'hover:text-destructive');
+  const confirm = cn(buttonVariants({ variant: 'destructive', size: 'xs' }), 'wide');
+  const emoji = cn(buttonVariants({ variant: 'ghost', size: 'icon-sm' }), 'text-base');
 
   const EMOJI = ['👍', '❤️', '😂', '🎉', '😮', '😢', '👀', '✅'];
   const reply = $derived(canReply(buf, l));
@@ -61,7 +71,7 @@
 
 <div class="tools" class:open={menu.react === l.id || menu.del === l.id}>
   {#if reply}
-    <button title="Reply" aria-label="Reply" onclick={() => startReply(buf, l)}><Icon name="reply" size={14} /></button>
+    <button class={tool} title="Reply" aria-label="Reply" onclick={() => startReply(buf, l)}><Icon name="reply" size={14} /></button>
   {/if}
   {#if react}
     <button
@@ -69,7 +79,7 @@
       aria-label="React"
       aria-haspopup="menu"
       aria-expanded={menu.react === l.id}
-      class:on={menu.react === l.id}
+      class={tool}
       onclick={(e) => {
         e.stopPropagation();
         if (menu.react === l.id) menu.react = null;
@@ -80,12 +90,12 @@
     </button>
   {/if}
   {#if !l.redacted}
-    <button title="Copy text" aria-label="Copy text" onclick={() => copyLine(l)}><Icon name="copy" size={14} /></button>
+    <button class={tool} title="Copy text" aria-label="Copy text" onclick={() => copyLine(l)}><Icon name="copy" size={14} /></button>
   {/if}
   {#if redact && !l.redacted}
     {#if menu.del === l.id}
       <button
-        class="danger wide"
+        class={confirm}
         onclick={(e) => {
           refocusRow(e);
           app.redact(buf, l);
@@ -100,7 +110,7 @@
         }}>Delete?</button
       >
     {:else}
-      <button title="Delete" aria-label="Delete message" class="danger" onclick={(e) => { e.stopPropagation(); askDelete(l); }}>
+      <button title="Delete" aria-label="Delete message" class={danger} onclick={(e) => { e.stopPropagation(); askDelete(l); }}>
         <Icon name="trash" size={14} />
       </button>
     {/if}
@@ -116,13 +126,14 @@
       use:menuNav={{ onclose: () => (menu.react = null), horizontal: true }}
     >
       {#each EMOJI as e (e)}
-        <button role="menuitem" aria-label={emojiName(e)} onclick={() => { app.react(buf, l, e); menu.react = null; }}>{e}</button>
+        <button class={emoji} role="menuitem" aria-label={emojiName(e)} onclick={() => { app.react(buf, l, e); menu.react = null; }}>{e}</button>
       {/each}
     </div>
   {/if}
 </div>
 
 <style>
+  /* Popover-like group: bordered, with a small shadow. */
   .tools {
     position: absolute;
     right: 16px;
@@ -131,9 +142,10 @@
     align-items: center;
     gap: 1px;
     padding: 2px;
-    border-radius: 7px;
-    background: var(--bg-raised);
-    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--popover);
+    box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.12), 0 1px 3px 0 rgb(0 0 0 / 0.1);
     z-index: 3;
   }
 
@@ -144,46 +156,16 @@
     display: flex;
   }
 
-  .tools button {
-    height: 24px;
-    min-width: 26px;
-    display: grid;
-    place-items: center;
-    border-radius: 5px;
-    color: var(--text-3);
-  }
-
-  .tools button:hover,
-  .tools button.on {
-    background: var(--bg-active);
-    color: var(--text);
-  }
-
-  .tools .danger:hover {
-    color: var(--danger);
-  }
-
-  .tools .wide {
-    padding: 0 8px;
-    font-size: 12px;
-    color: var(--danger);
-  }
-
   .emoji {
     position: absolute;
-    right: 0;
+    right: -1px;
     top: calc(100% + 4px);
     display: flex;
-    gap: 2px;
+    gap: 1px;
     padding: 4px;
-    border-radius: 8px;
-    background: var(--bg-raised);
-    box-shadow: var(--shadow);
-  }
-
-  .emoji button {
-    font-size: 16px;
-    width: 30px;
-    height: 30px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--popover);
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.15);
   }
 </style>

@@ -21,35 +21,22 @@
   });
 </script>
 
-<span class="avatar" style="--size:{size}px; --h:{nickHue(nick)}" aria-hidden="true">
+<!-- Plain elements styled like shadcn's Avatar: this renders per message and per
+     member row, and bits-ui's Avatar would flash the fallback before each image. -->
+<span
+  class="avatar relative inline-grid shrink-0 select-none place-items-center overflow-hidden rounded-full bg-muted font-semibold leading-none after:absolute after:inset-0 after:rounded-full after:border after:border-border"
+  style="width:{size}px; height:{size}px; font-size:{size * 0.5}px; --h:{nickHue(nick)}"
+  aria-hidden="true"
+>
   {#if src}
-    <img {src} alt="" draggable="false" />
+    <img {src} alt="" draggable="false" class="size-full object-cover" />
   {:else}
-    {[...nick.replace(/^[^\p{L}\p{N}]+/u, '')][0]?.toUpperCase() ?? '?'}
+    <!-- Same hue as the nick, in either theme. -->
+    <span
+      class="grid size-full place-items-center"
+      style="color: oklch(var(--nick-l) var(--nick-c) var(--h)); background: color-mix(in oklch, oklch(var(--nick-l) var(--nick-c) var(--h)) 18%, var(--muted))"
+    >
+      {[...nick.replace(/^[^\p{L}\p{N}]+/u, '')][0]?.toUpperCase() ?? '?'}
+    </span>
   {/if}
 </span>
-
-<style>
-  .avatar {
-    width: var(--size);
-    height: var(--size);
-    flex: none;
-    border-radius: 50%;
-    overflow: hidden;
-    display: inline-grid;
-    place-items: center;
-    font-size: calc(var(--size) * 0.5);
-    font-weight: 600;
-    line-height: 1;
-    /* Same hue as the nick, in either theme. */
-    color: oklch(var(--nick-l) var(--nick-c) var(--h));
-    background: color-mix(in oklch, oklch(var(--nick-l) var(--nick-c) var(--h)) 20%, var(--bg-raised));
-    user-select: none;
-  }
-
-  img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-</style>

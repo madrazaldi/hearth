@@ -13,8 +13,12 @@
   import { openUrl } from '@tauri-apps/plugin-opener';
   import { app } from '../state.svelte';
   import { fileName, mediaLabel } from '../media';
+  import { buttonVariants } from '$lib/components/ui/button';
   import Icon from './Icon.svelte';
   import InlineImage from './InlineImage.svelte';
+
+  // One string for every preview: these are plain elements, not Button instances.
+  const openBtn = buttonVariants({ variant: 'outline', size: 'sm' });
 
   let { url, nsfw = false }: { url: string; nsfw?: boolean } = $props();
 
@@ -62,7 +66,7 @@
       <span class="file-name" title={url}>{fileName(url)}</span>
       <span class="file-kind">{mediaLabel(p)}</span>
     </span>
-    <a href={url} class="btn ghost" onclick={open} title="Open in browser"><Icon name="external" size={14} />Open</a>
+    <a href={url} class={openBtn} onclick={open} title="Open in browser"><Icon name="external" size={14} />Open</a>
   </div>
 {/snippet}
 
@@ -88,16 +92,18 @@
 </div>
 
 <style>
+  /* shadcn's Card: rounded-lg, 1px border, card surface. */
   .card,
   .file {
     display: inline-flex;
     margin: 6px 0 4px;
     max-width: min(520px, 100%);
-    border-radius: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+    color: var(--card-foreground);
     overflow: hidden;
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
     text-decoration: none;
-    color: inherit;
     cursor: pointer;
   }
 
@@ -106,7 +112,6 @@
     gap: 10px;
     padding: 8px 8px 8px 10px;
     min-width: 260px;
-    background: var(--bg-side);
     cursor: default;
   }
 
@@ -116,9 +121,9 @@
     flex: none;
     display: grid;
     place-items: center;
-    border-radius: 6px;
-    color: var(--brand);
-    background: var(--brand-soft);
+    border-radius: calc(var(--radius) - 2px);
+    color: var(--muted-foreground);
+    background: var(--muted);
   }
 
   .file-meta {
@@ -137,24 +142,19 @@
 
   .file-kind {
     font-size: 11.5px;
-    color: var(--text-3);
+    color: var(--muted-foreground);
     font-variant-numeric: tabular-nums;
-  }
-
-  .file .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    flex: none;
-    text-decoration: none;
   }
 
   .card {
     gap: 12px;
-    padding: 10px 12px;
+    padding: 12px 14px;
     align-items: flex-start;
-    border-left: 3px solid var(--brand);
-    background: var(--bg-side);
+    transition: background-color 120ms var(--ease);
+  }
+
+  .card:hover {
+    background: color-mix(in oklab, var(--card) 80%, var(--muted));
   }
 
   .card:hover .title {
@@ -171,18 +171,18 @@
 
   .site {
     font-size: 11.5px;
-    color: var(--text-3);
+    color: var(--muted-foreground);
   }
 
   .title {
     font-weight: 600;
     font-size: 13.5px;
-    color: var(--brand);
+    color: var(--foreground);
   }
 
   .desc {
     font-size: 12.5px;
-    color: var(--text-2);
+    color: var(--muted-foreground);
     display: -webkit-box;
     -webkit-line-clamp: 3;
     line-clamp: 3;
@@ -194,7 +194,7 @@
     width: 88px;
     height: 88px;
     object-fit: cover;
-    border-radius: 6px;
+    border-radius: calc(var(--radius) - 2px);
     flex: none;
   }
 

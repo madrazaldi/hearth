@@ -22,14 +22,16 @@
 <style>
   .motd {
     max-width: 640px;
-    border-radius: 8px;
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+    color: var(--card-foreground);
     padding: 10px 14px;
     font-size: 13px;
   }
 
   .motd summary {
-    color: var(--text-3);
+    color: var(--muted-foreground);
     font-size: 12px;
     font-weight: 500;
     cursor: default;
@@ -38,7 +40,6 @@
 
   .motd summary::before {
     content: '▸ ';
-    color: var(--text-4);
   }
 
   .motd[open] summary::before {
