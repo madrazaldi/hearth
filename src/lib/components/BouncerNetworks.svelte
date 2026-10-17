@@ -67,7 +67,7 @@
   }
 </script>
 
-<section class="mt-7 border-t pt-5">
+<section>
   <div class="mb-3 flex items-center justify-between">
     <h3 class="text-[15px] font-semibold">Networks on this bouncer</h3>
     {#if !editing}<Button variant="outline" size="sm" onclick={() => (editing = blank())}>Add network</Button>{/if}

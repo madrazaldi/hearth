@@ -56,7 +56,7 @@
   }
 </script>
 
-<div class="mt-8 grid gap-3.5 border-t pt-6">
+<div class="grid gap-3.5">
   <div class="grid gap-1">
     <h3 class="text-[15px] font-semibold">Highlights on this server</h3>
     <p class="m-0 text-[12.5px] text-muted-foreground">Added to your global highlight words. For a bouncer, these apply to all of its networks.</p>

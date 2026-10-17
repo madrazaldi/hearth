@@ -375,7 +375,13 @@
       <Button variant="ghost" size="icon-xs" title="Cancel reply (Esc)" aria-label="Cancel reply" onclick={() => (buf.replyTo = null)}><Icon name="x" size={13} /></Button>
     </div>
   {/if}
-  <InputGroup.Root class={cn('items-end', buf.replyTo && 'rounded-t-none')}>
+  <!-- The composer holds focus nearly all the time, so it gets a quiet ring. -->
+  <InputGroup.Root
+    class={cn(
+      'items-end has-[[data-slot=input-group-control]:focus-visible]:ring-1 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/30',
+      buf.replyTo && 'rounded-t-none',
+    )}
+  >
     <InputGroup.Addon class="self-end py-1">
       <InputGroup.Button
         class="mono max-w-36 justify-start text-xs font-normal text-muted-foreground"
