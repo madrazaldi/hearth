@@ -9,6 +9,7 @@
   import { buildItems, itemIndexOf, MEMBERSHIP, type Item } from '../timeline';
   import { canFill } from '../history';
   import { Estimates, indexAt, offsets as prefixSums, rangeFor } from '../virtual';
+  import { Button } from '$lib/components/ui/button';
   import Icon from './Icon.svelte';
   import Divider from './Divider.svelte';
   import EventRow from './EventRow.svelte';
@@ -608,10 +609,15 @@
 </div>
 
 {#if !atBottom}
-  <button class="jump" onclick={toBottom}>
+  <Button
+    variant="outline"
+    size="sm"
+    class="jump absolute right-5 bottom-24 z-4 rounded-full bg-popover shadow-md animate-in fade-in-0 slide-in-from-bottom-1 duration-150"
+    onclick={toBottom}
+  >
     <Icon name="arrowDown" size={14} />
     {buf.unread > 0 ? `${buf.unread} new` : buf.gaps.length ? 'Jump to present' : 'Latest'}
-  </button>
+  </Button>
 {/if}
 
 <style>
@@ -660,7 +666,7 @@
   }
 
   .scroller :global(.row:hover) {
-    background: var(--bg-hover);
+    background: color-mix(in oklab, var(--muted) 50%, transparent);
   }
 
   .scroller :global(.msg) {
@@ -742,11 +748,11 @@
 
   .scroller :global(.hl) {
     background: var(--mention);
-    box-shadow: inset 2px 0 0 var(--accent);
+    box-shadow: inset 2px 0 0 var(--brand);
   }
 
   .scroller :global(.hl:hover) {
-    background: color-mix(in oklab, var(--mention) 100%, var(--bg-hover));
+    background: color-mix(in oklab, var(--mention), var(--muted) 50%);
   }
 
   .scroller :global(.flash) {
@@ -796,7 +802,7 @@
   @keyframes flash {
     0%,
     30% {
-      background: var(--accent-soft);
+      background: var(--brand-soft);
     }
   }
 
@@ -829,7 +835,7 @@
     align-items: center;
     gap: 10px;
     padding: 14px 20px 12px calc(14px + var(--time-w) + var(--who-w) + 24px);
-    border-block: 1px dashed var(--line);
+    border-block: 1px dashed var(--border);
     color: var(--text-3);
     font-size: 13px;
   }
@@ -839,8 +845,8 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    border: 1.5px solid var(--line-strong);
-    border-top-color: var(--accent);
+    border: 1.5px solid var(--input);
+    border-top-color: var(--brand);
     animation: spin 0.8s linear infinite;
   }
 
@@ -852,36 +858,6 @@
 
   .end {
     height: 4px;
-  }
-
-  .jump {
-    position: absolute;
-    right: 20px;
-    bottom: 96px;
-    height: 28px;
-    padding: 0 12px 0 10px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    border-radius: 14px;
-    background: var(--bg-raised);
-    box-shadow: var(--shadow);
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-2);
-    z-index: 4;
-    animation: rise 160ms var(--ease);
-  }
-
-  .jump:hover {
-    color: var(--text);
-  }
-
-  @keyframes rise {
-    from {
-      opacity: 0;
-      transform: translateY(4px);
-    }
   }
 
   /* ── Compact layout: nick above grouped lines ─────────────── */

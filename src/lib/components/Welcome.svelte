@@ -7,6 +7,16 @@
   import ServerForm from './ServerForm.svelte';
   import Switch from './Switch.svelte';
   import Icon from './Icon.svelte';
+  import { Alert, AlertDescription, AlertTitle } from '$lib/components/ui/alert';
+  import { Badge } from '$lib/components/ui/badge';
+  import { Button } from '$lib/components/ui/button';
+  import * as Card from '$lib/components/ui/card';
+  import * as Field from '$lib/components/ui/field';
+  import { Input } from '$lib/components/ui/input';
+  import * as Item from '$lib/components/ui/item';
+  import { Spinner } from '$lib/components/ui/spinner';
+  import CircleAlert from '@lucide/svelte/icons/circle-alert';
+  import TriangleAlert from '@lucide/svelte/icons/triangle-alert';
 
   let { ondone }: { ondone: () => void } = $props();
 
@@ -168,22 +178,41 @@
   // Move focus to the first field of each step so the flow works from the keyboard.
   function autofocus(node: HTMLElement) {
     requestAnimationFrame(() =>
-      (node.querySelector<HTMLElement>('[data-autofocus]') ?? node.querySelector<HTMLElement>('input, button.primary'))?.focus(),
+      (node.querySelector<HTMLElement>('[data-autofocus]') ?? node.querySelector<HTMLElement>('input, button[type=submit]'))?.focus(),
     );
   }
+
+  const focusNow = (n: HTMLElement) => n.focus();
+  const codeClass = 'font-mono text-[11.5px]';
 </script>
 
-<div class="welcome" data-tauri-drag-region>
-  <main class="col">
-    <img class="mark" src={logo} width="48" height="48" alt="" />
-    <h1>Hearth</h1>
-    <p class="lede">A quiet place for IRC. Pick a network to begin — you can add more, or a bouncer, any time.</p>
+<div
+  class="flex h-full justify-center overflow-y-auto bg-background bg-[radial-gradient(1200px_400px_at_50%_-10%,color-mix(in_oklab,var(--brand)_7%,transparent),transparent_70%)] px-6 pt-14 pb-12"
+  data-tauri-drag-region
+>
+  <main class="w-full max-w-xl">
+    <header class="mb-6 flex flex-col items-center text-center">
+      <img class="mb-4 rounded-xl" src={logo} width="48" height="48" alt="" />
+      <h1 class="m-0 text-3xl font-semibold tracking-tight">Hearth</h1>
+      <p class="mt-1.5 text-[15px] text-muted-foreground">A quiet place for IRC.</p>
+    </header>
 
     {#if flow.length > 1}
-      <ol class="steps" aria-label="Setup progress">
+      <ol class="m-0 mb-4 flex list-none flex-wrap justify-center gap-x-4 gap-y-1.5 p-0 text-[12.5px] text-muted-foreground" aria-label="Setup progress">
         {#each flow as f, i (f)}
-          <li class:done={i < index} class:current={i === index} aria-current={i === index ? 'step' : undefined}>
-            <span class="dot" aria-hidden="true">{#if i < index}<Icon name="check" size={11} />{:else}{i + 1}{/if}</span>
+          <li
+            class={['flex items-center gap-1.5', i === index && 'text-foreground', i < index && 'text-foreground/70']}
+            aria-current={i === index ? 'step' : undefined}
+          >
+            <span
+              class={[
+                'grid size-[18px] place-items-center rounded-full text-[10.5px]',
+                i === index ? 'bg-primary text-primary-foreground' : i < index ? 'bg-brand-soft text-brand' : 'ring-1 ring-border ring-inset',
+              ]}
+              aria-hidden="true"
+            >
+              {#if i < index}<Icon name="check" size={11} />{:else}{i + 1}{/if}
+            </span>
             {LABELS[f]}
           </li>
         {/each}
@@ -191,612 +220,297 @@
     {/if}
 
     {#key step}
-      <section class="card" {@attach autofocus} aria-labelledby="step-title">
+      <Card.Root class="shadow-sm [--card-spacing:--spacing(6)]" role="group" {@attach autofocus} aria-labelledby="step-title">
         {#if step === 'network'}
-          <h2 id="step-title">Choose a network</h2>
-          <ul class="nets" aria-label="Public networks">
-            {#each presets.filter((p) => p.kind === 'network') as p (p.id)}
-              <li>
-                <button type="button" class="net" onclick={() => choose(p)} data-autofocus={p.id === 'libera' || undefined}>
-                  <strong>{p.label}</strong>
-                  <span class="blurb">{p.blurb}</span>
-                  <span class="host mono">{p.host}</span>
-                  <Icon name="chevron" size={14} />
-                </button>
-              </li>
-            {/each}
-          </ul>
-          <p class="or">Or connect to your own</p>
-          <ul class="own">
-            {#each presets.filter((p) => p.kind !== 'network') as p (p.id)}
-              <li>
-                <button type="button" class="own-btn" onclick={() => choose(p)}>
-                  <Icon name={p.kind === 'bouncer' ? 'layers' : 'settings'} size={16} />
-                  <span>
-                    <strong>{p.label}</strong>
-                    <span class="blurb">{p.blurb}</span>
-                  </span>
-                </button>
-              </li>
-            {/each}
-          </ul>
+          <Card.Header>
+            <Card.Title id="step-title" role="heading" aria-level={2}>Choose a network</Card.Title>
+            <Card.Description>Pick a public network to begin. You can add more, or a bouncer, any time.</Card.Description>
+          </Card.Header>
+          <Card.Content class="grid gap-5">
+            <ul class="m-0 flex list-none flex-col gap-2 p-0" aria-label="Public networks">
+              {#each presets.filter((p) => p.kind === 'network') as p (p.id)}
+                {@const selected = preset?.id === p.id}
+                <li>
+                  <Item.Root variant="outline" size="sm" class={['hover:bg-muted', selected && 'border-primary bg-muted/60']}>
+                    {#snippet child({ props })}
+                      <button {...props} type="button" onclick={() => choose(p)} data-autofocus={p.id === 'libera' || undefined} aria-current={selected || undefined}>
+                        <Item.Content class="gap-0.5">
+                          <Item.Title>{p.label}</Item.Title>
+                          <Item.Description>{p.blurb}</Item.Description>
+                        </Item.Content>
+                        <span class="font-mono text-[11px] text-muted-foreground max-sm:hidden">{p.host}</span>
+                        <span class="text-muted-foreground"><Icon name={selected ? 'check' : 'chevron'} size={14} /></span>
+                      </button>
+                    {/snippet}
+                  </Item.Root>
+                </li>
+              {/each}
+            </ul>
+            <Field.Separator class="[&_[data-slot=field-separator-content]]:bg-card">Or connect to your own</Field.Separator>
+            <ul class="m-0 grid list-none grid-cols-2 gap-2 p-0 max-sm:grid-cols-1">
+              {#each presets.filter((p) => p.kind !== 'network') as p (p.id)}
+                {@const selected = preset?.id === p.id}
+                <li class="flex">
+                  <Item.Root variant="outline" size="sm" class={['items-start hover:bg-muted', selected && 'border-primary bg-muted/60']}>
+                    {#snippet child({ props })}
+                      <button {...props} type="button" onclick={() => choose(p)} aria-current={selected || undefined}>
+                        <Item.Media variant="icon" class="text-muted-foreground">
+                          <Icon name={p.kind === 'bouncer' ? 'layers' : 'settings'} size={16} />
+                        </Item.Media>
+                        <Item.Content class="gap-0.5">
+                          <Item.Title>{p.label}</Item.Title>
+                          <Item.Description>{p.blurb}</Item.Description>
+                        </Item.Content>
+                      </button>
+                    {/snippet}
+                  </Item.Root>
+                </li>
+              {/each}
+            </ul>
+          </Card.Content>
         {:else if step === 'server'}
-          <h2 id="step-title">Where is your bouncer?</h2>
-          <form onsubmit={submitServer} novalidate>
-            <div class="grid">
-              <label class="field">
-                <span>Host</span>
-                <input
-                  class="input mono"
-                  bind:value={s.host}
-                  placeholder="bouncer.example.org"
-                  spellcheck="false"
-                  autocapitalize="off"
-                  aria-invalid={!!serverError}
-                  aria-describedby={serverError ? 'server-error' : undefined}
-                />
-              </label>
-              <label class="field">
-                <span>Port</span>
-                <input class="input mono" type="number" min="1" max="65535" bind:value={s.port} />
-              </label>
-            </div>
-            <Switch bind:checked={s.tls} label="Use TLS" hint="Almost every bouncer supports it; the usual port is 6697." />
-            {#if serverError}<p class="error" id="server-error" role="alert">{serverError}</p>{/if}
+          <Card.Header>
+            <Card.Title id="step-title" role="heading" aria-level={2}>Where is your bouncer?</Card.Title>
+            <Card.Description>The address Hearth should connect to.</Card.Description>
+          </Card.Header>
+          <form class="contents" onsubmit={submitServer} novalidate>
+            <Card.Content>
+              <Field.Group class="gap-4">
+                <div class="grid grid-cols-[1fr_6rem] gap-3">
+                  <Field.Field>
+                    <Field.Label for="w-host">Host</Field.Label>
+                    <Input
+                      id="w-host"
+                      class="font-mono"
+                      bind:value={s.host}
+                      placeholder="bouncer.example.org"
+                      spellcheck="false"
+                      autocapitalize="off"
+                      aria-invalid={!!serverError}
+                      aria-describedby={serverError ? 'server-error' : undefined}
+                    />
+                  </Field.Field>
+                  <Field.Field>
+                    <Field.Label for="w-port">Port</Field.Label>
+                    <Input id="w-port" class="font-mono" type="number" min="1" max="65535" bind:value={s.port} />
+                  </Field.Field>
+                </div>
+                <Switch bind:checked={s.tls} label="Use TLS" hint="Almost every bouncer supports it; the usual port is 6697." />
+                {#if serverError}<Field.Error id="server-error">{serverError}</Field.Error>{/if}
+              </Field.Group>
+            </Card.Content>
             {@render actions('Continue')}
           </form>
         {:else if step === 'nick'}
-          <h2 id="step-title">Choose a nickname</h2>
-          <form onsubmit={submitNick} novalidate>
-            <div class="field">
-              <label class="field">
-                <span>Nickname</span>
-                <input
-                  class="input"
-                  bind:value={s.nick}
-                  onblur={() => (nickTouched = !!s.nick)}
-                  maxlength={64}
-                  spellcheck="false"
-                  autocapitalize="off"
-                  autocomplete="nickname"
-                  placeholder="ember"
-                  aria-invalid={nickTouched && !!nickProblem}
-                  aria-describedby="nick-help"
-                />
-              </label>
-              {#if nickTouched && nickProblem}
-                <small id="nick-help" class="bad" role="alert">{nickProblem}</small>
-              {:else}
-                <small id="nick-help">
-                  How others see you. Letters, digits and <code>- _ [ ] {'{ }'} \ | ^ `</code>, up to {nickLen} characters.
-                </small>
-              {/if}
-            </div>
-            {#if preset?.kind === 'network' && preset.sasl === false && preset.accountNote}
-              <p class="note"><Icon name="info" size={14} />{preset.accountNote}</p>
-            {/if}
+          <Card.Header>
+            <Card.Title id="step-title" role="heading" aria-level={2}>Choose a nickname</Card.Title>
+            <Card.Description>How others will see you on {preset?.kind === 'network' ? preset.label : 'the server'}.</Card.Description>
+          </Card.Header>
+          <form class="contents" onsubmit={submitNick} novalidate>
+            <Card.Content>
+              <Field.Group class="gap-4">
+                <Field.Field>
+                  <Field.Label for="w-nick">Nickname</Field.Label>
+                  <Input
+                    id="w-nick"
+                    bind:value={s.nick}
+                    onblur={() => (nickTouched = !!s.nick)}
+                    maxlength={64}
+                    spellcheck="false"
+                    autocapitalize="off"
+                    autocomplete="nickname"
+                    placeholder="ember"
+                    aria-invalid={nickTouched && !!nickProblem}
+                    aria-describedby="nick-help"
+                  />
+                  {#if nickTouched && nickProblem}
+                    <Field.Error id="nick-help">{nickProblem}</Field.Error>
+                  {:else}
+                    <Field.Description id="nick-help" class="text-xs">
+                      Letters, digits and <code class={codeClass}>- _ [ ] {'{ }'} \ | ^ `</code>, up to {nickLen} characters.
+                    </Field.Description>
+                  {/if}
+                </Field.Field>
+                {#if preset?.kind === 'network' && preset.sasl === false && preset.accountNote}
+                  <Alert>
+                    <Icon name="info" size={16} />
+                    <AlertDescription>{preset.accountNote}</AlertDescription>
+                  </Alert>
+                {/if}
+              </Field.Group>
+            </Card.Content>
             {@render actions('Continue')}
           </form>
         {:else if step === 'account'}
-          <h2 id="step-title">{preset?.kind === 'bouncer' ? 'Log in to your bouncer' : 'Log in to an account'} <span class="opt">{preset?.kind === 'bouncer' ? '' : 'optional'}</span></h2>
-          <form onsubmit={submitAccount} novalidate>
-            {#if preset?.accountNote}<p class="explain">{preset.accountNote}</p>{/if}
-            {#if preset?.kind !== 'bouncer'}
-              <Switch bind:checked={useAccount} label="I have an account" hint="Skip this if you haven't registered your nickname." />
-            {/if}
-            {#if useAccount}
-              <div class="grid two">
-                <label class="field">
-                  <span>{preset?.kind === 'bouncer' ? 'Username' : 'Account name'}</span>
-                  <input class="input" bind:value={s.saslUsername} placeholder={s.nick} spellcheck="false" autocapitalize="off" autocomplete="username" />
-                </label>
-                <label class="field">
-                  <span>Password</span>
-                  <input
-                    class="input"
-                    type="password"
-                    bind:value={s.saslPassword}
-                    autocomplete="current-password"
-                    aria-invalid={!!accountError}
-                    aria-describedby="account-note"
-                    data-autofocus={preset?.kind === 'bouncer' ? undefined : true}
-                  />
-                </label>
-              </div>
-              <small class="note" id="account-note"><Icon name="lock" size={14} />Kept in your system keychain, never in Hearth's config file. Sent with SCRAM-SHA-256 when the server supports it.</small>
-            {:else if preset?.kind === 'network'}
-              <small class="note">No account yet? Connect first, then register with <code>/msg NickServ REGISTER password email</code>.</small>
-            {/if}
-            {#if accountError}<p class="error" role="alert">{accountError}</p>{/if}
+          <Card.Header>
+            <Card.Title id="step-title" role="heading" aria-level={2} class="flex items-center gap-2">
+              {preset?.kind === 'bouncer' ? 'Log in to your bouncer' : 'Log in to an account'}
+              {#if preset?.kind !== 'bouncer'}<Badge variant="outline">optional</Badge>{/if}
+            </Card.Title>
+            {#if preset?.accountNote}<Card.Description>{preset.accountNote}</Card.Description>{/if}
+          </Card.Header>
+          <form class="contents" onsubmit={submitAccount} novalidate>
+            <Card.Content>
+              <Field.Group class="gap-4">
+                {#if preset?.kind !== 'bouncer'}
+                  <Switch bind:checked={useAccount} label="I have an account" hint="Skip this if you haven't registered your nickname." />
+                {/if}
+                {#if useAccount}
+                  <div class="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
+                    <Field.Field>
+                      <Field.Label for="w-user">{preset?.kind === 'bouncer' ? 'Username' : 'Account name'}</Field.Label>
+                      <Input id="w-user" bind:value={s.saslUsername} placeholder={s.nick} spellcheck="false" autocapitalize="off" autocomplete="username" />
+                    </Field.Field>
+                    <Field.Field>
+                      <Field.Label for="w-pass">Password</Field.Label>
+                      <Input
+                        id="w-pass"
+                        type="password"
+                        bind:value={s.saslPassword}
+                        autocomplete="current-password"
+                        aria-invalid={!!accountError}
+                        aria-describedby="account-note"
+                        data-autofocus={preset?.kind === 'bouncer' ? undefined : true}
+                      />
+                    </Field.Field>
+                  </div>
+                  <Field.Description id="account-note" class="flex items-start gap-2 text-xs">
+                    <span class="mt-px shrink-0"><Icon name="lock" size={14} /></span>
+                    Kept in your system keychain, never in Hearth's config file. Sent with SCRAM-SHA-256 when the server supports it.
+                  </Field.Description>
+                {:else if preset?.kind === 'network'}
+                  <Field.Description class="text-xs">
+                    No account yet? Connect first, then register with <code class={codeClass}>/msg NickServ REGISTER password email</code>.
+                  </Field.Description>
+                {/if}
+                {#if accountError}<Field.Error>{accountError}</Field.Error>{/if}
+              </Field.Group>
+            </Card.Content>
             {@render actions(preset?.kind === 'bouncer' ? 'Connect' : 'Continue')}
           </form>
         {:else if step === 'channels'}
-          <h2 id="step-title">Join some channels <span class="opt">optional</span></h2>
-          <form onsubmit={submitChannels} novalidate>
-            {#if preset?.channels?.length}
-              <fieldset>
-                <legend>Suggested on {netName}</legend>
-                {#each preset.channels as c (c)}
-                  <Switch
-                    bind:checked={() => picked.includes(c), (v) => (picked = v ? [...picked, c] : picked.filter((x) => x !== c))}
-                    label={c}
-                    hint="The network's official help and community channel."
-                  />
-                {/each}
-              </fieldset>
-            {/if}
-            <div class="field">
-              <label class="field">
-                <span>Other channels</span>
-                <input class="input mono" bind:value={extra} placeholder="#rust, #linux" spellcheck="false" autocapitalize="off" aria-describedby="chan-help" />
-              </label>
-              <small id="chan-help">Separate with spaces or commas. You can join more later with <code>/join</code> or the channel browser.</small>
-            </div>
+          <Card.Header>
+            <Card.Title id="step-title" role="heading" aria-level={2} class="flex items-center gap-2">
+              Join some channels <Badge variant="outline">optional</Badge>
+            </Card.Title>
+            <Card.Description>Pick a few to open as soon as you connect.</Card.Description>
+          </Card.Header>
+          <form class="contents" onsubmit={submitChannels} novalidate>
+            <Card.Content>
+              <Field.Group class="gap-4">
+                {#if preset?.channels?.length}
+                  <Field.Set class="gap-1">
+                    <Field.Legend variant="label" class="mb-0 text-muted-foreground">Suggested on {netName}</Field.Legend>
+                    {#each preset.channels as c (c)}
+                      <Switch
+                        bind:checked={() => picked.includes(c), (v) => (picked = v ? [...picked, c] : picked.filter((x) => x !== c))}
+                        label={c}
+                        hint="The network's official help and community channel."
+                      />
+                    {/each}
+                  </Field.Set>
+                {/if}
+                <Field.Field>
+                  <Field.Label for="w-extra">Other channels</Field.Label>
+                  <Input id="w-extra" class="font-mono" bind:value={extra} placeholder="#rust, #linux" spellcheck="false" autocapitalize="off" aria-describedby="chan-help" />
+                  <Field.Description id="chan-help" class="text-xs">
+                    Separate with spaces or commas. You can join more later with <code class={codeClass}>/join</code> or the channel browser.
+                  </Field.Description>
+                </Field.Field>
+              </Field.Group>
+            </Card.Content>
             {@render actions('Connect')}
           </form>
         {:else if step === 'custom'}
-          <h2 id="step-title">Custom server</h2>
-          {#key savedId}
-            <ServerForm server={{ ...$state.snapshot(s), id: savedId }} submitLabel="Connect" onsave={async (cfg) => void connect(cfg)} oncancel={back} />
-          {/key}
+          <Card.Header>
+            <Card.Title id="step-title" role="heading" aria-level={2}>Custom server</Card.Title>
+            <Card.Description>Any other server, with every option.</Card.Description>
+          </Card.Header>
+          <Card.Content>
+            {#key savedId}
+              <ServerForm server={{ ...$state.snapshot(s), id: savedId }} submitLabel="Connect" onsave={async (cfg) => void connect(cfg)} oncancel={back} />
+            {/key}
+          </Card.Content>
         {:else if step === 'connect'}
-          <h2 id="step-title">
-            {failure ? "Couldn't connect" : status === 'connected' ? "You're in" : `Connecting to ${netName}`}
-          </h2>
+          <Card.Header>
+            <Card.Title id="step-title" role="heading" aria-level={2}>
+              {failure ? "Couldn't connect" : status === 'connected' ? "You're in" : `Connecting to ${netName}`}
+            </Card.Title>
+          </Card.Header>
           {#if failure && friendly}
-            <div class="failure" role="alert">
-              <p class="f-title">{friendly.title}</p>
-              <p class="f-hint">{friendly.hint}</p>
-              <details>
-                <summary>Details</summary>
-                <code class="selectable">{failure.raw}</code>
-              </details>
-            </div>
-            <div class="actions">
-              <button type="button" class="btn ghost" onclick={editAfterFailure}>Back</button>
-              <span class="spacer"></span>
-              <button type="button" class="btn primary" onclick={() => connect()}>Try again</button>
-            </div>
+            <Card.Content>
+              <Alert variant="destructive">
+                <CircleAlert />
+                <AlertTitle>{friendly.title}</AlertTitle>
+                <AlertDescription>
+                  <p>{friendly.hint}</p>
+                  <details class="mt-2 text-xs text-muted-foreground">
+                    <summary class="cursor-pointer">Details</summary>
+                    <code class="selectable mt-1.5 block font-mono text-[11.5px] break-words">{failure.raw}</code>
+                  </details>
+                </AlertDescription>
+              </Alert>
+            </Card.Content>
+            <Card.Footer class="justify-between">
+              <Button variant="ghost" onclick={editAfterFailure}>Back</Button>
+              <Button onclick={() => connect()} {@attach focusNow}>Try again</Button>
+            </Card.Footer>
           {:else}
-            <ol class="progress" aria-live="polite">
-              {#each stages as st, i (st.key)}
-                <li class:done={i < at || status === 'connected'} class:now={i === at && status !== 'connected'}>
-                  <span class="tick" aria-hidden="true">
-                    {#if i < at || status === 'connected'}<Icon name="check" size={12} />{:else if i === at}<span class="spin"></span>{/if}
-                  </span>
-                  {st.label}
-                  {#if i === at && status !== 'connected'}<span class="visually-hidden">(in progress)</span>{/if}
-                </li>
-              {/each}
-            </ol>
+            <Card.Content class="grid gap-4">
+              <ol class="m-0 grid list-none gap-3 p-0 text-[13.5px] text-muted-foreground" aria-live="polite">
+                {#each stages as st, i (st.key)}
+                  {@const done = i < at || status === 'connected'}
+                  {@const now = i === at && status !== 'connected'}
+                  <li class={['flex items-center gap-2.5', now && 'text-foreground', done && 'text-foreground/70']}>
+                    <span
+                      class={[
+                        'grid size-5 shrink-0 place-items-center rounded-full',
+                        done ? 'bg-brand-soft text-brand' : 'ring-1 ring-border ring-inset',
+                      ]}
+                      aria-hidden="true"
+                    >
+                      {#if done}<Icon name="check" size={12} />{:else if now}<Spinner class="size-3.5 text-brand" aria-label="" role="presentation" />{/if}
+                    </span>
+                    {st.label}
+                    {#if now}<span class="sr-only">(in progress)</span>{/if}
+                  </li>
+                {/each}
+              </ol>
+              {#if status === 'connected'}
+                {#if nickNote}
+                  <Alert class="text-warn">
+                    <TriangleAlert />
+                    <AlertDescription class="text-warn/90">{nickNote}</AlertDescription>
+                  </Alert>
+                {/if}
+                {#if saslFailed}
+                  <Alert class="text-warn">
+                    <TriangleAlert />
+                    <AlertDescription class="text-warn/90">
+                      Your account login failed, so you're connected without it. Check the password in Settings.
+                    </AlertDescription>
+                  </Alert>
+                {/if}
+                {#if s.autojoin.length && preset?.kind === 'network'}
+                  <p class="m-0 text-sm text-muted-foreground">Joining {s.autojoin.join(', ')}.</p>
+                {/if}
+              {/if}
+            </Card.Content>
             {#if status === 'connected'}
-              {#if nickNote}<p class="note warn"><Icon name="info" size={14} />{nickNote}</p>{/if}
-              {#if saslFailed}
-                <p class="note warn"><Icon name="info" size={14} />Your account login failed, so you're connected without it. Check the password in Settings.</p>
-              {/if}
-              {#if s.autojoin.length && preset?.kind === 'network'}
-                <p class="explain">Joining {s.autojoin.join(', ')}.</p>
-              {/if}
-              <div class="actions">
-                <span class="spacer"></span>
-                <button type="button" class="btn primary" onclick={ondone} {@attach (n) => n.focus()}>Start chatting</button>
-              </div>
+              <Card.Footer class="justify-end">
+                <Button onclick={ondone} {@attach focusNow}>Start chatting</Button>
+              </Card.Footer>
             {/if}
           {/if}
         {/if}
-      </section>
+      </Card.Root>
     {/key}
   </main>
 </div>
 
 {#snippet actions(label: string)}
-  <div class="actions">
-    <button type="button" class="btn ghost" onclick={back}>Back</button>
-    <span class="spacer"></span>
-    <button type="submit" class="btn primary">{label}</button>
-  </div>
+  <Card.Footer class="justify-between">
+    <Button variant="ghost" onclick={back}>Back</Button>
+    <Button type="submit">{label}</Button>
+  </Card.Footer>
 {/snippet}
-
-<style>
-  .welcome {
-    height: 100%;
-    overflow-y: auto;
-    display: flex;
-    justify-content: center;
-    padding: 64px 24px 48px;
-    background:
-      radial-gradient(1200px 400px at 50% -10%, color-mix(in oklab, var(--accent) 6%, transparent), transparent 70%),
-      var(--bg);
-  }
-
-  .col {
-    width: min(560px, 100%);
-  }
-
-  .mark {
-    display: block;
-    margin: 0 0 18px -4px;
-  }
-
-  h1 {
-    margin: 0;
-    font-size: 30px;
-    font-weight: 600;
-    letter-spacing: -0.025em;
-  }
-
-  .lede {
-    margin: 8px 0 24px;
-    color: var(--text-2);
-    font-size: 15px;
-    max-width: 44ch;
-  }
-
-  h2 {
-    margin: 0 0 16px;
-    font-size: 16px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-  }
-
-  .opt {
-    margin-left: 6px;
-    font-size: 12px;
-    font-weight: 400;
-    color: var(--text-3);
-  }
-
-  .steps {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 16px;
-    margin: 0 0 12px;
-    padding: 0;
-    list-style: none;
-    font-size: 12.5px;
-    color: var(--text-3);
-  }
-
-  .steps li {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .steps .current {
-    color: var(--text);
-  }
-
-  .steps .done {
-    color: var(--text-2);
-  }
-
-  .dot {
-    display: grid;
-    place-items: center;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    font-size: 10.5px;
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
-  }
-
-  .current .dot {
-    background: var(--text);
-    color: var(--bg);
-    box-shadow: none;
-  }
-
-  .done .dot {
-    background: var(--accent-soft);
-    color: var(--accent);
-    box-shadow: none;
-  }
-
-  .card {
-    padding: 22px;
-    border-radius: 14px;
-    background: var(--bg-side);
-    box-shadow: 0 0 0 1px var(--line) inset;
-  }
-
-  .nets,
-  .own {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  .nets {
-    display: grid;
-    border-radius: 10px;
-    background: var(--bg);
-    box-shadow: 0 0 0 1px var(--line) inset;
-    overflow: hidden;
-  }
-
-  .nets li + li {
-    border-top: 1px solid var(--line);
-  }
-
-  .net {
-    display: grid;
-    grid-template-columns: 112px 1fr auto 14px;
-    align-items: center;
-    gap: 12px;
-    width: 100%;
-    padding: 11px 14px;
-    text-align: left;
-    color: var(--text-3);
-    transition: background 120ms;
-  }
-
-  .net:hover {
-    background: var(--bg-hover);
-  }
-
-  .net:focus-visible {
-    outline-offset: -2px;
-  }
-
-  .net strong {
-    font-size: 13.5px;
-    font-weight: 600;
-    color: var(--text);
-  }
-
-  .blurb {
-    font-size: 12.5px;
-    color: var(--text-2);
-    line-height: 1.35;
-  }
-
-  .host {
-    font-size: 11px;
-    color: var(--text-3);
-  }
-
-  .or {
-    margin: 18px 0 8px;
-    font-size: 12px;
-    color: var(--text-3);
-  }
-
-  .own {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
-  }
-
-  .own-btn {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    width: 100%;
-    height: 100%;
-    padding: 11px 14px;
-    border-radius: 10px;
-    text-align: left;
-    color: var(--text-3);
-    box-shadow: 0 0 0 1px var(--line) inset;
-    transition: background 120ms, box-shadow 120ms;
-  }
-
-  .own-btn:hover {
-    background: var(--bg-hover);
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
-  }
-
-  .own-btn :global(svg) {
-    flex: none;
-    margin-top: 1px;
-  }
-
-  .own-btn > span {
-    display: grid;
-    gap: 2px;
-  }
-
-  .own-btn strong {
-    font-size: 13.5px;
-    font-weight: 600;
-    color: var(--text);
-  }
-
-  @media (max-width: 520px) {
-    .net {
-      grid-template-columns: 1fr 14px;
-    }
-
-    .net .blurb,
-    .net .host {
-      grid-column: 1;
-    }
-
-    .own {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  form {
-    display: grid;
-    gap: 16px;
-  }
-
-  .grid {
-    display: grid;
-    grid-template-columns: 1fr 96px;
-    gap: 12px;
-  }
-
-  .grid.two {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  fieldset {
-    margin: 0;
-    padding: 0;
-    border: 0;
-    display: grid;
-  }
-
-  legend {
-    padding: 0;
-    margin-bottom: 4px;
-    font-size: 12px;
-    color: var(--text-2);
-  }
-
-  code {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-  }
-
-  .explain {
-    margin: 0;
-    font-size: 13px;
-    color: var(--text-2);
-    line-height: 1.5;
-  }
-
-  .note {
-    display: flex;
-    gap: 8px;
-    align-items: flex-start;
-    margin: 0;
-    font-size: 12px;
-    color: var(--text-3);
-    line-height: 1.45;
-  }
-
-  .note :global(svg) {
-    flex: none;
-    margin-top: 1px;
-  }
-
-  .note.warn {
-    color: var(--warn);
-    margin-bottom: 12px;
-  }
-
-  .bad,
-  .error {
-    color: var(--danger);
-  }
-
-  .error {
-    margin: 0;
-    font-size: 13px;
-  }
-
-  .actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding-top: 4px;
-  }
-
-  .spacer {
-    flex: 1;
-  }
-
-  .progress {
-    display: grid;
-    gap: 10px;
-    margin: 0 0 16px;
-    padding: 0;
-    list-style: none;
-    font-size: 13.5px;
-    color: var(--text-3);
-  }
-
-  .progress li {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .progress .now {
-    color: var(--text);
-  }
-
-  .progress .done {
-    color: var(--text-2);
-  }
-
-  .tick {
-    display: grid;
-    place-items: center;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
-  }
-
-  .done .tick {
-    background: var(--accent-soft);
-    color: var(--accent);
-    box-shadow: none;
-  }
-
-  .spin {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    border: 1.5px solid var(--line-strong);
-    border-top-color: var(--accent);
-    animation: spin 800ms linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .spin {
-      animation-duration: 2.4s;
-    }
-  }
-
-  .failure {
-    padding: 12px 14px;
-    margin-bottom: 16px;
-    border-radius: 10px;
-    background: color-mix(in oklab, var(--danger) 9%, transparent);
-    box-shadow: 0 0 0 1px color-mix(in oklab, var(--danger) 30%, transparent) inset;
-  }
-
-  .f-title {
-    margin: 0;
-    font-weight: 600;
-    color: var(--danger);
-  }
-
-  .f-hint {
-    margin: 4px 0 0;
-    font-size: 13px;
-    color: var(--text-2);
-  }
-
-  details {
-    margin-top: 8px;
-    font-size: 12px;
-    color: var(--text-3);
-  }
-
-  details code {
-    display: block;
-    margin-top: 6px;
-    word-break: break-word;
-  }
-
-  .visually-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
-</style>

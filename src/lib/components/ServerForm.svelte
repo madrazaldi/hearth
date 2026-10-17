@@ -3,6 +3,14 @@
   import { api } from '../api';
   import Switch from './Switch.svelte';
   import Segmented from './Segmented.svelte';
+  import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
+  import { Textarea } from '$lib/components/ui/textarea';
+  import * as Field from '$lib/components/ui/field';
+  import { Separator } from '$lib/components/ui/separator';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
+
+  const uid = $props.id();
 
   let {
     server,
@@ -89,243 +97,157 @@
   }
 </script>
 
-<form onsubmit={submit}>
-  <div class="grid">
-    <label class="field span2">
-      <span>Name</span>
-      <input class="input" bind:value={s.name} placeholder="Libera.Chat" />
-    </label>
-    <label class="field grow">
-      <span>Host</span>
-      <input class="input mono" bind:value={s.host} placeholder="irc.libera.chat" spellcheck="false" autocapitalize="off" />
-    </label>
-    <label class="field port">
-      <span>Port</span>
-      <input class="input mono" type="number" min="1" max="65535" bind:value={s.port} />
-    </label>
-  </div>
-
-  <div class="row">
-    <div class="field">
-      <span>Transport</span>
-      <Segmented
-        label="Transport"
-        options={[
-          { value: 'tcp', label: 'IRC' },
-          { value: 'ws', label: 'WebSocket' },
-        ]}
-        bind:value={() => transport, setTransport}
-      />
+<form onsubmit={submit} class="grid gap-6">
+  <Field.Group class="gap-4">
+    <div class="grid grid-cols-[1fr_96px] gap-3">
+      <Field.Field class="col-span-2">
+        <Field.Label for="{uid}-name">Name</Field.Label>
+        <Input id="{uid}-name" bind:value={s.name} placeholder="Libera.Chat" />
+      </Field.Field>
+      <Field.Field>
+        <Field.Label for="{uid}-host">Host</Field.Label>
+        <Input id="{uid}-host" class="font-mono" bind:value={s.host} placeholder="irc.libera.chat" spellcheck="false" autocapitalize="off" />
+      </Field.Field>
+      <Field.Field>
+        <Field.Label for="{uid}-port">Port</Field.Label>
+        <Input id="{uid}-port" class="font-mono" type="number" min="1" max="65535" bind:value={s.port} />
+      </Field.Field>
     </div>
-    <div class="tls">
-      <Switch bind:checked={() => s.tls, setTls} label="Use TLS" />
-    </div>
-  </div>
 
-  {#if s.websocket}
-    <label class="field">
-      <span>WebSocket path</span>
-      <input class="input mono" bind:value={s.websocketPath} placeholder="/socket" spellcheck="false" />
-    </label>
-  {/if}
-
-  <div class="grid three">
-    <label class="field">
-      <span>Nickname</span>
-      <input class="input" bind:value={s.nick} spellcheck="false" autocapitalize="off" />
-    </label>
-    <label class="field">
-      <span>Username</span>
-      <input class="input" bind:value={s.username} placeholder={s.nick || 'optional'} spellcheck="false" autocapitalize="off" />
-    </label>
-    <label class="field">
-      <span>Real name</span>
-      <input class="input" bind:value={s.realname} placeholder={s.nick || 'optional'} />
-    </label>
-  </div>
-
-  <div class="field">
-    <span>Authentication</span>
-    <Segmented
-      label="Authentication"
-      bind:value={s.sasl}
-      options={[
-        { value: 'none', label: 'None' },
-        { value: 'plain', label: 'Password' },
-        { value: 'external', label: 'Certificate' },
-      ]}
-    />
-  </div>
-  {#if s.sasl === 'plain'}
-    <div class="grid two">
-      <label class="field">
-        <span>Account</span>
-        <input class="input" bind:value={s.saslUsername} placeholder={s.nick} spellcheck="false" autocapitalize="off" />
-      </label>
-      <label class="field">
-        <span>Password</span>
-        <input class="input" type="password" bind:value={s.saslPassword} />
-      </label>
-    </div>
-    <small class="note">Uses SCRAM-SHA-256 when the server offers it, so the password never crosses the wire. Stored in your system keychain.</small>
-  {:else if s.sasl === 'external'}
-    <div class="field">
-      <span>Client certificate</span>
-      <div class="cert-row">
-        <input class="input mono" bind:value={s.clientCert} placeholder="/path/to/cert.pem (certificate and key)" spellcheck="false" />
-        <button type="button" class="btn" onclick={generateCert}>Generate</button>
+    <div class="flex items-end gap-6">
+      <Field.Field class="w-auto">
+        <Field.Title>Transport</Field.Title>
+        <Segmented
+          label="Transport"
+          options={[
+            { value: 'tcp', label: 'IRC' },
+            { value: 'ws', label: 'WebSocket' },
+          ]}
+          bind:value={() => transport, setTransport}
+        />
+      </Field.Field>
+      <div class="w-36 pb-0.5">
+        <Switch bind:checked={() => s.tls, setTls} label="Use TLS" />
       </div>
-      {#if cert}
-        <small class="fp">SHA-512 <code class="selectable">{cert.sha512}</code></small>
-        <small>
-          Register it with the network's services while connected — on Libera.Chat and most Atheme networks:
-          <code class="selectable">/msg NickServ CERT ADD</code>
-        </small>
-      {:else if certError}
-        <small class="bad">{certError}</small>
-      {/if}
     </div>
-  {/if}
 
-  <label class="field">
-    <span>Channels to join</span>
-    <input class="input mono" bind:value={autojoin} placeholder="#hearth, #rust" spellcheck="false" />
-    <small>Ignored when connecting through a bouncer, which restores channels itself.</small>
-  </label>
+    {#if s.websocket}
+      <Field.Field>
+        <Field.Label for="{uid}-wspath">WebSocket path</Field.Label>
+        <Input id="{uid}-wspath" class="font-mono" bind:value={s.websocketPath} placeholder="/socket" spellcheck="false" />
+      </Field.Field>
+    {/if}
+  </Field.Group>
 
-  <button type="button" class="disclosure" aria-expanded={advanced} onclick={() => (advanced = !advanced)}>
-    <span aria-hidden="true">{advanced ? '▾' : '▸'}</span> Advanced
-  </button>
-  {#if advanced}
-    <div class="advanced">
-      <label class="field">
-        <span>Server password</span>
-        <input class="input" type="password" bind:value={s.password} placeholder="Usually empty" />
-      </label>
-      <label class="field">
-        <span>Commands after connecting</span>
-        <textarea class="input mono" rows="3" bind:value={perform} placeholder={'MODE $nick +x\nPRIVMSG NickServ :identify …'}></textarea>
-        <small>One raw IRC line each. <code>$nick</code> expands to your nickname.</small>
-      </label>
-      <Switch bind:checked={s.autoconnect} label="Connect on launch" />
-      <Switch
-        bind:checked={s.acceptInvalidCerts}
-        label="Accept invalid certificates"
-        hint="Only for servers you trust with self-signed certificates."
+  <Separator />
+
+  <Field.Group class="gap-4">
+    <div class="grid grid-cols-3 gap-3">
+      <Field.Field>
+        <Field.Label for="{uid}-nick">Nickname</Field.Label>
+        <Input id="{uid}-nick" bind:value={s.nick} spellcheck="false" autocapitalize="off" />
+      </Field.Field>
+      <Field.Field>
+        <Field.Label for="{uid}-user">Username</Field.Label>
+        <Input id="{uid}-user" bind:value={s.username} placeholder={s.nick || 'optional'} spellcheck="false" autocapitalize="off" />
+      </Field.Field>
+      <Field.Field>
+        <Field.Label for="{uid}-real">Real name</Field.Label>
+        <Input id="{uid}-real" bind:value={s.realname} placeholder={s.nick || 'optional'} />
+      </Field.Field>
+    </div>
+
+    <Field.Field>
+      <Field.Title>Authentication</Field.Title>
+      <Segmented
+        label="Authentication"
+        bind:value={s.sasl}
+        options={[
+          { value: 'none', label: 'None' },
+          { value: 'plain', label: 'Password' },
+          { value: 'external', label: 'Certificate' },
+        ]}
       />
-    </div>
-  {/if}
+    </Field.Field>
+    {#if s.sasl === 'plain'}
+      <div class="grid grid-cols-2 gap-3">
+        <Field.Field>
+          <Field.Label for="{uid}-account">Account</Field.Label>
+          <Input id="{uid}-account" bind:value={s.saslUsername} placeholder={s.nick} spellcheck="false" autocapitalize="off" />
+        </Field.Field>
+        <Field.Field>
+          <Field.Label for="{uid}-pass">Password</Field.Label>
+          <Input id="{uid}-pass" type="password" bind:value={s.saslPassword} />
+        </Field.Field>
+      </div>
+      <Field.Description class="-mt-2 text-xs">
+        Uses SCRAM-SHA-256 when the server offers it, so the password never crosses the wire. Stored in your system keychain.
+      </Field.Description>
+    {:else if s.sasl === 'external'}
+      <Field.Field>
+        <Field.Label for="{uid}-cert">Client certificate</Field.Label>
+        <div class="flex gap-2">
+          <Input id="{uid}-cert" class="flex-1 font-mono" bind:value={s.clientCert} placeholder="/path/to/cert.pem (certificate and key)" spellcheck="false" />
+          <Button variant="outline" onclick={generateCert}>Generate</Button>
+        </div>
+        {#if cert}
+          <Field.Description class="text-xs">SHA-512 <code class="selectable font-mono text-[11.5px] break-all">{cert.sha512}</code></Field.Description>
+          <Field.Description class="text-xs">
+            Register it with the network's services while connected — on Libera.Chat and most Atheme networks:
+            <code class="selectable font-mono text-[11.5px]">/msg NickServ CERT ADD</code>
+          </Field.Description>
+        {:else if certError}
+          <Field.Error>{certError}</Field.Error>
+        {/if}
+      </Field.Field>
+    {/if}
+  </Field.Group>
 
-  {#if error}<p class="error">{error}</p>{/if}
+  <Separator />
 
-  <div class="actions">
+  <Field.Field>
+    <Field.Label for="{uid}-autojoin">Channels to join</Field.Label>
+    <Input id="{uid}-autojoin" class="font-mono" bind:value={autojoin} placeholder="#hearth, #rust" spellcheck="false" />
+    <Field.Description class="text-xs">Ignored when connecting through a bouncer, which restores channels itself.</Field.Description>
+  </Field.Field>
+
+  <div class="grid gap-4">
+    <Button variant="ghost" size="sm" class="justify-self-start text-muted-foreground" aria-expanded={advanced} onclick={() => (advanced = !advanced)}>
+      <ChevronRight class="transition-transform {advanced ? 'rotate-90' : ''}" />Advanced
+    </Button>
+    {#if advanced}
+      <Field.Group class="gap-4 border-l border-border pl-4">
+        <Field.Field>
+          <Field.Label for="{uid}-srvpass">Server password</Field.Label>
+          <Input id="{uid}-srvpass" type="password" bind:value={s.password} placeholder="Usually empty" />
+        </Field.Field>
+        <Field.Field>
+          <Field.Label for="{uid}-perform">Commands after connecting</Field.Label>
+          <Textarea id="{uid}-perform" class="font-mono" rows={3} bind:value={perform} placeholder={'MODE $nick +x\nPRIVMSG NickServ :identify …'} spellcheck="false" />
+          <Field.Description class="text-xs">One raw IRC line each. <code class="font-mono text-[11.5px]">$nick</code> expands to your nickname.</Field.Description>
+        </Field.Field>
+        <Switch bind:checked={s.autoconnect} label="Connect on launch" />
+        <Switch
+          bind:checked={s.acceptInvalidCerts}
+          label="Accept invalid certificates"
+          hint="Only for servers you trust with self-signed certificates."
+        />
+      </Field.Group>
+    {/if}
+  </div>
+
+  {#if error}<Field.Error>{error}</Field.Error>{/if}
+
+  <div class="flex items-center gap-2">
     {#if ondelete}
       {#if confirmDelete}
-        <button type="button" class="btn danger" onclick={ondelete}>Really remove?</button>
+        <Button variant="destructive" class="bg-destructive text-white hover:bg-destructive/90" onclick={ondelete}>Really remove?</Button>
       {:else}
-        <button type="button" class="btn ghost danger" onclick={() => (confirmDelete = true)}>Remove server</button>
+        <Button variant="destructive" onclick={() => (confirmDelete = true)}>Remove server</Button>
       {/if}
     {/if}
-    <span class="spacer"></span>
-    {#if oncancel}<button type="button" class="btn ghost" onclick={oncancel}>Cancel</button>{/if}
-    <button type="submit" class="btn primary" disabled={saving}>{saving ? 'Saving…' : submitLabel}</button>
+    <span class="flex-1"></span>
+    {#if oncancel}<Button variant="ghost" onclick={oncancel}>Cancel</Button>{/if}
+    <Button type="submit" disabled={saving}>{saving ? 'Saving…' : submitLabel}</Button>
   </div>
 </form>
-
-<style>
-  form {
-    display: grid;
-    gap: 16px;
-  }
-
-  .grid {
-    display: grid;
-    grid-template-columns: 1fr 96px;
-    gap: 12px;
-  }
-
-  .grid.two {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .grid.three {
-    grid-template-columns: 1fr 1fr 1fr;
-  }
-
-  .span2 {
-    grid-column: span 2;
-  }
-
-  .row {
-    display: flex;
-    align-items: flex-end;
-    gap: 24px;
-  }
-
-  .tls {
-    padding-bottom: 2px;
-    min-width: 150px;
-  }
-
-  .disclosure {
-    justify-self: start;
-    font-size: 12.5px;
-    color: var(--text-3);
-  }
-
-  .disclosure:hover {
-    color: var(--text);
-  }
-
-  .advanced {
-    display: grid;
-    gap: 14px;
-    padding-left: 12px;
-    border-left: 1px solid var(--line);
-  }
-
-  code {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-  }
-
-  .note {
-    margin-top: -8px;
-    font-size: 12px;
-    color: var(--text-3);
-  }
-
-  .cert-row {
-    display: flex;
-    gap: 8px;
-  }
-
-  .cert-row .input {
-    flex: 1;
-  }
-
-  .fp code {
-    word-break: break-all;
-  }
-
-  .bad {
-    color: var(--danger);
-  }
-
-  .error {
-    margin: 0;
-    color: var(--danger);
-    font-size: 13px;
-  }
-
-  .actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding-top: 4px;
-  }
-
-  .spacer {
-    flex: 1;
-  }
-</style>

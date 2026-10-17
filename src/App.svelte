@@ -12,6 +12,9 @@
   import Welcome from './lib/components/Welcome.svelte';
   import ShortcutsHelp from './lib/components/ShortcutsHelp.svelte';
   import Lightbox from './lib/components/Lightbox.svelte';
+  import * as Tooltip from '$lib/components/ui/tooltip';
+  import { Button } from '$lib/components/ui/button';
+  import CircleAlert from '@lucide/svelte/icons/circle-alert';
 
   const isMac = navigator.userAgent.includes('Mac');
   let systemDark = $state(window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -100,6 +103,7 @@
 
 <svelte:window onkeydown={onKey} />
 
+<Tooltip.Provider delayDuration={400}>
 {#if bootError}
   <div class="boot-error">
     <p class="eyebrow">Hearth failed to start</p>
@@ -144,16 +148,22 @@
 
 <div class="toasts" aria-live="polite">
   {#each app.toasts as t (t.id)}
-    <div class="toast" class:error={t.kind === 'error'} class:has-action={t.action}>
-      {t.text}
+    <div
+      class="toast flex items-center gap-2.5 rounded-lg border bg-popover px-3.5 py-2.5 text-[13px] text-popover-foreground shadow-lg"
+      class:text-destructive={t.kind === 'error'}
+      class:pointer-events-auto={t.action}
+    >
+      {#if t.kind === 'error'}<CircleAlert class="size-4 shrink-0" />{/if}
+      <span class="flex-1">{t.text}</span>
       {#if t.action}
         {@const action = t.action}
-        <button class="btn primary" onclick={() => (app.dismissToast(t.id), action.run())}>{action.label}</button>
-        <button class="btn ghost" onclick={() => app.dismissToast(t.id)}>Not now</button>
+        <Button size="sm" onclick={() => (app.dismissToast(t.id), action.run())}>{action.label}</Button>
+        <Button size="sm" variant="ghost" onclick={() => app.dismissToast(t.id)}>Not now</Button>
       {/if}
     </div>
   {/each}
 </div>
+</Tooltip.Provider>
 
 <style>
   .shell {
@@ -201,24 +211,7 @@
   }
 
   .toast {
-    background: var(--bg-raised);
-    box-shadow: var(--shadow);
-    padding: 8px 14px;
-    border-radius: 8px;
-    font-size: 13px;
-    color: var(--text);
     animation: rise 180ms var(--ease);
-  }
-
-  .toast.has-action {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    pointer-events: auto;
-  }
-
-  .toast.error {
-    color: var(--danger);
   }
 
   @keyframes rise {

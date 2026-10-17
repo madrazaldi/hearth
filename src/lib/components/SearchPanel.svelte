@@ -16,7 +16,16 @@
   import { dedupeHits, hitTime, parseQuery } from '../search';
   import type { SearchHit } from '../types';
   import Segmented from './Segmented.svelte';
-  import { modal } from '../a11y';
+  import * as Dialog from '$lib/components/ui/dialog';
+  import * as InputGroup from '$lib/components/ui/input-group';
+  import * as Item from '$lib/components/ui/item';
+  import * as Empty from '$lib/components/ui/empty';
+  import { Badge } from '$lib/components/ui/badge';
+  import { Button } from '$lib/components/ui/button';
+  import { Kbd } from '$lib/components/ui/kbd';
+  import { Spinner } from '$lib/components/ui/spinner';
+  import SearchIcon from '@lucide/svelte/icons/search';
+  import SearchXIcon from '@lucide/svelte/icons/search-x';
 
   const resumed = last && app.searchQuery && last.q === app.searchQuery ? last : null;
   const origin = resumed ? resumed.origin : app.active;
@@ -29,7 +38,8 @@
   let sel = $state(resumed?.sel ?? 0);
   let sugSel = $state(0);
   let list = $state<HTMLDivElement>();
-  let input = $state<HTMLInputElement>();
+  let input = $state<HTMLInputElement | null>(null);
+  let open = $state(true);
   let run = 0;
   let skip = !!resumed;
 
@@ -86,9 +96,14 @@
 
   $effect(() => {
     void sel;
-    const el = list?.querySelector('.sel') as HTMLElement | null;
+    const el = list?.querySelector('[aria-selected="true"]');
     el?.scrollIntoView({ block: 'nearest' });
     if (sel >= hits.length - 5) loadMore();
+  });
+
+  $effect(() => {
+    void sugSel;
+    list?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
   });
 
   // Resuming: show the query selected, so typing starts a new one.
@@ -217,32 +232,33 @@
   ];
 </script>
 
-<div class="scrim" onclick={close} role="presentation">
-  <div
-    class="palette"
-    onclick={(e) => e.stopPropagation()}
-    role="dialog"
-    aria-modal="true"
-    aria-label="Search messages"
-    tabindex="-1"
-    onkeydown={() => {}}
-    use:modal={{ onclose: close }}
-  >
-    <div class="head">
-      <input
-        bind:this={input}
-        bind:value={q}
-        onkeydown={onKey}
-        placeholder="Search messages"
-        spellcheck="false"
-        role="combobox"
-        aria-label="Search messages"
-        aria-expanded={hits.length > 0 || suggestions.length > 0}
-        aria-controls="search-results"
-        aria-autocomplete="list"
-        aria-activedescendant={suggestions.length ? `search-sug-${sugSel}` : hits.length ? `search-hit-${sel}` : undefined}
-        data-autofocus
-      />
+<Dialog.Root bind:open onOpenChange={(o) => !o && close()}>
+  <Dialog.Content showCloseButton={false} class="top-[12vh] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-2xl">
+    <Dialog.Header class="sr-only">
+      <Dialog.Title>Search messages</Dialog.Title>
+      <Dialog.Description>Search saved messages, with from:, in: and date filters</Dialog.Description>
+    </Dialog.Header>
+    <div class="grid gap-2 border-b p-3">
+      <InputGroup.Root class="h-9">
+        <InputGroup.Addon><SearchIcon /></InputGroup.Addon>
+        <InputGroup.Input
+          bind:ref={input}
+          bind:value={q}
+          onkeydown={onKey}
+          placeholder="Search messages"
+          spellcheck="false"
+          role="combobox"
+          aria-label="Search messages"
+          aria-expanded={hits.length > 0 || suggestions.length > 0}
+          aria-controls="search-results"
+          aria-autocomplete="list"
+          aria-activedescendant={suggestions.length ? `search-sug-${sugSel}` : hits.length ? `search-hit-${sel}` : undefined}
+          data-autofocus
+        />
+        {#if busy}
+          <InputGroup.Addon align="inline-end"><Spinner aria-label="Searching" /></InputGroup.Addon>
+        {/if}
+      </InputGroup.Root>
       {#if origin}
         <Segmented label="Search in"
           bind:value={scope}
@@ -255,7 +271,7 @@
       {/if}
     </div>
     <div
-      class="results"
+      class="max-h-[56vh] min-h-48 overflow-y-auto p-1.5"
       bind:this={list}
       onscroll={onListScroll}
       id="search-results"
@@ -263,264 +279,96 @@
       aria-label={suggestions.length ? 'Suggestions' : hits.length ? 'Results' : undefined}
     >
       {#if !canSearch}
-        <p class="none">
-          Search uses messages saved on this computer, which is turned off.
-          <button class="link" onclick={() => (app.settingsOpen = { tab: 'privacy' })}>Change in Settings</button>
-        </p>
+        <Empty.Root class="border-0">
+          <Empty.Header>
+            <Empty.Media variant="icon"><SearchXIcon /></Empty.Media>
+            <Empty.Title>Search is off</Empty.Title>
+            <Empty.Description>Search uses messages saved on this computer, which is turned off.</Empty.Description>
+          </Empty.Header>
+          <Empty.Content>
+            <Button variant="outline" size="sm" onclick={() => (app.settingsOpen = { tab: 'privacy' })}>Change in Settings</Button>
+          </Empty.Content>
+        </Empty.Root>
       {:else if suggestions.length}
         {#each suggestions as name, i (name)}
-          <button
-            class="sug"
-            class:sel={i === sugSel}
-            id="search-sug-{i}"
-            role="option"
-            aria-selected={i === sugSel}
-            tabindex="-1"
-            onmouseenter={() => (sugSel = i)}
-            onclick={() => complete(name)}
-          >
-            <span class="dim">{token?.[1].toLowerCase()}:</span><b style={token?.[1].toLowerCase() === 'from' ? `--h:${nickHue(name)}` : ''} class:nick={token?.[1].toLowerCase() === 'from'}>{name}</b>
-          </button>
+          {@const from = token?.[1].toLowerCase() === 'from'}
+          <Item.Root size="xs" class="text-left aria-selected:bg-accent" onmouseenter={() => (sugSel = i)}>
+            {#snippet child({ props })}
+              <button
+                {...props}
+                id="search-sug-{i}"
+                role="option"
+                aria-selected={i === sugSel}
+                tabindex="-1"
+                onclick={() => complete(name)}
+              >
+                <span class="text-muted-foreground">{token?.[1].toLowerCase()}:</span><b class={['font-semibold', from && 'nick']} style={from ? `--h:${nickHue(name)}` : ''}>{name}</b>
+              </button>
+            {/snippet}
+          </Item.Root>
         {/each}
       {:else if !q.trim()}
-        <p class="eyebrow">Narrow it down</p>
+        <p class="eyebrow px-2.5 pt-1.5 pb-1">Narrow it down</p>
         {#each FILTERS as f (f.prefix)}
-          <button class="filter" tabindex="-1" onclick={() => addFilter(f.prefix)}>
-            <span class="code">{f.prefix}<span class="dim">{f.hint}</span></span>
-            <span class="dim">{f.label}</span>
-          </button>
+          <Item.Root size="xs" class="text-left hover:bg-accent focus-visible:bg-accent">
+            {#snippet child({ props })}
+              <button {...props} tabindex="-1" onclick={() => addFilter(f.prefix)}>
+                <span class="mono min-w-36 text-[12.5px]">{f.prefix}<span class="text-muted-foreground">{f.hint}</span></span>
+                <span class="text-muted-foreground">{f.label}</span>
+              </button>
+            {/snippet}
+          </Item.Root>
         {/each}
       {:else}
         {#each hits as h, i (h.network + '|' + h.target + '|' + (h.msg.tags.msgid ?? h.msg.tags.time) + '|' + i)}
           {@const w = where(h)}
           {@const nick = h.msg.source?.nick ?? ''}
-          <button
-            class="hit"
-            class:sel={i === sel}
-            id="search-hit-{i}"
-            role="option"
-            aria-selected={i === sel}
-            tabindex="-1"
-            disabled={!w.conn}
-            onmouseenter={() => (sel = i)}
-            onclick={() => choose(h)}
-          >
-            <div class="meta">
-              <span class="buf">{w.name}</span>
-              {#if w.conn}<span class="net">{w.conn.name}</span>{/if}
-              <span class="time">{stamp(hitTime(h))}</span>
-            </div>
-            <div class="line">
-              <b class="nick" style="--h:{nickHue(nick)}">{nick}</b>
-              <span class="txt">{#each marked(text(h)) as part, j (j)}{#if part.m}<mark>{part.t}</mark>{:else}{part.t}{/if}{/each}</span>
-            </div>
-          </button>
+          <Item.Root size="xs" class="flex-col items-stretch gap-0.5 py-1.5 text-left aria-selected:bg-accent disabled:opacity-50" onmouseenter={() => (sel = i)}>
+            {#snippet child({ props })}
+              <button
+                {...props}
+                id="search-hit-{i}"
+                role="option"
+                aria-selected={i === sel}
+                tabindex="-1"
+                disabled={!w.conn}
+                onclick={() => choose(h)}
+              >
+                <div class="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span class="font-semibold text-foreground/80">{w.name}</span>
+                  {#if w.conn}<Badge variant="secondary" class="h-4 px-1.5 text-[11px] font-normal text-muted-foreground">{w.conn.name}</Badge>{/if}
+                  <span class="ml-auto tabular-nums">{stamp(hitTime(h))}</span>
+                </div>
+                <div class="flex min-w-0 items-baseline gap-2 text-[13.5px]">
+                  <b class="nick flex-none font-semibold" style="--h:{nickHue(nick)}">{nick}</b>
+                  <span class="line-clamp-3 text-foreground/80 [overflow-wrap:anywhere] whitespace-pre-wrap">{#each marked(text(h)) as part, j (j)}{#if part.m}<mark class="rounded-[2px] bg-brand-soft text-foreground">{part.t}</mark>{:else}{part.t}{/if}{/each}</span>
+                </div>
+              </button>
+            {/snippet}
+          </Item.Root>
         {:else}
-          {#if !busy}<p class="none">No messages found</p>{/if}
+          {#if !busy}
+            <Empty.Root class="border-0">
+              <Empty.Header>
+                <Empty.Media variant="icon"><SearchXIcon /></Empty.Media>
+                <Empty.Title>No messages found</Empty.Title>
+                <Empty.Description>Try different words or fewer filters.</Empty.Description>
+              </Empty.Header>
+            </Empty.Root>
+          {/if}
         {/each}
-        {#if more}<p class="none">Loading older messages…</p>{/if}
+        {#if more}
+          <p class="flex items-center justify-center gap-2 p-3 text-[13px] text-muted-foreground"><Spinner class="size-3.5" />Loading older messages…</p>
+        {/if}
       {/if}
     </div>
-    <footer>
-      <span><span class="kbd">↑↓</span> navigate</span>
-      <span><span class="kbd">↵</span> {suggestions.length ? 'complete' : 'jump to message'}</span>
-      <span><span class="kbd">esc</span> close</span>
-      <span class="hint" aria-live="polite">
+    <footer class="flex items-center gap-4 border-t px-3 py-2 text-xs text-muted-foreground">
+      <span class="flex items-center gap-1.5"><Kbd>↑↓</Kbd> navigate</span>
+      <span class="flex items-center gap-1.5"><Kbd>↵</Kbd> {suggestions.length ? 'complete' : 'jump to message'}</span>
+      <span class="flex items-center gap-1.5"><Kbd>esc</Kbd> close</span>
+      <span class="ml-auto" aria-live="polite">
         {busy ? 'Searching…' : hits.length ? `${hits.length}${next !== null ? '+' : ''} result${hits.length === 1 ? '' : 's'}` : ''}
       </span>
     </footer>
-  </div>
-</div>
-
-<style>
-  .scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 80;
-    background: rgb(0 0 0 / 0.28);
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
-    padding-top: 12vh;
-    animation: fade 120ms;
-  }
-
-  @keyframes fade {
-    from {
-      opacity: 0;
-    }
-  }
-
-  .palette {
-    width: min(680px, 94vw);
-    background: var(--bg-raised);
-    border-radius: 12px;
-    box-shadow: var(--shadow);
-    overflow: hidden;
-    animation: drop 160ms var(--ease);
-  }
-
-  @keyframes drop {
-    from {
-      transform: translateY(-6px);
-      opacity: 0;
-    }
-  }
-
-  .head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding-right: 12px;
-    border-bottom: 1px solid var(--line);
-  }
-
-  input {
-    flex: 1;
-    min-width: 0;
-    height: 52px;
-    padding: 0 18px;
-    border: 0;
-    outline: none;
-    background: none;
-    font-size: 16px;
-    user-select: text;
-  }
-
-  input::placeholder {
-    color: var(--text-4);
-  }
-
-  .results {
-    max-height: 56vh;
-    overflow-y: auto;
-    padding: 6px;
-  }
-
-  .hit {
-    width: 100%;
-    display: grid;
-    gap: 2px;
-    padding: 7px 10px;
-    border-radius: 7px;
-    text-align: left;
-  }
-
-  .hit.sel {
-    background: var(--bg-active);
-  }
-
-  .hit:disabled {
-    opacity: 0.5;
-  }
-
-  .meta {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    font-size: 11.5px;
-    color: var(--text-3);
-  }
-
-  .buf {
-    font-weight: 600;
-    color: var(--text-2);
-  }
-
-  .time {
-    margin-left: auto;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .line {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    font-size: 13.5px;
-    min-width: 0;
-  }
-
-  .line b {
-    font-weight: 600;
-    flex: none;
-  }
-
-  .txt {
-    color: var(--text-2);
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-
-  .sug,
-  .filter {
-    width: 100%;
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    padding: 7px 10px;
-    border-radius: 7px;
-    text-align: left;
-    font-size: 13.5px;
-  }
-
-  .sug.sel,
-  .filter:hover {
-    background: var(--bg-active);
-  }
-
-  .sug b {
-    font-weight: 600;
-  }
-
-  .dim {
-    color: var(--text-3);
-  }
-
-  .code {
-    font-family: var(--font-mono);
-    font-size: 12.5px;
-    min-width: 150px;
-  }
-
-  .eyebrow {
-    margin: 4px 10px 6px;
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--text-3);
-  }
-
-  mark {
-    background: var(--accent-soft);
-    color: var(--text);
-    border-radius: 2px;
-  }
-
-  .none {
-    margin: 0;
-    padding: 18px 12px;
-    color: var(--text-3);
-    font-size: 13px;
-  }
-
-  .link {
-    color: var(--accent);
-  }
-
-  footer {
-    display: flex;
-    gap: 14px;
-    padding: 8px 14px;
-    border-top: 1px solid var(--line);
-    font-size: 11.5px;
-    color: var(--text-3);
-  }
-
-  .hint {
-    margin-left: auto;
-  }
-</style>
+  </Dialog.Content>
+</Dialog.Root>
