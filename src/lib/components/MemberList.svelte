@@ -135,7 +135,7 @@
         {@const r = model.rows[i]}
         {#if r.kind === 'head'}
           <div
-            class="eyebrow absolute inset-x-0 flex h-9 items-end justify-between px-2 pb-1"
+            class="eyebrow absolute inset-x-0 flex h-[36px] items-end justify-between px-2 pb-1"
             style="top:{offs[i]}px"
             aria-hidden="true"
           >
