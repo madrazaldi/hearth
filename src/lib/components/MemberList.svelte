@@ -6,6 +6,7 @@
   import { memberLabel, stepIndex } from '../a11y';
   import { offsets, rangeFor } from '../virtual';
   import Avatar from './Avatar.svelte';
+  import { Input } from '$lib/components/ui/input';
 
   let { buf, onnick }: { buf: Buffer; onnick: (nick: string, e: MouseEvent) => void } = $props();
 
@@ -116,29 +117,35 @@
   }
 </script>
 
-<aside aria-label="Members">
+<aside aria-label="Members" class="flex min-h-0 w-(--members-w) flex-none flex-col border-l bg-sidebar/40">
   {#if buf.members.size > 30}
-    <div class="search">
-      <input class="input" bind:value={query} placeholder="Find member" aria-label="Find member" />
+    <div class="px-2.5 pt-2.5 pb-1">
+      <Input bind:value={query} placeholder="Find member" aria-label="Find member" class="h-7 text-[12.5px] md:text-[12.5px]" />
     </div>
   {/if}
   <div
-    class="list"
+    class="min-h-0 flex-1 overflow-y-auto px-2 pb-4"
     bind:this={el}
     onscroll={() => el && (scrollTop = el.scrollTop)}
     role="list"
     aria-label="{model.members.length.toLocaleString()} members"
   >
-    <div class="canvas" style="height:{offs[model.rows.length]}px">
+    <div class="relative" style="height:{offs[model.rows.length]}px">
       {#each shown as i (rowKey(i))}
         {@const r = model.rows[i]}
         {#if r.kind === 'head'}
-          <div class="head eyebrow" style="top:{offs[i]}px" aria-hidden="true">{r.title} <span>{counts[r.title] ?? 0}</span></div>
+          <div
+            class="eyebrow absolute inset-x-0 flex h-[36px] items-end justify-between px-2 pb-1"
+            style="top:{offs[i]}px"
+            aria-hidden="true"
+          >
+            {r.title} <span class="font-normal tabular-nums">{counts[r.title] ?? 0}</span>
+          </div>
         {:else}
           {@const m = r.m}
-          <div class="row" style="top:{offs[i]}px" role="listitem" aria-setsize={model.members.length} aria-posinset={r.pos}>
+          <div class="absolute inset-x-0" style="top:{offs[i]}px" role="listitem" aria-setsize={model.members.length} aria-posinset={r.pos}>
             <button
-              class="member focus-inset"
+              class="member focus-inset flex h-[26px] w-full items-center gap-1 rounded-md pr-2 pl-1 text-left text-[13px] hover:bg-accent/60 focus-visible:bg-accent/60"
               class:away={m.away}
               data-nick={m.nick}
               tabindex={i === focusRow ? 0 : -1}
@@ -148,114 +155,24 @@
               onclick={(e) => onnick(m.nick, e)}
               title={m.user ? `${m.nick}!${m.user}@${m.host}${m.account ? ` · ${m.account}` : ''}` : m.nick}
             >
-              <span class="prefix">{m.prefix[0] ?? ''}</span>
-              {#if app.settings.loadAvatars}<Avatar conn={buf.conn} nick={m.nick} />{/if}
-              <span class="nick" style="--h:{nickHue(m.nick)}">{m.nick}</span>
+              <span class="mono w-3 flex-none text-center text-[11.5px] text-muted-foreground">{m.prefix[0] ?? ''}</span>
+              {#if app.settings.loadAvatars}<span class="mr-[3px] flex"><Avatar conn={buf.conn} nick={m.nick} /></span>{/if}
+              <span class="nick truncate" style="--h:{nickHue(m.nick)}">{m.nick}</span>
             </button>
           </div>
         {/if}
       {/each}
     </div>
     {#if !buf.members.size}
-      <p class="empty">{buf.joined ? 'Loading members…' : 'Not joined'}</p>
+      <p class="p-2 text-[12.5px] text-muted-foreground">{buf.joined ? 'Loading members…' : 'Not joined'}</p>
     {/if}
   </div>
 </aside>
 
 <style>
-  aside {
-    width: var(--members-w);
-    flex: none;
-    border-left: 1px solid var(--line);
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-  }
-
-  .search {
-    padding: 10px 10px 4px;
-  }
-
-  .search .input {
-    height: 28px;
-    font-size: 12.5px;
-  }
-
-  .list {
-    flex: 1;
-    overflow-y: auto;
-    padding: 0 8px 16px;
-  }
-
-  .canvas {
-    position: relative;
-  }
-
-  .head,
-  .row {
-    position: absolute;
-    left: 0;
-    right: 0;
-  }
-
-  .head {
-    height: 36px;
-    margin: 0;
-    padding: 0 8px 4px;
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-  }
-
-  .head span {
-    font-weight: 500;
-    color: var(--text-4);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .member {
-    width: 100%;
-    height: 26px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 0 8px 0 4px;
-    border-radius: 6px;
-    font-size: 13px;
-    text-align: left;
-  }
-
-  .member:hover {
-    background: var(--bg-hover);
-  }
-
-  .prefix {
-    width: 12px;
-    flex: none;
-    text-align: center;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--text-3);
-  }
-
-  .nick {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .away .nick,
+  /* Away members fade as a whole, avatar included. */
+  .away :global(.nick),
   .away :global(.avatar) {
     opacity: 0.42;
-  }
-
-  .member :global(.avatar) {
-    margin-right: 3px;
-  }
-
-  .empty {
-    color: var(--text-3);
-    font-size: 12.5px;
-    padding: 8px;
   }
 </style>

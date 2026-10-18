@@ -2,7 +2,15 @@
   import { app, type Buffer } from '../state.svelte';
   import { nickHue } from '../nickcolor';
   import Avatar from './Avatar.svelte';
-  import { modal } from '../a11y';
+  import Icon from './Icon.svelte';
+  import Shield from '@lucide/svelte/icons/shield';
+  import ShieldOff from '@lucide/svelte/icons/shield-off';
+  import Mic from '@lucide/svelte/icons/mic';
+  import MicOff from '@lucide/svelte/icons/mic-off';
+  import UserX from '@lucide/svelte/icons/user-x';
+  import EyeOff from '@lucide/svelte/icons/eye-off';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+  import { Badge } from '$lib/components/ui/badge';
 
   let { buf, nick, x, y, onclose }: { buf: Buffer; nick: string; x: number; y: number; onclose: () => void } = $props();
 
@@ -21,173 +29,101 @@
   const online = $derived(conn.online.get(conn.fold(nick)));
   const profile = $derived(conn.profile(nick));
   const showAvatar = $derived(app.settings.loadAvatars && !!profile.avatar);
+  const hasMeta = $derived(
+    !!(member?.prefix || member?.account || member?.away || online !== undefined || ignored),
+  );
 
-  let el = $state<HTMLDivElement>();
-  let pos = $state({ left: 0, top: 0 });
-  $effect(() => {
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    pos = {
-      left: Math.min(x, window.innerWidth - r.width - 12),
-      top: Math.min(y + 8, window.innerHeight - r.height - 12),
-    };
-  });
-
-  function act(fn: () => void) {
-    fn();
-    onclose();
-  }
+  // Menus return focus to their trigger, which here is just a point on screen.
+  const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  // Mention hands focus to the composer instead, so typing continues there.
+  let toComposer = false;
 
   function mention() {
+    toComposer = true;
     window.dispatchEvent(new CustomEvent('hearth:insert', { detail: `${nick}: ` }));
   }
 </script>
 
-<div
-  class="pop"
-  bind:this={el}
-  style="left:{pos.left}px; top:{pos.top}px"
-  role="dialog"
-  aria-modal="true"
-  aria-labelledby="nick-menu-name"
-  tabindex="-1"
-  onclick={(e) => e.stopPropagation()}
-  onkeydown={() => {}}
-  use:modal={{ onclose }}
->
-  <div class="head" class:with-avatar={showAvatar}>
-    {#if showAvatar}<Avatar {conn} {nick} size={40} />{/if}
-    <div class="name nick" id="nick-menu-name" style="--h:{nickHue(nick)}">{nick}</div>
-    {#if profile.displayName && profile.displayName !== nick}<div class="display">{profile.displayName}</div>{/if}
-    {#if member?.user}<div class="mask mono selectable">{member.user}@{member.host}</div>{/if}
-    <div class="meta">
-      {#if member?.prefix}<span>{member.prefix}</span>{/if}
-      {#if member?.account}<span>signed in as {member.account}</span>{/if}
-      {#if member?.away}<span class="away">away</span>{/if}
-      {#if online !== undefined}<span class:on={online}>{online ? 'online' : 'offline'}</span>{/if}
-      {#if ignored}<span class="away">ignored</span>{/if}
+<!-- The menu opens at a point, so a zero-size trigger stands in as its anchor. -->
+<DropdownMenu.Root open onOpenChange={(o) => !o && onclose()}>
+  <DropdownMenu.Trigger
+    tabindex={-1}
+    aria-hidden="true"
+    class="pointer-events-none fixed size-0 opacity-0"
+    style="left:{x}px; top:{y}px"
+  />
+  <DropdownMenu.Content
+    side="bottom"
+    align="start"
+    sideOffset={8}
+    collisionPadding={8}
+    class="w-72 p-0"
+    aria-labelledby="nick-menu-name"
+    onclick={(e) => e.stopPropagation()}
+    onCloseAutoFocus={(e) => {
+      e.preventDefault();
+      if (toComposer) window.dispatchEvent(new Event('hearth:focus-composer'));
+      else if (opener?.isConnected) opener.focus({ preventScroll: true });
+    }}
+  >
+    <div class="flex gap-3 border-b px-3.5 pt-3 pb-2.5">
+      {#if showAvatar}<Avatar {conn} {nick} size={40} />{/if}
+      <div class="min-w-0 flex-1">
+        <div class="nick truncate text-[15px] leading-tight font-semibold" id="nick-menu-name" style="--h:{nickHue(nick)}">{nick}</div>
+        {#if profile.displayName && profile.displayName !== nick}
+          <div class="truncate text-[12.5px] text-muted-foreground">{profile.displayName}</div>
+        {/if}
+        {#if member?.user}
+          <div class="selectable mono mt-0.5 text-[11.5px] break-all text-muted-foreground">{member.user}@{member.host}</div>
+        {/if}
+      </div>
     </div>
-    {#if member?.realname}<div class="real">{member.realname}</div>{/if}
-  </div>
-  <div class="actions">
-    {#if !self}
-      <button onclick={() => act(() => app.query(conn, nick))}>Message</button>
-      <button onclick={() => act(mention)}>Mention</button>
+    {#if hasMeta || member?.realname}
+      <div class="flex flex-col gap-1.5 border-b px-3.5 py-2.5">
+        {#if hasMeta}
+          <div class="flex flex-wrap gap-1">
+            {#if member?.prefix}<Badge variant="secondary" class="mono">{member.prefix}</Badge>{/if}
+            {#if online !== undefined}
+              <Badge variant="outline" class={online ? 'text-ok' : 'text-muted-foreground'}>{online ? 'online' : 'offline'}</Badge>
+            {/if}
+            {#if member?.away}<Badge variant="outline" class="text-warn">away</Badge>{/if}
+            {#if ignored}<Badge variant="outline" class="text-warn">ignored</Badge>{/if}
+            {#if member?.account}<Badge variant="outline" class="text-muted-foreground">signed in as {member.account}</Badge>{/if}
+          </div>
+        {/if}
+        {#if member?.realname}<div class="text-[12.5px] text-foreground/80">{member.realname}</div>{/if}
+      </div>
     {/if}
-    <button onclick={() => act(() => conn.sendFrom(buf, `WHOIS ${nick} ${nick}`))}>Whois</button>
-    {#if !self && conn.canMonitor}
-      <button onclick={() => act(() => (watched ? app.unwatch(conn, nick) : app.watch(conn, nick)))}>
-        {watched ? 'Stop watching' : 'Tell me when online'}
-      </button>
-    {/if}
-    {#if !self}
-      <button onclick={() => act(() => (ignored ? app.unignore(nick) : app.ignore(nick)))}>{ignored ? 'Stop ignoring' : 'Ignore'}</button>
-    {/if}
-    {#if canModerate && !self}
-      <hr />
-      <button onclick={() => act(() => conn.send(`MODE ${buf.name} ${isOp ? '-' : '+'}o ${nick}`))}>{isOp ? 'Remove operator' : 'Make operator'}</button>
-      <button onclick={() => act(() => conn.send(`MODE ${buf.name} ${isVoice ? '-' : '+'}v ${nick}`))}>{isVoice ? 'Remove voice' : 'Give voice'}</button>
-      <button class="danger" onclick={() => act(() => conn.send(`KICK ${buf.name} ${nick}`))}>Kick</button>
-    {/if}
-  </div>
-</div>
-
-<style>
-  .pop {
-    position: fixed;
-    z-index: 70;
-    width: 260px;
-    background: var(--bg-raised);
-    border-radius: 10px;
-    box-shadow: var(--shadow);
-    overflow: hidden;
-    animation: pop 140ms var(--ease);
-  }
-
-  @keyframes pop {
-    from {
-      opacity: 0;
-      transform: translateY(-3px) scale(0.99);
-    }
-  }
-
-  .head {
-    padding: 12px 14px 10px;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .name {
-    font-size: 15px;
-    font-weight: 600;
-  }
-
-  .with-avatar :global(.avatar) {
-    margin-bottom: 8px;
-  }
-
-  .display {
-    font-size: 12.5px;
-    color: var(--text-2);
-  }
-
-  .mask {
-    margin-top: 2px;
-    font-size: 11.5px;
-    color: var(--text-3);
-    overflow-wrap: anywhere;
-  }
-
-  .meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 10px;
-    margin-top: 6px;
-    font-size: 12px;
-    color: var(--text-3);
-  }
-
-  .meta:empty {
-    display: none;
-  }
-
-  .away {
-    color: var(--warn);
-  }
-
-  .on {
-    color: var(--ok);
-  }
-
-  .real {
-    margin-top: 6px;
-    font-size: 12.5px;
-    color: var(--text-2);
-  }
-
-  .actions {
-    padding: 4px;
-    display: grid;
-  }
-
-  .actions button {
-    text-align: left;
-    padding: 6px 10px;
-    border-radius: 6px;
-    font-size: 13px;
-  }
-
-  .actions button:hover {
-    background: var(--accent);
-    color: var(--accent-text);
-  }
-
-  .actions .danger {
-    color: var(--danger);
-  }
-
-  hr {
-    border: 0;
-    border-top: 1px solid var(--line);
-    margin: 4px 0;
-  }
-</style>
+    <div class="p-1">
+      {#if !self}
+        <DropdownMenu.Item onSelect={() => app.query(conn, nick)}><Icon name="message" size={15} />Message</DropdownMenu.Item>
+        <DropdownMenu.Item onSelect={mention}><Icon name="at" size={15} />Mention</DropdownMenu.Item>
+      {/if}
+      <DropdownMenu.Item onSelect={() => conn.sendFrom(buf, `WHOIS ${nick} ${nick}`)}><Icon name="info" size={15} />Whois</DropdownMenu.Item>
+      {#if !self && conn.canMonitor}
+        <DropdownMenu.Item onSelect={() => (watched ? app.unwatch(conn, nick) : app.watch(conn, nick))}>
+          <Icon name={watched ? 'bellOff' : 'bell'} size={15} />
+          {watched ? 'Stop watching' : 'Tell me when online'}
+        </DropdownMenu.Item>
+      {/if}
+      {#if !self}
+        <DropdownMenu.Item onSelect={() => (ignored ? app.unignore(nick) : app.ignore(nick))}>
+          {#if ignored}<Icon name="eye" size={15} />{:else}<EyeOff size={15} />{/if}
+          {ignored ? 'Stop ignoring' : 'Ignore'}
+        </DropdownMenu.Item>
+      {/if}
+      {#if canModerate && !self}
+        <DropdownMenu.Separator />
+        <DropdownMenu.Item onSelect={() => conn.send(`MODE ${buf.name} ${isOp ? '-' : '+'}o ${nick}`)}>
+          {#if isOp}<ShieldOff size={15} />{:else}<Shield size={15} />{/if}
+          {isOp ? 'Remove operator' : 'Make operator'}
+        </DropdownMenu.Item>
+        <DropdownMenu.Item onSelect={() => conn.send(`MODE ${buf.name} ${isVoice ? '-' : '+'}v ${nick}`)}>
+          {#if isVoice}<MicOff size={15} />{:else}<Mic size={15} />{/if}
+          {isVoice ? 'Remove voice' : 'Give voice'}
+        </DropdownMenu.Item>
+        <DropdownMenu.Item variant="destructive" onSelect={() => conn.send(`KICK ${buf.name} ${nick}`)}><UserX size={15} />Kick</DropdownMenu.Item>
+      {/if}
+    </div>
+  </DropdownMenu.Content>
+</DropdownMenu.Root>

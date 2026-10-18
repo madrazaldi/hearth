@@ -2,11 +2,17 @@
   import { app, type Conn } from '../state.svelte';
   import { escapeAttr } from '../irc';
   import Switch from './Switch.svelte';
+  import { Button } from '$lib/components/ui/button';
+  import { Input } from '$lib/components/ui/input';
+  import { Label } from '$lib/components/ui/label';
+  import { cn } from '$lib/utils';
 
   let { conn }: { conn: Conn } = $props();
 
   type Draft = { netid: string | null; name: string; host: string; port: string; tls: boolean; nickname: string; username: string; pass: string };
   const blank = (): Draft => ({ netid: null, name: '', host: '', port: '6697', tls: true, nickname: '', username: '', pass: '' });
+
+  const uid = $props.id();
 
   let editing = $state<Draft | null>(null);
   let confirmDelete = $state<string | null>(null);
@@ -62,164 +68,76 @@
 </script>
 
 <section>
-  <div class="head">
-    <h3>Networks on this bouncer</h3>
-    {#if !editing}<button class="btn" onclick={() => (editing = blank())}>Add network</button>{/if}
+  <div class="mb-3 flex items-center justify-between">
+    <h3 class="text-[15px] font-semibold">Networks on this bouncer</h3>
+    {#if !editing}<Button variant="outline" size="sm" onclick={() => (editing = blank())}>Add network</Button>{/if}
   </div>
 
   {#if editing}
-    <form onsubmit={save}>
-      <div class="grid">
-        <label class="field"><span>Name</span><input class="input" bind:value={editing.name} placeholder="Libera.Chat" /></label>
-        <label class="field grow"><span>Host</span><input class="input mono" bind:value={editing.host} placeholder="irc.libera.chat" spellcheck="false" /></label>
-        <label class="field port"><span>Port</span><input class="input mono" bind:value={editing.port} inputmode="numeric" /></label>
+    <form class="mb-3.5 grid gap-3 rounded-lg border bg-card p-3.5" onsubmit={save}>
+      <div class="grid grid-cols-[1fr_1.4fr_90px] gap-2.5">
+        <div class="grid gap-1.5">
+          <Label for="{uid}-name">Name</Label>
+          <Input id="{uid}-name" bind:value={editing.name} placeholder="Libera.Chat" />
+        </div>
+        <div class="grid gap-1.5">
+          <Label for="{uid}-host">Host</Label>
+          <Input id="{uid}-host" class="mono" bind:value={editing.host} placeholder="irc.libera.chat" spellcheck="false" />
+        </div>
+        <div class="grid gap-1.5">
+          <Label for="{uid}-port">Port</Label>
+          <Input id="{uid}-port" class="mono" bind:value={editing.port} inputmode="numeric" />
+        </div>
       </div>
-      <div class="grid three">
-        <label class="field"><span>Nickname</span><input class="input" bind:value={editing.nickname} placeholder="Bouncer default" spellcheck="false" /></label>
-        <label class="field"><span>Username</span><input class="input" bind:value={editing.username} placeholder="Bouncer default" spellcheck="false" /></label>
-        <label class="field">
-          <span>Server password</span>
-          <input class="input" type="password" bind:value={editing.pass} placeholder={editing.netid ? 'Unchanged' : 'Usually empty'} />
-        </label>
+      <div class="grid grid-cols-3 gap-2.5">
+        <div class="grid gap-1.5">
+          <Label for="{uid}-nick">Nickname</Label>
+          <Input id="{uid}-nick" bind:value={editing.nickname} placeholder="Bouncer default" spellcheck="false" />
+        </div>
+        <div class="grid gap-1.5">
+          <Label for="{uid}-user">Username</Label>
+          <Input id="{uid}-user" bind:value={editing.username} placeholder="Bouncer default" spellcheck="false" />
+        </div>
+        <div class="grid gap-1.5">
+          <Label for="{uid}-pass">Server password</Label>
+          <Input id="{uid}-pass" type="password" bind:value={editing.pass} placeholder={editing.netid ? 'Unchanged' : 'Usually empty'} />
+        </div>
       </div>
       <Switch bind:checked={editing.tls} label="Use TLS" />
-      <div class="actions">
-        <span class="spacer"></span>
-        <button type="button" class="btn ghost" onclick={() => (editing = null)}>Cancel</button>
-        <button type="submit" class="btn primary">{editing.netid ? 'Save network' : 'Add network'}</button>
+      <div class="flex justify-end gap-2">
+        <Button type="button" variant="ghost" onclick={() => (editing = null)}>Cancel</Button>
+        <Button type="submit">{editing.netid ? 'Save network' : 'Add network'}</Button>
       </div>
     </form>
   {/if}
 
-  <div class="list">
+  <div class="grid divide-y overflow-hidden rounded-lg border">
     {#each networks as [netid, a] (netid)}
-      <div class="net">
-        <span class="dot {a.state ?? ''}"></span>
-        <div class="main">
-          <div class="name">{a.name || a.host || netid}</div>
-          <div class="host mono">{a.host}{a.port ? ':' + a.port : ''}{a.tls === '0' ? '' : ' · TLS'}{a.error ? ` · ${a.error}` : ''}</div>
+      <div class="flex items-center gap-2.5 px-3.5 py-2.5">
+        <span
+          class={cn(
+            'size-1.5 flex-none rounded-full bg-muted-foreground/50',
+            a.state === 'connected' && 'bg-ok',
+            a.state === 'connecting' && 'bg-warn',
+            a.state === 'disconnected' && 'bg-destructive',
+          )}
+        ></span>
+        <div class="min-w-0 flex-1">
+          <div class="text-sm font-medium">{a.name || a.host || netid}</div>
+          <div class="mono truncate text-xs text-muted-foreground">
+            {a.host}{a.port ? ':' + a.port : ''}{a.tls === '0' ? '' : ' · TLS'}{a.error ? ` · ${a.error}` : ''}
+          </div>
         </div>
         {#if confirmDelete === netid}
-          <button class="btn danger" onclick={() => remove(netid)}>Really remove?</button>
-          <button class="btn ghost" onclick={() => (confirmDelete = null)}>Keep</button>
+          <Button variant="destructive" size="sm" onclick={() => remove(netid)}>Really remove?</Button>
+          <Button variant="ghost" size="sm" onclick={() => (confirmDelete = null)}>Keep</Button>
         {:else}
-          <button class="btn ghost danger" onclick={() => (confirmDelete = netid)}>Remove</button>
-          <button class="btn" onclick={() => edit(netid, a)}>Edit</button>
+          <Button variant="ghost" size="sm" class="text-destructive hover:text-destructive" onclick={() => (confirmDelete = netid)}>Remove</Button>
+          <Button variant="outline" size="sm" onclick={() => edit(netid, a)}>Edit</Button>
         {/if}
       </div>
     {:else}
-      <p class="empty">No networks yet.</p>
+      <p class="m-0 p-3.5 text-[13px] text-muted-foreground">No networks yet.</p>
     {/each}
   </div>
 </section>
-
-<style>
-  section {
-    margin-top: 28px;
-    padding-top: 20px;
-    border-top: 1px solid var(--line);
-  }
-
-  .head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 12px;
-  }
-
-  h3 {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-  }
-
-  form {
-    display: grid;
-    gap: 12px;
-    padding: 14px;
-    margin-bottom: 14px;
-    border-radius: 10px;
-    background: var(--bg-side);
-    box-shadow: 0 0 0 1px var(--line) inset;
-  }
-
-  .grid {
-    display: grid;
-    grid-template-columns: 1fr 1.4fr 90px;
-    gap: 10px;
-  }
-
-  .grid.three {
-    grid-template-columns: 1fr 1fr 1fr;
-  }
-
-  .actions {
-    display: flex;
-    gap: 8px;
-  }
-
-  .spacer {
-    flex: 1;
-  }
-
-  .list {
-    display: grid;
-    border-radius: 10px;
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
-    overflow: hidden;
-  }
-
-  .net {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 14px;
-  }
-
-  .net + .net {
-    border-top: 1px solid var(--line);
-  }
-
-  .main {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .name {
-    font-weight: 500;
-  }
-
-  .host {
-    font-size: 12px;
-    color: var(--text-3);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--text-4);
-  }
-
-  .dot.connected {
-    background: var(--ok);
-  }
-
-  .dot.connecting {
-    background: var(--warn);
-  }
-
-  .dot.disconnected {
-    background: var(--danger);
-  }
-
-  .empty {
-    margin: 0;
-    padding: 14px;
-    color: var(--text-3);
-    font-size: 13px;
-  }
-</style>

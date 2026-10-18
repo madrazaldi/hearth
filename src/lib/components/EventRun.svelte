@@ -58,19 +58,19 @@
 <style>
   .run-toggle {
     text-align: left;
-    color: var(--text-3);
+    color: var(--muted-foreground);
     display: inline;
   }
 
   .run-toggle:hover {
-    color: var(--text-2);
+    color: var(--foreground);
   }
 
   .chev {
     display: inline-flex;
     vertical-align: middle;
     margin-left: 4px;
-    color: var(--text-4);
+    color: var(--muted-foreground);
     transition: transform 150ms var(--ease);
   }
 

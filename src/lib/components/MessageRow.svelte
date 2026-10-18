@@ -110,12 +110,12 @@
   }
 
   .mode-prefix {
-    color: var(--text-3);
+    color: var(--muted-foreground);
     font-weight: 500;
   }
 
   .notice-mark {
-    color: var(--text-4);
+    color: var(--muted-foreground);
     margin-right: 4px;
   }
 
@@ -126,15 +126,18 @@
   .head-time {
     font-family: var(--font-mono);
     font-size: 11px;
-    color: var(--text-4);
+    color: var(--muted-foreground);
   }
 
+  /* shadcn's outline badge, small. */
   .tag {
     font-size: 10.5px;
-    color: var(--text-3);
-    padding: 0 5px;
-    border-radius: 4px;
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
+    line-height: 16px;
+    font-weight: 500;
+    color: var(--muted-foreground);
+    padding: 0 6px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
   }
 
   /* Replies and reactions */
@@ -145,18 +148,18 @@
     max-width: 100%;
     margin: 1px 0 1px;
     font-size: 0.86em;
-    color: var(--text-3);
+    color: var(--muted-foreground);
     text-align: left;
     white-space: nowrap;
     overflow: hidden;
   }
 
   .reply-quote:not(:disabled):hover .reply-snip {
-    color: var(--text-2);
+    color: var(--foreground);
   }
 
   .reply-arrow {
-    color: var(--text-4);
+    color: var(--muted-foreground);
   }
 
   .reply-nick {
@@ -180,29 +183,36 @@
     margin: 3px 0 2px;
   }
 
+  /* shadcn's outline badge; "mine" takes the brand tint. */
   .chip {
     height: 22px;
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    padding: 0 7px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
     border-radius: 11px;
     font-size: 13px;
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
+    transition: background-color 120ms var(--ease);
   }
 
   .chip span {
     font-size: 11.5px;
-    color: var(--text-2);
+    font-weight: 500;
+    color: var(--muted-foreground);
     font-variant-numeric: tabular-nums;
   }
 
   .chip.mine {
-    background: var(--accent-soft);
-    box-shadow: 0 0 0 1px color-mix(in oklab, var(--accent) 50%, transparent) inset;
+    background: var(--brand-soft);
+    border-color: color-mix(in oklab, var(--brand) 45%, transparent);
+  }
+
+  .chip.mine span {
+    color: var(--brand);
   }
 
   .chip:not(:disabled):hover {
-    background: var(--bg-active);
+    background: var(--muted);
   }
 </style>

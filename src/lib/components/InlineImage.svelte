@@ -84,10 +84,10 @@
     max-width: 100%;
     margin: 6px 0 4px;
     padding: 0;
-    border-radius: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     overflow: hidden;
-    background: var(--bg-sunken);
-    box-shadow: 0 0 0 1px var(--line-strong) inset;
+    background: var(--muted);
     cursor: zoom-in;
   }
 
@@ -118,12 +118,13 @@
     left: 8px;
     bottom: 8px;
     padding: 1px 6px;
-    border-radius: 4px;
+    border-radius: 6px;
     font-size: 10.5px;
     font-weight: 600;
     letter-spacing: 0.04em;
     color: #fff;
-    background: rgb(0 0 0 / 0.55);
+    background: rgb(0 0 0 / 0.6);
+    backdrop-filter: blur(4px);
     pointer-events: none;
   }
 
@@ -139,7 +140,7 @@
   }
 
   .inline-image:focus-visible {
-    outline: 2px solid var(--accent);
+    outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
 </style>

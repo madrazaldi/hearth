@@ -3,6 +3,12 @@
   import { matchingRule, ruleError } from '../format';
   import { isIgnored } from '../ignore';
   import { casefold } from '../irc';
+  import { Input } from '$lib/components/ui/input';
+  import { Textarea } from '$lib/components/ui/textarea';
+  import { Label } from '$lib/components/ui/label';
+  import { cn } from '$lib/utils';
+
+  const uid = $props.id();
 
   let { serverId, nick }: { serverId: string; nick: string } = $props();
 
@@ -50,80 +56,56 @@
   }
 </script>
 
-<div class="highlights">
-  <h3>Highlights on this server</h3>
-  <p class="lede">Added to your global highlight words. For a bouncer, these apply to all of its networks.</p>
-  <label class="field">
-    <span>Extra highlight words</span>
-    <textarea class="input mono" rows="3" bind:value={words} onchange={save} placeholder={'deploy\n/\\bci (failed|broke)\\b/i'} spellcheck="false"></textarea>
+<div class="grid gap-3.5">
+  <div class="grid gap-1">
+    <h3 class="text-[15px] font-semibold">Highlights on this server</h3>
+    <p class="m-0 text-[12.5px] text-muted-foreground">Added to your global highlight words. For a bouncer, these apply to all of its networks.</p>
+  </div>
+  <div class="grid gap-1.5">
+    <Label for="{uid}-words">Extra highlight words</Label>
+    <Textarea
+      id="{uid}-words"
+      class="mono min-h-0"
+      rows={3}
+      bind:value={words}
+      onchange={save}
+      placeholder={'deploy\n/\\bci (failed|broke)\\b/i'}
+      spellcheck="false"
+      aria-invalid={errors.length > 0}
+    />
     {#if errors.length}
-      {#each errors as e (e)}<small class="bad">Invalid pattern: {e}</small>{/each}
+      {#each errors as e (e)}<small class="text-xs text-destructive">Invalid pattern: {e}</small>{/each}
     {:else}
-      <small>One per line. Words match whole-word, ignoring case. Wrap a regular expression in slashes: <code>/pattern/i</code>.</small>
+      <small class="text-xs text-muted-foreground">
+        One per line. Words match whole-word, ignoring case. Wrap a regular expression in slashes: {@render code('/pattern/i')}.
+      </small>
     {/if}
-  </label>
-  <label class="field">
-    <span>Never highlight from</span>
-    <input class="input mono" bind:value={never} onchange={save} placeholder="ChanServ, *bot*, *!*@services.*" spellcheck="false" autocapitalize="off" />
-    <small>Nicks or <code>nick!user@host</code> masks, such as bots that repeat your name.</small>
-  </label>
-  <div class="field">
-    <span>Test a message</span>
-    <div class="test">
-      <input class="input mono from" bind:value={sampleFrom} placeholder="from" spellcheck="false" autocapitalize="off" aria-label="Sender" />
-      <input class="input" bind:value={sample} placeholder="Type a sample line" aria-label="Sample message" />
+  </div>
+  <div class="grid gap-1.5">
+    <Label for="{uid}-never">Never highlight from</Label>
+    <Input
+      id="{uid}-never"
+      class="mono"
+      bind:value={never}
+      onchange={save}
+      placeholder="ChanServ, *bot*, *!*@services.*"
+      spellcheck="false"
+      autocapitalize="off"
+    />
+    <small class="text-xs text-muted-foreground">Nicks or {@render code('nick!user@host')} masks, such as bots that repeat your name.</small>
+  </div>
+  <div class="grid gap-1.5">
+    <Label for="{uid}-sample">Test a message</Label>
+    <div class="flex gap-2">
+      <Input class="mono w-30 min-w-0 flex-none" bind:value={sampleFrom} placeholder="from" spellcheck="false" autocapitalize="off" aria-label="Sender" />
+      <Input id="{uid}-sample" class="min-w-0 flex-1" bind:value={sample} placeholder="Type a sample line" />
     </div>
     {#if result}
-      <small class:hit={result.hit}>{result.hit ? 'Highlights' : 'Doesn’t highlight'} · {result.why}</small>
+      <small class={cn('text-xs text-muted-foreground', result.hit && 'text-brand')}>
+        {result.hit ? 'Highlights' : 'Doesn’t highlight'} · {result.why}
+      </small>
     {/if}
   </div>
 </div>
 
-<style>
-  .highlights {
-    display: grid;
-    gap: 14px;
-    margin-top: 32px;
-    padding-top: 24px;
-    border-top: 1px solid var(--line);
-  }
-
-  h3 {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-  }
-
-  .lede {
-    margin: -10px 0 0;
-    color: var(--text-3);
-    font-size: 12.5px;
-  }
-
-  .test {
-    display: flex;
-    gap: 8px;
-  }
-
-  .test .input {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .test .from {
-    flex: 0 0 120px;
-  }
-
-  .bad {
-    color: var(--danger) !important;
-  }
-
-  .hit {
-    color: var(--accent) !important;
-  }
-
-  code {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-  }
-</style>
+{#snippet code(text: string)}<code class="rounded bg-muted px-1 py-0.5 font-mono text-[11.5px] text-foreground">{text}</code>{/snippet}

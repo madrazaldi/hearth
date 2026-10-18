@@ -14,48 +14,24 @@
   }
 </script>
 
-<div class="seg" role="radiogroup" aria-label={label} tabindex="-1" onkeydown={onKey}>
+<div
+  role="radiogroup"
+  aria-label={label}
+  tabindex="-1"
+  onkeydown={onKey}
+  class="inline-flex w-max gap-px justify-self-start rounded-lg bg-muted p-[3px]"
+>
   {#each options as o, i (o.value)}
     <button
+      type="button"
       role="radio"
       aria-checked={value === o.value}
       tabindex={i === (at < 0 ? 0 : at) ? 0 : -1}
-      class:on={value === o.value}
+      data-state={value === o.value ? 'on' : 'off'}
       onclick={() => (value = o.value)}
+      class="h-7 rounded-md px-3 text-[13px] text-muted-foreground outline-none transition-[color,background-color,box-shadow] hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm dark:data-[state=on]:bg-input/50"
     >
       {o.label}
     </button>
   {/each}
 </div>
-
-<style>
-  .seg {
-    display: inline-flex;
-    justify-self: start;
-    width: max-content;
-    padding: 2px;
-    gap: 2px;
-    border-radius: 8px;
-    background: var(--bg-sunken);
-    box-shadow: 0 0 0 1px var(--line) inset;
-  }
-
-  button {
-    height: 26px;
-    padding: 0 12px;
-    border-radius: 6px;
-    font-size: 12.5px;
-    color: var(--text-3);
-    transition: color 120ms, background 120ms;
-  }
-
-  button:hover {
-    color: var(--text);
-  }
-
-  button.on {
-    background: var(--bg-raised);
-    color: var(--text);
-    box-shadow: 0 0 0 1px var(--line-strong) inset, 0 1px 2px rgb(0 0 0 / 0.15);
-  }
-</style>

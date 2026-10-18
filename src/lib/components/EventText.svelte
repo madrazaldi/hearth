@@ -49,13 +49,20 @@
     color: var(--text-2);
   }
 
+  /* shadcn's outline button, extra small. */
   .inline-action {
     margin-left: 8px;
-    font-size: 12px;
-    color: var(--accent);
+    height: 20px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) - 4px);
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--foreground);
+    vertical-align: baseline;
   }
 
   .inline-action:hover {
-    text-decoration: underline;
+    background: var(--muted);
   }
 </style>
