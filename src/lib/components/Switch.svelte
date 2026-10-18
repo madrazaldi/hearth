@@ -9,7 +9,7 @@
 <div class="flex items-center gap-4 py-1.5">
   <div class="grid flex-1 gap-0.5">
     <Label for={id} class="text-[13.5px] font-normal">{label}</Label>
-    {#if hint}<span class="text-xs text-muted-foreground">{hint}</span>{/if}
+    {#if hint}<span id="{id}-hint" class="text-xs text-muted-foreground">{hint}</span>{/if}
   </div>
-  <Switch {id} bind:checked />
+  <Switch {id} bind:checked aria-describedby={hint ? `${id}-hint` : undefined} />
 </div>

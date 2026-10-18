@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { announcements, bufferLabel, lineLabel, memberLabel, stepIndex, wrapTab } from './a11y';
+import { announcements, bufferLabel, lineLabel, memberLabel, stepIndex } from './a11y';
 import type { Line } from './types';
 
 let id = 0;
@@ -34,21 +34,6 @@ describe('stepIndex', () => {
   it('ignores other keys and empty lists', () => {
     expect(stepIndex('a', 0, 3)).toBeNull();
     expect(stepIndex('ArrowDown', 0, 0)).toBeNull();
-  });
-});
-
-describe('wrapTab', () => {
-  it('wraps at the ends only', () => {
-    expect(wrapTab(3, 2, false)).toBe(0);
-    expect(wrapTab(3, 0, true)).toBe(2);
-    expect(wrapTab(3, 1, false)).toBeNull();
-    expect(wrapTab(3, 1, true)).toBeNull();
-  });
-
-  it('pulls focus in from outside', () => {
-    expect(wrapTab(3, -1, false)).toBe(0);
-    expect(wrapTab(3, -1, true)).toBe(2);
-    expect(wrapTab(0, -1, false)).toBeNull();
   });
 });
 

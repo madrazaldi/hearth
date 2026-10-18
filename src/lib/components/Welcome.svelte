@@ -178,7 +178,7 @@
   // Move focus to the first field of each step so the flow works from the keyboard.
   function autofocus(node: HTMLElement) {
     requestAnimationFrame(() =>
-      (node.querySelector<HTMLElement>('[data-autofocus]') ?? node.querySelector<HTMLElement>('input, button[type=submit]'))?.focus(),
+      (node.querySelector<HTMLElement>('[data-autofocus]') ?? node.querySelector<HTMLElement>('input, [role=switch], button[type=submit]'))?.focus(),
     );
   }
 

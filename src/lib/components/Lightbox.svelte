@@ -4,6 +4,7 @@
   import { app } from '../state.svelte';
   import { lightbox } from '../lightbox.svelte';
   import { fileName } from '../media';
+  import { focusHome } from '../a11y';
   import { Button } from '$lib/components/ui/button';
   import * as Dialog from '$lib/components/ui/dialog';
   import Icon from './Icon.svelte';
@@ -36,6 +37,7 @@
       <!-- The stock Dialog.Content is sized for forms; this one wraps the image. -->
       <DialogPrimitive.Content
         aria-describedby={undefined}
+        onCloseAutoFocus={focusHome}
         class="bg-popover text-popover-foreground ring-foreground/10 data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-closed:zoom-out-95 data-open:zoom-in-95 fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100vh-4rem)] max-w-[calc(100vw-4rem)] min-w-[min(360px,calc(100vw-4rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl shadow-lg ring-1 duration-100 outline-none"
       >
         <header class="flex h-12 flex-none items-center gap-2 border-b pr-2 pl-4">

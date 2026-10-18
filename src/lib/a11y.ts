@@ -4,26 +4,6 @@
 import { stripFormatting } from './format';
 import type { Line } from './types';
 
-const FOCUSABLE =
-  'a[href], button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
-
-/** Tabbable elements inside `root`, in DOM order. */
-export function focusables(root: HTMLElement): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((e) => e.tabIndex >= 0 && !e.hidden && e.getClientRects().length > 0);
-}
-
-/**
- * Where Tab should go inside a trap of `count` elements, or null to let the
- * browser move normally. `at` is the focused element's index, -1 if none of them.
- */
-export function wrapTab(count: number, at: number, back: boolean): number | null {
-  if (!count) return null;
-  if (at < 0) return back ? count - 1 : 0;
-  if (back && at === 0) return count - 1;
-  if (!back && at === count - 1) return 0;
-  return null;
-}
-
 /**
  * The index a list-navigation key moves to from `i` in a list of `count`, or
  * null for keys that don't navigate. `page` is how many rows PageUp/Down skip.
@@ -61,40 +41,16 @@ function restorer(node: HTMLElement) {
 }
 
 /**
- * Svelte action for modal dialogs: focuses the first `[data-autofocus]` or
- * tabbable element, keeps Tab inside, closes on Escape, and puts focus back
- * where it was when the dialog goes away.
+ * `onCloseAutoFocus` for bits-ui dialogs. bits-ui returns focus to the opener,
+ * but leaves it on <body> when the opener has gone (say, the buffer changed
+ * underneath): then the composer is home.
  */
-export function modal(node: HTMLElement, opts: { onclose: () => void }) {
-  let o = opts;
-  const restore = restorer(node);
-  const first = node.querySelector<HTMLElement>('[data-autofocus]') ?? focusables(node)[0] ?? node;
-  if (!node.contains(document.activeElement)) first.focus({ preventScroll: true });
-
-  function onKey(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      // Leave Escape to an open menu or suggestion list inside the dialog.
-      if (e.defaultPrevented) return;
-      e.preventDefault();
-      e.stopPropagation();
-      o.onclose();
-    } else if (e.key === 'Tab') {
-      const els = focusables(node);
-      const to = wrapTab(els.length, els.indexOf(document.activeElement as HTMLElement), e.shiftKey);
-      if (to === null) return;
-      e.preventDefault();
-      els[to].focus();
-    }
-  }
-
-  node.addEventListener('keydown', onKey);
-  return {
-    update: (next: { onclose: () => void }) => (o = next),
-    destroy() {
-      node.removeEventListener('keydown', onKey);
-      restore();
-    },
-  };
+export function focusHome(e: Event) {
+  if (e.defaultPrevented) return;
+  setTimeout(() => {
+    const now = document.activeElement;
+    if (!now || now === document.body) window.dispatchEvent(new CustomEvent('hearth:focus-composer'));
+  });
 }
 
 /**

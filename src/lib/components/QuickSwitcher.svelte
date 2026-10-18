@@ -69,7 +69,8 @@
   }
 </script>
 
-<!-- Ranking is ours, so bits-ui's own filtering and re-sorting stay off. -->
+<!-- Ranking is ours, so bits-ui's own filtering and re-sorting stay off. Item values are
+     encoded because bits-ui finds them by CSS selector, and buffer ids contain a NUL. -->
 <Command.Dialog
   bind:open
   onOpenChange={(o) => !o && close()}
@@ -86,7 +87,7 @@
         {#each buffers as r (r.buf.id)}
           {@const b = r.buf}
           <Command.Item
-            value={b.id}
+            value={encodeURIComponent(b.id)}
             aria-label={label(b)}
             onSelect={() => choose(r)}
             class="h-9 data-selected:bg-accent"

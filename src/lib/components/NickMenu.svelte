@@ -35,8 +35,11 @@
 
   // Menus return focus to their trigger, which here is just a point on screen.
   const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  // Mention hands focus to the composer instead, so typing continues there.
+  let toComposer = false;
 
   function mention() {
+    toComposer = true;
     window.dispatchEvent(new CustomEvent('hearth:insert', { detail: `${nick}: ` }));
   }
 </script>
@@ -59,7 +62,8 @@
     onclick={(e) => e.stopPropagation()}
     onCloseAutoFocus={(e) => {
       e.preventDefault();
-      if (opener?.isConnected) opener.focus({ preventScroll: true });
+      if (toComposer) window.dispatchEvent(new Event('hearth:focus-composer'));
+      else if (opener?.isConnected) opener.focus({ preventScroll: true });
     }}
   >
     <div class="flex gap-3 border-b px-3.5 pt-3 pb-2.5">

@@ -7,6 +7,7 @@
 	import DialogPortal from "./dialog-portal.svelte";
 	import type { Snippet } from "svelte";
 	import type { ComponentProps } from "svelte";
+	import { focusHome } from "$lib/a11y";
 
 	let {
 		ref = $bindable(null),
@@ -14,6 +15,7 @@
 		portalProps,
 		children,
 		showCloseButton = true,
+		onCloseAutoFocus,
 		...restProps
 	}: WithoutChildrenOrChild<DialogPrimitive.ContentProps> & {
 		portalProps?: WithoutChildrenOrChild<ComponentProps<typeof DialogPortal>>;
@@ -32,6 +34,10 @@
 			className
 		)}
 		{...restProps}
+		onCloseAutoFocus={(e) => {
+			onCloseAutoFocus?.(e);
+			focusHome(e);
+		}}
 	>
 		{@render children?.()}
 		{#if showCloseButton}
