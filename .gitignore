@@ -23,9 +23,7 @@ dist-ssr
 *.sln
 *.sw?
 
-# Tauri
-src-tauri/target
-src-tauri/gen
-
-# Rust workspace
-/target
+# Electrobun: the projected SDK, app builds and release artifacts
+.hutch
+build
+artifacts
