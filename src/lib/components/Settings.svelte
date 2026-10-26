@@ -5,6 +5,7 @@
   import Icon from './Icon.svelte';
   import Switch from './Switch.svelte';
   import Segmented from './Segmented.svelte';
+  import ChoiceCards from './ChoiceCards.svelte';
   import ServerForm from './ServerForm.svelte';
   import BouncerNetworks from './BouncerNetworks.svelte';
   import NetworkHighlights from './NetworkHighlights.svelte';
@@ -21,12 +22,12 @@
 
   const tabs = [
     { id: 'servers', label: 'Servers', icon: 'server' },
-    { id: 'general', label: 'General', icon: 'settings' },
+    { id: 'general', label: 'General', icon: 'gear' },
     { id: 'appearance', label: 'Appearance', icon: 'moon' },
     { id: 'notifications', label: 'Notifications', icon: 'bell' },
     { id: 'aliases', label: 'Aliases', icon: 'terminal' },
     { id: 'privacy', label: 'Privacy & data', icon: 'lock' },
-    { id: 'shortcuts', label: 'Shortcuts', icon: 'layers' },
+    { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard' },
   ];
 
   const uid = $props.id();
@@ -63,7 +64,7 @@
     disconnected: 'bg-destructive',
   };
 
-  const rows = 'flex flex-col divide-y divide-border *:py-3.5 *:first:pt-0 *:last:pb-0';
+  const rows = 'flex flex-col divide-y divide-border rounded-xl border bg-card *:px-4 *:py-3.5';
 
   async function clearLogs() {
     confirmClear = false;
@@ -110,6 +111,49 @@
   }
 </script>
 
+{#snippet heading(text: string, hint?: string)}
+  <div class="mt-7 mb-3 grid gap-0.5 first:mt-0">
+    <h3 class="m-0 text-[13.5px] font-semibold">{text}</h3>
+    {#if hint}<p class="m-0 text-xs text-muted-foreground">{hint}</p>{/if}
+  </div>
+{/snippet}
+
+{#snippet mini(t: string)}
+  <span class="mini flex size-full gap-1 p-1" data-t={t}>
+    <span class="mini-side flex w-1/4 flex-col gap-1 pt-1"><i></i><i class="on"></i><i></i><i></i></span>
+    <span class="mini-panel flex flex-1 flex-col justify-end gap-1 rounded-[3px] p-1.5"><i class="w-3/4"></i><i class="w-1/2"></i><i class="box"></i></span>
+  </span>
+{/snippet}
+
+{#snippet themePreview(v: string)}
+  <span class="relative block h-[72px] overflow-hidden rounded-md">
+    {#if v === 'system'}
+      <span class="absolute inset-0 flex">{@render mini('light')}</span>
+      <span class="absolute inset-0 flex [clip-path:polygon(100%_0,100%_100%,0_100%)]">{@render mini('dark')}</span>
+    {:else}
+      <span class="absolute inset-0 flex">{@render mini(v)}</span>
+    {/if}
+  </span>
+{/snippet}
+
+{#snippet layoutPreview(v: string)}
+  <span class="lp flex h-[72px] flex-col justify-center gap-1.5 rounded-md bg-muted/50 px-2.5">
+    {#if v === 'cozy'}
+      {#each [0, 1] as k (k)}
+        <span class="flex gap-1.5"><b class="size-4"></b><span class="grid flex-1 content-start gap-1"><i class="nick w-1/3"></i><i class={k ? 'w-1/2' : 'w-5/6'}></i></span></span>
+      {/each}
+    {:else if v === 'columns'}
+      {#each [0, 1, 2, 3] as k (k)}
+        <span class="flex items-center gap-1.5"><i class="w-2.5 opacity-60"></i><i class="nick w-4"></i><i class={k % 2 ? 'w-1/2' : 'flex-1'}></i></span>
+      {/each}
+    {:else}
+      {#each [0, 1] as k (k)}
+        <span class="grid gap-1"><span class="flex items-center gap-1"><b class="size-2"></b><i class="nick w-1/4"></i></span><i class={k ? 'w-1/2' : 'w-5/6'}></i></span>
+      {/each}
+    {/if}
+  </span>
+{/snippet}
+
 {#snippet code(text: string)}<code class="font-mono text-[11px] whitespace-nowrap text-foreground/80">{text}</code>{/snippet}
 
 <Dialog.Root open onOpenChange={(o) => !o && close()}>
@@ -123,12 +167,12 @@
       el.focus({ preventScroll: true });
     }}
   >
-    <nav bind:this={nav} aria-label="Settings sections" class="flex min-h-0 flex-col gap-0.5 border-r border-border bg-sidebar p-3 text-sidebar-foreground">
-      <Dialog.Title class="px-2 pt-1 pb-2 text-xs leading-none font-medium text-muted-foreground">Settings</Dialog.Title>
+    <nav bind:this={nav} aria-label="Settings sections" class="flex min-h-0 flex-col gap-0.5 border-r border-sidebar-border bg-sidebar p-3 text-sidebar-foreground">
+      <Dialog.Title class="flex items-center gap-2 px-2 pt-1.5 pb-3 text-sm leading-none font-semibold">Settings</Dialog.Title>
       {#each tabs as t (t.id)}
         <Button
           variant="ghost"
-          class="h-8 justify-start gap-2.5 px-2 text-[13.5px] font-normal text-muted-foreground hover:bg-accent hover:text-accent-foreground {tab === t.id ? 'bg-accent text-accent-foreground' : ''}"
+          class="h-8 justify-start gap-2.5 px-2 text-[13.5px] font-normal text-sidebar-foreground/65 hover:bg-sidebar-accent hover:text-sidebar-foreground {tab === t.id ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground shadow-xs [&_svg]:text-brand' : ''}"
           aria-current={tab === t.id ? 'page' : undefined}
           data-autofocus={tab === t.id || undefined}
           onclick={() => go(t.id)}
@@ -140,8 +184,8 @@
     </nav>
 
     <section class="flex min-h-0 min-w-0 flex-col">
-      <header class="grid gap-1 border-b border-border px-8 pt-6 pr-14 pb-4">
-        <h2 class="m-0 truncate text-lg font-semibold tracking-tight">{title}</h2>
+      <header class="grid gap-1 px-8 pt-7 pr-14 pb-2">
+        <h2 class="m-0 truncate text-xl font-semibold tracking-tight">{title}</h2>
         {#if tab === 'aliases'}
           <p class="m-0 text-[13px] text-muted-foreground">
             Your own slash commands. {@render code('/j')} → {@render code('/join $1')}, {@render code('/ns')} → {@render code('/msg NickServ $*')}. They show up in command suggestions and Tab completion.
@@ -153,7 +197,7 @@
         {/if}
       </header>
 
-      <div class="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+      <div class="min-h-0 flex-1 overflow-y-auto px-8 pt-4 pb-8">
         <div class="max-w-xl">
           {#if tab === 'servers'}
             {#if editServer}
@@ -330,31 +374,30 @@
               </Field.Field>
             </div>
           {:else if tab === 'appearance'}
+            {@render heading('Theme')}
+            <ChoiceCards
+              label="Theme"
+              bind:value={theme.get, theme.set}
+              preview={themePreview}
+              options={[
+                { value: 'system', label: 'System' },
+                { value: 'light', label: 'Light' },
+                { value: 'dark', label: 'Dark' },
+              ]}
+            />
+            {@render heading('Message layout', 'Modern groups messages under avatars; columns lines nicks up in a gutter; compact stacks them above messages.')}
+            <ChoiceCards
+              label="Message layout"
+              bind:value={layout.get, layout.set}
+              preview={layoutPreview}
+              options={[
+                { value: 'cozy', label: 'Modern' },
+                { value: 'columns', label: 'Columns' },
+                { value: 'compact', label: 'Compact' },
+              ]}
+            />
+            {@render heading('Display')}
             <div class={rows}>
-              <Field.Field orientation="horizontal" class="has-[>[data-slot=field-content]]:items-center">
-                <Field.Content><Field.Title class="text-[13.5px] font-normal">Theme</Field.Title></Field.Content>
-                <Segmented label="Theme"
-                  bind:value={theme.get, theme.set}
-                  options={[
-                    { value: 'system', label: 'System' },
-                    { value: 'light', label: 'Light' },
-                    { value: 'dark', label: 'Dark' },
-                  ]}
-                />
-              </Field.Field>
-              <Field.Field orientation="horizontal" class="has-[>[data-slot=field-content]]:items-center">
-                <Field.Content>
-                  <Field.Title class="text-[13.5px] font-normal">Message layout</Field.Title>
-                  <Field.Description class="text-xs">Columns aligns nicks in a gutter; compact stacks them above messages.</Field.Description>
-                </Field.Content>
-                <Segmented label="Message layout"
-                  bind:value={layout.get, layout.set}
-                  options={[
-                    { value: 'columns', label: 'Columns' },
-                    { value: 'compact', label: 'Compact' },
-                  ]}
-                />
-              </Field.Field>
               <Field.Field orientation="horizontal" class="has-[>[data-slot=field-content]]:items-center">
                 <Field.Content><Field.Title class="text-[13.5px] font-normal">Text size</Field.Title></Field.Content>
                 <Segmented label="Text size"
@@ -434,3 +477,69 @@
     </section>
   </Dialog.Content>
 </Dialog.Root>
+
+<style>
+  .mini[data-t='dark'] {
+    --w: #151311;
+    --p: #211e1c;
+    --l: #3b3633;
+    --a: #e48a3e;
+  }
+
+  .mini[data-t='light'] {
+    --w: #f2efeb;
+    --p: #ffffff;
+    --l: #e0dad3;
+    --a: #d06a20;
+  }
+
+  .mini {
+    background: var(--w);
+  }
+
+  .mini i {
+    display: block;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--l);
+  }
+
+  .mini-side i.on {
+    background: var(--a);
+  }
+
+  .mini-panel {
+    background: var(--p);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--l) 70%, transparent);
+  }
+
+  .mini-panel i.box {
+    height: 9px;
+    border-radius: 3px;
+    background: none;
+    box-shadow: inset 0 0 0 1px var(--l);
+  }
+
+  .lp i,
+  .lp b {
+    display: block;
+    flex: none;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--input);
+  }
+
+  .lp i.flex-1 {
+    flex: 1;
+  }
+
+  .lp b {
+    height: auto;
+    aspect-ratio: 1;
+    border-radius: 999px;
+  }
+
+  .lp i.nick {
+    background: color-mix(in oklab, var(--brand) 70%, transparent);
+  }
+</style>

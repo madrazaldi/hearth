@@ -41,11 +41,11 @@ Hearth updates itself: new versions show up under Settings › General.
 <table>
   <tr>
     <td><img src="docs/screenshots/chat-light.png" alt="Light theme"></td>
-    <td><img src="docs/screenshots/compact.png" alt="Compact layout with avatars"></td>
+    <td><img src="docs/screenshots/columns.png" alt="Columns layout with nicks in a gutter"></td>
   </tr>
   <tr>
     <td align="center">Light theme</td>
-    <td align="center">Compact layout</td>
+    <td align="center">Columns layout</td>
   </tr>
   <tr>
     <td><img src="docs/screenshots/search.png" alt="Message search across every buffer"></td>
@@ -101,7 +101,7 @@ Hearth updates itself: new versions show up under Settings › General.
   - Collapsed join/part/quit runs.
   - WHOIS results shown as cards.
   - Collapsible MOTD.
-- **Layouts:** "columns", with nicks aligned in a gutter, or "compact", with nicks above grouped messages. Light, dark and system themes. Adjustable text size.
+- **Layouts:** "modern", with avatars and each sender's messages grouped; "columns", with nicks aligned in a gutter; or "compact", with nicks above grouped messages. Light, dark and system themes. Adjustable text size.
 - **Reliability:**
   - Automatic reconnect with exponential backoff and keepalive pings.
   - Channels you were in are rejoined after reconnecting.
@@ -152,7 +152,7 @@ bun run probe          # headless smoke test of the backend against a real serve
 
 `electrobun prepare` (run for you by `install`, `start` and `build`) projects the Electrobun SDK into `.hutch/devkit`, which is git-ignored; the UI and backend type-check against it.
 
-When `bun run dev` runs in a plain browser instead of inside the app, Hearth replays a scripted IRC session from `src/lib/mock.ts`. This lets you work on the UI without a server. Query parameters control the preview: `?theme=light`, `?layout=compact`, `?view=settings`, `?view=switcher`, `?view=search`, `?view=channels`, `?view=shortcuts`, `?tab=privacy` (open a Settings tab; add `&server=<id>` to edit a server), `?update=none` (the mock updater reports no update; by default it offers 0.2.0), `?empty` (first-run screen) and `?stress` (a `#stress` channel with about 10k lines of scrollback and 5k members, for performance work; `?stress=live` adds a new line every 3 seconds).
+When `bun run dev` runs in a plain browser instead of inside the app, Hearth replays a scripted IRC session from `src/lib/mock.ts`. This lets you work on the UI without a server. Query parameters control the preview: `?theme=light`, `?layout=columns|compact`, `?view=settings`, `?view=switcher`, `?view=search`, `?view=channels`, `?view=shortcuts`, `?tab=privacy` (open a Settings tab; add `&server=<id>` to edit a server), `?update=none` (the mock updater reports no update; by default it offers 0.2.0), `?empty` (first-run screen) and `?stress` (a `#stress` channel with about 10k lines of scrollback and 5k members, for performance work; `?stress=live` adds a new line every 3 seconds).
 
 `bun run start` uses the same config and log directories as an installed Hearth (the identifier is still `app.hearth.irc`, so existing installs carry over). Set `HEARTH_CONFIG_DIR` and `HEARTH_DATA_DIR` to point a development run at throwaway data instead.
 

@@ -12,7 +12,7 @@ const out = new URL('../docs/screenshots/', import.meta.url);
 const shots = [
   ['chat-dark', '', 700],
   ['chat-light', 'theme=light', 700],
-  ['compact', 'layout=compact', 700],
+  ['columns', 'layout=columns', 700],
   ['search', 'view=search'],
   ['settings', 'view=settings'],
   ['switcher', 'view=switcher'],

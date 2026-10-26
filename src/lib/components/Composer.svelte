@@ -31,7 +31,7 @@
 
   // Suggestion popups float above the box, like a shadcn popover.
   const suggestClass =
-    'absolute inset-x-4 bottom-[calc(100%-8px)] z-10 grid rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10';
+    'absolute inset-x-4 bottom-[calc(100%-8px)] z-10 grid rounded-xl bg-popover p-1 text-popover-foreground shadow-lg ring-1 ring-foreground/10 animate-in fade-in-0 slide-in-from-bottom-1 duration-100';
   const suggestItem = 'flex items-center gap-3.5 rounded-md px-2.5 py-1.5 text-left';
 
   const conn = $derived(buf.conn);
@@ -337,7 +337,7 @@
   });
 </script>
 
-<div class="relative px-4 pb-3.5">
+<div class="relative px-4 pb-4">
   {#if cmdMatches.length}
     <div class={suggestClass} role="listbox" aria-label="Commands">
       {#each cmdMatches as c, i (c.name)}
@@ -378,7 +378,7 @@
   {/if}
   {#if buf.replyTo}
     {@const r = buf.replyTo}
-    <div class="flex items-center gap-2 rounded-t-lg border border-b-0 bg-muted/50 py-1 pr-1.5 pl-3 text-[12.5px] text-muted-foreground">
+    <div class="flex items-center gap-2 rounded-t-xl border border-b-0 bg-muted/50 py-1.5 pr-1.5 pl-3.5 text-[12.5px] text-muted-foreground">
       <Icon name="reply" size={13} />
       <span>Replying to <b class="nick font-semibold" style="--h:{nickHue(r.nick)}">{r.nick}</b></span>
       <span class="min-w-0 flex-1 truncate">{stripFormatting(r.text)}</span>
@@ -388,13 +388,43 @@
   <!-- The composer holds focus nearly all the time, so it gets a quiet ring. -->
   <InputGroup.Root
     class={cn(
-      'items-end has-[[data-slot=input-group-control]:focus-visible]:ring-1 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/30',
+      'min-h-11 items-end rounded-xl bg-card shadow-xs dark:bg-card',
+      'has-[[data-slot=input-group-control]:focus-visible]:border-input has-[[data-slot=input-group-control]:focus-visible]:ring-2 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/20',
       buf.replyTo && 'rounded-t-none',
     )}
   >
-    <InputGroup.Addon class="self-end py-1">
+    <InputGroup.Addon class="self-end py-1.5 pl-1.5">
+      {#if filehost && buf.kind !== 'server'}
+        <Tooltip.Root>
+          <Tooltip.Trigger>
+            {#snippet child({ props })}
+              <InputGroup.Button
+                {...props}
+                size="icon-sm"
+                class="rounded-lg text-muted-foreground hover:text-foreground"
+                aria-label="Attach file"
+                onclick={() => fileInput?.click()}
+              >
+                <Icon name="plus" size={17} />
+              </InputGroup.Button>
+            {/snippet}
+          </Tooltip.Trigger>
+          <Tooltip.Content side="top">Attach file</Tooltip.Content>
+        </Tooltip.Root>
+        <input
+          type="file"
+          hidden
+          multiple
+          bind:this={fileInput}
+          onchange={(e) => {
+            const input = e.currentTarget;
+            [...(input.files ?? [])].forEach(uploadBytes);
+            input.value = '';
+          }}
+        />
+      {/if}
       <InputGroup.Button
-        class="mono max-w-36 justify-start text-xs font-normal text-muted-foreground"
+        class="mono h-8 max-w-36 justify-start rounded-lg px-2 text-xs font-normal text-muted-foreground"
         title="Change nickname"
         aria-label="Your nickname, {conn.nick}. Change nickname"
         onclick={() => (text = `/nick ${conn.nick}`)}
@@ -412,7 +442,7 @@
       autocomplete="off"
       {...{ autocorrect: 'off' }}
       autocapitalize="off"
-      class="field-sizing-fixed max-h-[40vh] min-h-8 py-[7px] leading-[1.45] select-text md:text-(length:--fs)"
+      class="field-sizing-fixed max-h-[40vh] min-h-11 py-[11px] pl-1 leading-[1.45] select-text md:text-(length:--fs)"
       style="font-size:var(--fs)"
       onkeydown={onKeydown}
       onkeyup={() => ta && (caret = ta.selectionStart)}
@@ -420,39 +450,30 @@
       oninput={onInput}
       onpaste={onPaste}
     />
-    {#if uploading || (filehost && buf.kind !== 'server')}
-      <InputGroup.Addon align="inline-end" class="self-end py-1">
-        {#if uploading}
-          <Spinner class="size-3.5 text-muted-foreground" aria-label="Uploading" />
-        {/if}
-        {#if filehost && buf.kind !== 'server'}
-          <Tooltip.Root>
-            <Tooltip.Trigger>
-              {#snippet child({ props })}
-                <InputGroup.Button {...props} size="icon-xs" aria-label="Attach file" onclick={() => fileInput?.click()}>
-                  <Icon name="clip" />
-                </InputGroup.Button>
-              {/snippet}
-            </Tooltip.Trigger>
-            <Tooltip.Content side="top">Attach file</Tooltip.Content>
-          </Tooltip.Root>
-          <input
-            type="file"
-            hidden
-            multiple
-            bind:this={fileInput}
-            onchange={(e) => {
-              const input = e.currentTarget;
-              [...(input.files ?? [])].forEach(uploadBytes);
-              input.value = '';
-            }}
-          />
-        {/if}
-      </InputGroup.Addon>
-    {/if}
+    <InputGroup.Addon align="inline-end" class="self-end gap-1 py-1.5 pr-1.5">
+      {#if uploading}
+        <Spinner class="size-3.5 text-muted-foreground" aria-label="Uploading" />
+      {/if}
+      <!-- Enter sends; the button is for the mouse, so it stays out of the tab order. -->
+      <InputGroup.Button
+        size="icon-sm"
+        variant={text.trim() ? 'default' : 'ghost'}
+        class={cn('rounded-lg transition-colors', !text.trim() && 'text-muted-foreground/60')}
+        tabindex={-1}
+        disabled={!text.trim()}
+        aria-label="Send"
+        title="Send (Enter)"
+        onclick={() => {
+          submit();
+          ta?.focus({ preventScroll: true });
+        }}
+      >
+        <Icon name="arrowUp" size={16} stroke={2.4} />
+      </InputGroup.Button>
+    </InputGroup.Addon>
   </InputGroup.Root>
   {#if dragging}
-    <div class="absolute inset-x-4 top-0 bottom-3.5 grid place-items-center rounded-lg border-2 border-dashed border-brand bg-background/85 text-[13px] font-medium text-brand">
+    <div class="absolute inset-x-4 top-0 bottom-4 grid place-items-center rounded-xl border-2 border-dashed border-brand bg-background/85 text-[13px] font-medium text-brand">
       Drop to upload to {conn.name}
     </div>
   {/if}

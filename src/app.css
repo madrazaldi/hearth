@@ -5,51 +5,54 @@
 /* The app sets data-theme on <html>; dark is the default before it does. */
 @custom-variant dark (&:where(:root:not([data-theme='light']), :root:not([data-theme='light']) *));
 
-/* ─── shadcn tokens (stone) ───────────────────────────────── */
+/* ─── shadcn tokens ───────────────────────────────────────── */
 
+/* Warm neutrals with Hearth's ember as the primary colour. The window
+   (sidebar) is the darkest surface in dark mode; the conversation sits on a
+   lifted panel inset into it. */
 :root {
   color-scheme: dark;
   --radius: 0.625rem;
-  --background: oklch(0.147 0.004 49.25);
-  --foreground: oklch(0.985 0.001 106.423);
-  --card: oklch(0.185 0.005 52);
-  --card-foreground: oklch(0.985 0.001 106.423);
-  --popover: oklch(0.205 0.006 56.043);
-  --popover-foreground: oklch(0.985 0.001 106.423);
-  --primary: oklch(0.923 0.003 48.717);
-  --primary-foreground: oklch(0.216 0.006 56.043);
-  --secondary: oklch(0.268 0.007 34.298);
-  --secondary-foreground: oklch(0.985 0.001 106.423);
-  --muted: oklch(0.268 0.007 34.298);
-  --muted-foreground: oklch(0.709 0.01 56.259);
-  --accent: oklch(0.268 0.007 34.298);
-  --accent-foreground: oklch(0.985 0.001 106.423);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.553 0.013 58.071);
-  --sidebar: oklch(0.175 0.005 52);
-  --sidebar-foreground: oklch(0.985 0.001 106.423);
-  --sidebar-primary: oklch(0.74 0.15 50);
-  --sidebar-primary-foreground: oklch(0.216 0.006 56.043);
-  --sidebar-accent: oklch(0.252 0.007 40);
-  --sidebar-accent-foreground: oklch(0.985 0.001 106.423);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.553 0.013 58.071);
+  --background: oklch(0.183 0.005 56);
+  --foreground: oklch(0.968 0.003 80);
+  --card: oklch(0.212 0.006 56);
+  --card-foreground: oklch(0.968 0.003 80);
+  --popover: oklch(0.222 0.006 56);
+  --popover-foreground: oklch(0.968 0.003 80);
+  --primary: oklch(0.735 0.155 50);
+  --primary-foreground: oklch(0.2 0.035 45);
+  --secondary: oklch(0.262 0.007 56);
+  --secondary-foreground: oklch(0.968 0.003 80);
+  --muted: oklch(0.252 0.006 56);
+  --muted-foreground: oklch(0.685 0.012 62);
+  --accent: oklch(0.268 0.008 56);
+  --accent-foreground: oklch(0.968 0.003 80);
+  --destructive: oklch(0.69 0.19 24);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.735 0.155 50 / 50%);
+  --sidebar: oklch(0.148 0.004 52);
+  --sidebar-foreground: oklch(0.93 0.004 80);
+  --sidebar-primary: oklch(0.735 0.155 50);
+  --sidebar-primary-foreground: oklch(0.2 0.035 45);
+  --sidebar-accent: oklch(0.225 0.007 56);
+  --sidebar-accent-foreground: oklch(0.985 0.002 80);
+  --sidebar-border: oklch(1 0 0 / 7%);
+  --sidebar-ring: oklch(0.735 0.155 50 / 60%);
 
   /* Hearth's ember, kept for the things that need to catch the eye:
      mentions, unread markers, links. */
-  --brand: oklch(0.74 0.15 50);
-  --brand-text: oklch(0.2 0.03 50);
-  --brand-soft: oklch(0.74 0.15 50 / 14%);
-  --mention: oklch(0.74 0.15 50 / 7%);
-  --ok: oklch(0.77 0.12 140);
-  --warn: oklch(0.81 0.12 85);
+  --brand: oklch(0.735 0.155 50);
+  --brand-text: oklch(0.2 0.035 45);
+  --brand-soft: oklch(0.735 0.155 50 / 15%);
+  --mention: oklch(0.735 0.155 50 / 8%);
+  --ok: oklch(0.76 0.14 150);
+  --warn: oklch(0.82 0.13 82);
 
-  --text-2: oklch(0.86 0.006 56);
-  --bg-sunken: oklch(0.125 0.004 49);
+  --text-2: oklch(0.86 0.006 62);
+  --bg-sunken: oklch(0.16 0.004 52);
   --nick-l: 0.8;
-  --nick-c: 0.085;
+  --nick-c: 0.095;
 
   --irc-0: #f2f2f2; --irc-1: #6b6b6b; --irc-2: #6f8fd6; --irc-3: #7fb069;
   --irc-4: #e5705f; --irc-5: #b26a52; --irc-6: #b58ad8; --irc-7: #e39b4c;
@@ -60,43 +63,44 @@
 :root[data-theme='light'] {
   color-scheme: light;
   --background: oklch(1 0 0);
-  --foreground: oklch(0.147 0.004 49.25);
+  --foreground: oklch(0.2 0.006 50);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.147 0.004 49.25);
+  --card-foreground: oklch(0.2 0.006 50);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.147 0.004 49.25);
-  --primary: oklch(0.216 0.006 56.043);
-  --primary-foreground: oklch(0.985 0.001 106.423);
-  --secondary: oklch(0.97 0.001 106.424);
-  --secondary-foreground: oklch(0.216 0.006 56.043);
-  --muted: oklch(0.97 0.001 106.424);
-  --muted-foreground: oklch(0.5 0.013 58.071);
-  --accent: oklch(0.96 0.002 80);
-  --accent-foreground: oklch(0.216 0.006 56.043);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.923 0.003 48.717);
-  --input: oklch(0.89 0.004 48.717);
-  --ring: oklch(0.709 0.01 56.259);
-  --sidebar: oklch(0.985 0.001 106.423);
-  --sidebar-foreground: oklch(0.147 0.004 49.25);
-  --sidebar-primary: oklch(0.56 0.16 45);
-  --sidebar-primary-foreground: oklch(0.985 0.001 106.423);
-  --sidebar-accent: oklch(0.95 0.003 80);
-  --sidebar-accent-foreground: oklch(0.216 0.006 56.043);
-  --sidebar-border: oklch(0.923 0.003 48.717);
-  --sidebar-ring: oklch(0.709 0.01 56.259);
+  --popover-foreground: oklch(0.2 0.006 50);
+  --primary: oklch(0.6 0.17 45);
+  --primary-foreground: oklch(0.99 0.002 80);
+  --secondary: oklch(0.962 0.004 75);
+  --secondary-foreground: oklch(0.23 0.006 50);
+  --muted: oklch(0.962 0.004 75);
+  --muted-foreground: oklch(0.5 0.013 58);
+  --accent: oklch(0.952 0.006 70);
+  --accent-foreground: oklch(0.23 0.006 50);
+  --destructive: oklch(0.577 0.215 27);
+  --border: oklch(0.915 0.005 70);
+  --input: oklch(0.885 0.006 70);
+  --ring: oklch(0.6 0.17 45 / 45%);
+  --sidebar: oklch(0.962 0.005 75);
+  --sidebar-foreground: oklch(0.25 0.008 50);
+  --sidebar-primary: oklch(0.6 0.17 45);
+  --sidebar-primary-foreground: oklch(0.99 0.002 80);
+  --sidebar-accent: oklch(0.918 0.008 70);
+  --sidebar-accent-foreground: oklch(0.18 0.008 50);
+  --sidebar-border: oklch(0.9 0.006 70);
+  --sidebar-ring: oklch(0.6 0.17 45 / 55%);
 
-  --brand: oklch(0.56 0.16 45);
+  --brand: oklch(0.6 0.17 45);
   --brand-text: oklch(0.99 0 0);
-  --brand-soft: oklch(0.56 0.16 45 / 12%);
-  --mention: oklch(0.56 0.16 45 / 6%);
-  --ok: oklch(0.56 0.12 140);
-  --warn: oklch(0.6 0.12 85);
+  --brand-soft: oklch(0.6 0.17 45 / 12%);
+  --mention: oklch(0.6 0.17 45 / 6%);
+  --ok: oklch(0.58 0.14 150);
+  --warn: oklch(0.62 0.13 75);
 
-  --text-2: oklch(0.37 0.01 67);
-  --bg-sunken: oklch(0.97 0.001 106.424);
-  --nick-l: 0.5;
-  --nick-c: 0.13;
+  --text-2: oklch(0.37 0.01 60);
+  --bg-sunken: oklch(0.975 0.003 75);
+  --panel-shadow: 0 1px 3px rgb(60 40 20 / 0.06), 0 0 0 1px var(--border);
+  --nick-l: 0.52;
+  --nick-c: 0.14;
 
   --irc-0: #ffffff; --irc-1: #1e1e1e; --irc-2: #2f4fa8; --irc-3: #3f7a2c;
   --irc-4: #c2412f; --irc-5: #7c3b24; --irc-6: #7a3fa5; --irc-7: #c06a14;
@@ -111,7 +115,9 @@
   --font-mono: 'Geist Mono Variable', ui-monospace, 'SF Mono', Menlo, monospace;
   --fs: 14px;
   --sidebar-w: 248px;
-  --members-w: 224px;
+  --members-w: 232px;
+  /* Gap between the window edge and the inset conversation panel. */
+  --inset: 8px;
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 
   --bg: var(--background);
@@ -126,6 +132,7 @@
   --text-4: var(--muted-foreground);
   --danger: var(--destructive);
   --shadow: 0 10px 38px -10px rgb(0 0 0 / 0.35), 0 10px 20px -15px rgb(0 0 0 / 0.2), 0 0 0 1px var(--border);
+  --panel-shadow: 0 1px 2px rgb(0 0 0 / 0.18), 0 0 0 1px var(--border);
 }
 
 @theme inline {
@@ -163,6 +170,7 @@
   --color-sidebar-ring: var(--sidebar-ring);
   --color-brand: var(--brand);
   --color-brand-soft: var(--brand-soft);
+  --color-brand-text: var(--brand-text);
   --color-ok: var(--ok);
   --color-warn: var(--warn);
 }
@@ -181,7 +189,7 @@
     margin: 0;
     height: 100%;
     overflow: hidden;
-    background: var(--background);
+    background: var(--sidebar);
     color: var(--foreground);
     font-family: var(--font-ui);
     font-size: var(--fs);

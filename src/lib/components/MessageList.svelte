@@ -10,6 +10,7 @@
   import { canFill } from '../history';
   import { Estimates, indexAt, offsets as prefixSums, rangeFor } from '../virtual';
   import { Button } from '$lib/components/ui/button';
+  import { cn } from '$lib/utils';
   import Icon from './Icon.svelte';
   import Divider from './Divider.svelte';
   import EventRow from './EventRow.svelte';
@@ -18,6 +19,7 @@
   import { askDelete, canReply, closeMenus, copyLine, openReact, startReply } from './MessageTools.svelte';
   import MotdBlock from './MotdBlock.svelte';
   import WhoisCard from './WhoisCard.svelte';
+  import Avatar from './Avatar.svelte';
 
   let { buf, filter = '', onnick }: { buf: Buffer; filter?: string; onnick: (nick: string, e: MouseEvent) => void } = $props();
 
@@ -561,11 +563,17 @@
 >
   <div class="spacer"></div>
   {#if buf.history === 'loading'}
-    <div class="loading"><span></span>Loading history</div>
+    <div class="loading"><span></span>Loading earlier messages…</div>
   {:else if buf.history === 'done' && buf.kind !== 'server'}
     <div class="start">
-      <p class="eyebrow">Beginning of history</p>
-      <p>{buf.kind === 'channel' ? buf.name : buf.kind === 'query' ? `Your conversation with ${buf.name}` : ''}</p>
+      <span class="start-icon" class:plain={buf.kind !== 'channel'} aria-hidden="true">
+        {#if buf.kind === 'channel'}<Icon name="hash" size={26} stroke={2} />{:else}<Avatar conn={buf.conn} nick={buf.name} size={56} />{/if}
+      </span>
+      <p class="start-title">{buf.kind === 'channel' ? `Welcome to ${buf.name}` : buf.name}</p>
+      <p>
+        {#if buf.kind === 'channel'}This is the beginning of {buf.name}'s history on {buf.conn.name}.
+        {:else}This is the beginning of your conversation with <b>{buf.name}</b>.{/if}
+      </p>
     </div>
   {/if}
 
@@ -612,7 +620,10 @@
   <Button
     variant="outline"
     size="sm"
-    class="jump absolute right-5 bottom-24 z-4 rounded-full bg-popover shadow-md animate-in fade-in-0 slide-in-from-bottom-1 duration-150"
+    class={cn(
+      'jump absolute bottom-28 left-1/2 z-4 -translate-x-1/2 rounded-full bg-popover pr-3.5 pl-3 shadow-lg animate-in fade-in-0 slide-in-from-bottom-1 duration-150',
+      buf.unread > 0 && 'border-transparent bg-brand text-brand-text hover:bg-brand/90 hover:text-brand-text dark:bg-brand dark:hover:bg-brand/90',
+    )}
     onclick={toBottom}
   >
     <Icon name="arrowDown" size={14} />
@@ -625,6 +636,9 @@
     position: relative;
     --time-w: 52px;
     --who-w: 132px;
+    --av: 36px;
+    /* Where message text starts, for the rows that aren't messages. */
+    --gutter: calc(14px + var(--time-w) + var(--who-w) + 24px);
     flex: 1;
     min-height: 0;
     overflow-y: auto;
@@ -748,7 +762,7 @@
 
   .scroller :global(.hl) {
     background: var(--mention);
-    box-shadow: inset 2px 0 0 var(--brand);
+    box-shadow: inset 3px 0 0 var(--brand);
   }
 
   .scroller :global(.hl:hover) {
@@ -808,20 +822,48 @@
 
   .loading,
   .start {
-    padding: 28px 20px 12px calc(14px + var(--time-w) + var(--who-w) + 24px);
+    padding: 28px 20px 12px var(--gutter);
     color: var(--text-3);
     font-size: 13px;
   }
 
-  .start p {
-    margin: 0 0 4px;
+  .start {
+    padding-top: 40px;
+    padding-bottom: 20px;
   }
 
-  .start p:last-child {
-    font-size: 18px;
-    font-weight: 600;
+  .start p {
+    margin: 0;
+  }
+
+  .start-icon {
+    display: grid;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    margin-bottom: 14px;
+    border-radius: 16px;
+    background: var(--muted);
+    color: var(--muted-foreground);
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+
+  .start-icon.plain {
+    background: none;
+    box-shadow: none;
+  }
+
+  .start-title {
+    margin-bottom: 4px !important;
+    font-size: 22px;
+    font-weight: 650;
     color: var(--text);
-    letter-spacing: -0.01em;
+    letter-spacing: -0.02em;
+  }
+
+  .start b {
+    color: var(--text-2);
+    font-weight: 600;
   }
 
   .loading {
@@ -834,7 +876,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 14px 20px 12px calc(14px + var(--time-w) + var(--who-w) + 24px);
+    padding: 14px 20px 12px var(--gutter);
     border-block: 1px dashed var(--border);
     color: var(--text-3);
     font-size: 13px;
@@ -899,8 +941,75 @@
     display: none;
   }
 
-  .layout-compact .loading,
-  .layout-compact .start {
-    padding-left: calc(14px + var(--time-w) + 12px);
+  .scroller.layout-compact {
+    --gutter: calc(14px + var(--time-w) + 12px);
+  }
+
+  /* ── Cozy layout: avatars, with each sender's lines grouped ─ */
+  .scroller.layout-cozy {
+    --gutter: calc(16px + var(--av) + 12px);
+  }
+
+  .scroller.layout-cozy :global(.row) {
+    grid-template-columns: var(--av) minmax(0, 1fr) auto;
+    padding: 1px 20px 1px 16px;
+  }
+
+  .scroller.layout-cozy :global(.msg:not(.cont)) {
+    padding-top: 10px;
+    padding-bottom: 2px;
+  }
+
+  .scroller.layout-cozy :global(.msg.cont) {
+    padding-top: 1px;
+    padding-bottom: 1px;
+  }
+
+  .scroller.layout-cozy :global(.gutter) {
+    display: flex;
+    justify-content: center;
+    padding-top: 2px;
+  }
+
+  .scroller.layout-cozy :global(.gutter time) {
+    visibility: hidden;
+    font-size: 10.5px;
+    padding-top: 0.3em;
+  }
+
+  .scroller.layout-cozy :global(.msg:hover .gutter time) {
+    visibility: visible;
+  }
+
+  .scroller.layout-cozy :global(.head) {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    line-height: 1.35;
+    margin-bottom: 1px;
+  }
+
+  .scroller.layout-cozy :global(.head .nick) {
+    font-weight: 600;
+  }
+
+  .scroller.layout-cozy :global(.head .head-time) {
+    padding: 0;
+    text-align: left;
+  }
+
+  /* Events and cards: glyph in the avatar column, time at the end on hover. */
+  .scroller.layout-cozy :global(.row:not(.msg) > .who) {
+    order: -1;
+    text-align: center;
+  }
+
+  .scroller.layout-cozy :global(.row:not(.msg) > time) {
+    order: 1;
+    visibility: hidden;
+  }
+
+  .scroller.layout-cozy :global(.row:not(.msg):hover > time) {
+    visibility: visible;
   }
 </style>

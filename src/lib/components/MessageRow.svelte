@@ -72,6 +72,30 @@
 {/snippet}
 
 <div class="row msg {l.type}" class:cont class:hl={l.highlight} class:self={l.self} class:flash data-line={l.id}>
+  {#if s.layout === 'cozy'}
+    <div class="gutter">
+      {#if cont || l.type === 'action'}
+        <time title={formatFull(l.time)}>{clock}</time>
+      {:else}
+        <!-- The nick beside it is the keyboard route to the same menu. -->
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <span class="av" onclick={(e) => onnick(l.nick, e)}><Avatar conn={buf.conn} nick={l.nick} size={36} /></span>
+      {/if}
+    </div>
+    <div class="text selectable">
+      {#if !cont && l.type !== 'action'}
+        <div class="head">
+          <span>{#if l.prefix}<span class="mode-prefix">{l.prefix}</span>{/if}<Nick nick={l.nick} self={l.self} {onnick} /></span>
+          {#if displayName && displayName !== l.nick}<span class="display-name">{displayName}</span>{/if}
+          {#if l.type === 'notice'}<span class="tag">notice</span>{/if}
+          <time class="head-time" title={formatFull(l.time)}>{clock}</time>
+        </div>
+      {/if}
+      {@render quote()}
+      {#if l.type === 'action'}<span class="glyph">*</span>{' '}<Nick nick={l.nick} self={l.self} {onnick} />{' '}{/if}{@render body()}
+      {@render extras()}
+    </div>
+  {:else}
   <time title={formatFull(l.time)}>{clock}</time>
   {#if s.layout === 'columns'}
     <span class="who">
@@ -101,6 +125,7 @@
       {@render extras()}
     </div>
   {/if}
+  {/if}
   <MessageTools {l} {buf} />
 </div>
 
@@ -129,6 +154,22 @@
     color: var(--muted-foreground);
   }
 
+  .display-name {
+    font-size: 0.9em;
+    color: var(--muted-foreground);
+  }
+
+  .av {
+    display: flex;
+    cursor: pointer;
+    border-radius: 999px;
+    transition: opacity 120ms var(--ease);
+  }
+
+  .av:hover {
+    opacity: 0.85;
+  }
+
   /* shadcn's outline badge, small. */
   .tag {
     font-size: 10.5px;
@@ -146,7 +187,10 @@
     align-items: baseline;
     gap: 6px;
     max-width: 100%;
-    margin: 1px 0 1px;
+    margin: 2px 0 3px;
+    padding: 1px 8px;
+    border-left: 2px solid var(--input);
+    border-radius: 2px;
     font-size: 0.86em;
     color: var(--muted-foreground);
     text-align: left;
@@ -185,13 +229,14 @@
 
   /* shadcn's outline badge; "mine" takes the brand tint. */
   .chip {
-    height: 22px;
+    height: 24px;
     display: inline-flex;
     align-items: center;
     gap: 5px;
     padding: 0 8px;
     border: 1px solid var(--border);
-    border-radius: 11px;
+    border-radius: 12px;
+    background: color-mix(in oklab, var(--muted) 45%, transparent);
     font-size: 13px;
     transition: background-color 120ms var(--ease);
   }
@@ -214,5 +259,6 @@
 
   .chip:not(:disabled):hover {
     background: var(--muted);
+    border-color: var(--input);
   }
 </style>

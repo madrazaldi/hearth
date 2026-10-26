@@ -3,7 +3,8 @@
     Hash, AtSign, User, Users, Search, SlidersHorizontal, Plus, X, ChevronRight, ChevronDown, Paperclip,
     ArrowDown, Server, Layers, SquareTerminal, Power, RefreshCw, Pencil, Trash2, MessageSquare, Info, Bell,
     PanelRight, Check, Moon, Reply, Smile, Copy, List, Eye, BellOff, Lock, ExternalLink, Image, Play, Music,
-    KeyRound, type IconNode,
+    KeyRound, Flame, ChevronsUpDown, Keyboard, Settings, Ellipsis, ArrowUp, CheckCheck, Globe, Compass, Plug,
+    Unplug, SmilePlus, Coffee, type IconNode,
   } from 'lucide';
 
   // Hearth's icon names, drawn with lucide (shadcn's icon set). The markup is
@@ -15,7 +16,9 @@
     layers: Layers, terminal: SquareTerminal, power: Power, refresh: RefreshCw, edit: Pencil, trash: Trash2,
     message: MessageSquare, info: Info, bell: Bell, sidebar: PanelRight, check: Check, moon: Moon, reply: Reply,
     smile: Smile, copy: Copy, list: List, eye: Eye, bellOff: BellOff, lock: Lock, external: ExternalLink,
-    image: Image, play: Play, music: Music, key: KeyRound,
+    image: Image, play: Play, music: Music, key: KeyRound, flame: Flame, updown: ChevronsUpDown, keyboard: Keyboard,
+    gear: Settings, more: Ellipsis, arrowUp: ArrowUp, read: CheckCheck, globe: Globe, compass: Compass, plug: Plug,
+    unplug: Unplug, smilePlus: SmilePlus, coffee: Coffee,
   };
 
   const MARKUP: Record<string, string> = Object.fromEntries(

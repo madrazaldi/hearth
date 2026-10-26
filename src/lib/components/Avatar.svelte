@@ -25,7 +25,7 @@
      member row, and bits-ui's Avatar would flash the fallback before each image. -->
 <span
   class="avatar relative inline-grid shrink-0 select-none place-items-center overflow-hidden rounded-full bg-muted font-semibold leading-none after:absolute after:inset-0 after:rounded-full after:border after:border-border"
-  style="width:{size}px; height:{size}px; font-size:{size * 0.5}px; --h:{nickHue(nick)}"
+  style="width:{size}px; height:{size}px; font-size:{Math.round(size * (size > 24 ? 0.4 : 0.5))}px; --h:{nickHue(nick)}"
   aria-hidden="true"
 >
   {#if src}
@@ -34,7 +34,7 @@
     <!-- Same hue as the nick, in either theme. -->
     <span
       class="grid size-full place-items-center"
-      style="color: oklch(var(--nick-l) var(--nick-c) var(--h)); background: color-mix(in oklch, oklch(var(--nick-l) var(--nick-c) var(--h)) 18%, var(--muted))"
+      style="color: oklch(var(--nick-l) var(--nick-c) var(--h)); background: color-mix(in oklch, oklch(var(--nick-l) var(--nick-c) var(--h)) 24%, var(--muted))"
     >
       {[...nick.replace(/^[^\p{L}\p{N}]+/u, '')][0]?.toUpperCase() ?? '?'}
     </span>
