@@ -17,11 +17,9 @@ Before opening a pull request, make sure these pass. CI runs the same checks on 
 ```sh
 bun run check
 bun run test
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
 ```
 
-- Add tests for behaviour changes. Feed raw IRC lines through `src/lib/test-utils.ts` for frontend logic, and use the scripted server in `crates/hearth-core/tests/` for protocol changes.
+- Add tests for behaviour changes. Feed raw IRC lines through `src/lib/test-utils.ts` for frontend logic, and use the scripted server in `src/bun/core/*.test.ts` (see `harness.ts`) for protocol changes.
 - For UI changes, include a screenshot in the pull request.
 - Use [conventional commit](https://www.conventionalcommits.org) prefixes (`feat:`, `fix:`, `perf:`, `docs:`). The release notes are generated from them.
 - Keep secrets out of code, logs and test fixtures.

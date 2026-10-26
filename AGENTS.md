@@ -4,43 +4,42 @@ Guidance for coding agents working in this repo. See README.md for features and 
 
 ## Stack
 
-Hearth is an IRC client with a Rust engine (`crates/hearth-core`) and one frontend:
-Tauri 2 (`src-tauri/`) + Svelte 5 runes + TypeScript (`src/`), built with Vite and Bun.
-
-The root `Cargo.toml` is a workspace of the Rust crates.
+Hearth is an IRC client. The backend is TypeScript on Bun (`src/bun/core`), running in the main process of an [Electrobun](https://electrobun.dev) app (`src/bun`). The UI is Svelte 5 runes + TypeScript (`src/`), built with Vite and rendered by Electrobun's bundled Chromium (CEF) on every platform (`renderer: 'cef'` in `electrobun.config.ts`), so don't add WebKit/WebView2-specific workarounds.
 
 ## Commands
 
 ```sh
-bun install
-bun run tauri dev              # full app
+bun install                    # also runs `electrobun prepare`, which projects the SDK into .hutch/devkit (git-ignored)
 bun run dev                    # UI only, in a browser, against the scripted mock (src/lib/mock.ts)
-bun run check                  # svelte-check + tsc — must report 0 errors
-bun run test                   # Vitest
-cargo test --workspace         # unit tests + crates/hearth-core/tests
-cargo clippy --workspace --all-targets -- -D warnings   # CI runs with -D warnings
+bun run start                  # build the UI and run the real app (electrobun dev)
+bun run check                  # svelte-check + tsc for UI, build scripts and src/bun — must report 0 errors
+bun run test                   # Vitest (UI) then bun test (src/bun)
+bun run build                  # stable Electrobun build into build/ and artifacts/
+bun run probe                  # headless backend smoke test: HEARTH_HOST=… HEARTH_NICK=… bun run probe
 bun run screenshots            # regenerate docs/screenshots (needs `bun run dev` running)
 ```
 
-Run a single test: `bun x vitest run -t "name"` / `cargo test name`. Headless backend smoke test: `HEARTH_HOST=… HEARTH_NICK=… cargo run -p hearth-core --example probe`.
+Run a single test: `bun x vitest run -t "name"` / `bun test src/bun -t "name"`.
 
-CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. Releases come from `.github/workflows/release.yml` on a `v*` tag (see README "Releasing"): it reruns CI, then builds Windows, Linux and universal macOS bundles into a draft release with git-cliff notes (`cliff.toml`). Bump versions with `bun run bump <x.y.z>`, which keeps `tauri.conf.json`, the root `Cargo.toml` and `package.json` in sync (CI checks this). Use conventional commit prefixes; the release notes are grouped by them. Never commit the updater private key (`~/.tauri/hearth-updater.key`). The frontend updater lives in `src/lib/updater.svelte.ts`, and `mock.ts` fakes its `plugin:updater|*` calls. MSRV is `rust-version` in the root `Cargo.toml` (1.90); clippy lints depend on it.
+CI (`.github/workflows/ci.yml`) runs check and both test suites on Linux/macOS/Windows. Releases come from `.github/workflows/release.yml` on a `v*` tag (see README "Releasing"): it reruns CI, then builds macOS, Linux and Windows apps into a draft release with git-cliff notes (`cliff.toml`). Bump versions with `bun run bump <x.y.z>`, which keeps `electrobun.config.ts` and `package.json` in sync (CI checks this). Use conventional commit prefixes; the release notes are grouped by them. Never commit signing material. The frontend updater lives in `src/lib/updater.svelte.ts` over the `updater-*` commands in `src/bun/index.ts` (Electrobun's hash-based `Updater`); `mock.ts` fakes those commands.
 
 ## Architecture
 
-**Core (`crates/hearth-core/src`)**
-- `app.rs`: `Core`, which owns everything below and implements every command.
-- `runtime.rs`: the global tokio runtime. Use `runtime::spawn`, not `tauri::async_runtime`; the core must not depend on Tauri.
-- `irc/client.rs`: one tokio actor per connection. It handles registration, CAP/SASL (PLAIN, EXTERNAL, SCRAM), STS, reconnect/backoff, labeled-response and chathistory routing (`Route`, pending requests keyed by id), and logging to the store. It stamps a `time` tag on live messages that lack one.
-- `irc/manager.rs`: owns the connections, spawns a child connection per soju network, and caps the send backlog (`MAX_BACKLOG`).
-- `irc/events.rs`: an Emitter that batches events into one IPC payload per burst.
-- `irc/transport.rs`: TCP/TLS/WebSocket as a line reader and writer. It also does client certificates.
-- `store.rs`: SQLite (rusqlite bundled, WAL, FTS5). All writes go through a writer thread (`Write` enum). Use `Db::memory()` in tests.
-- `secrets.rs`: the keychain. Config secrets are stripped from `config.json` when `in_keychain` is set.
-- `preview.rs`: link previews with SSRF guards. Every hop must pass `check_public`.
+**Core (`src/bun/core`)**
+- `app.ts`: `Core`, which owns everything below; `Core.invoke(command, args)` implements every command the UI can call.
+- `client.ts`: one actor per connection (a serialized async loop). It handles registration, CAP/SASL (PLAIN, EXTERNAL, SCRAM), STS, reconnect/backoff, labeled-response and chathistory routing (`Route`, pending requests keyed by id), and logging to the store. It stamps a `time` tag on live messages that lack one. Timers go through `clock.ts` so tests can drive them with `ManualClock` (in `harness.ts`).
+- `manager.ts`: owns the connections, spawns a child connection per soju network, and caps the send backlog (`MAX_BACKLOG`).
+- `events.ts`: an Emitter that batches events into one RPC payload per burst.
+- `transport.ts`: TCP/TLS/WebSocket as a line reader and writer (`Bun.connect`, native WebSocket). It also does client certificates.
+- `store.ts`: SQLite (`bun:sqlite`, WAL, FTS5). Writes are queued and flushed in batches. Use `Db.memory()` in tests.
+- `secrets.ts`: the keychain via `Bun.secrets` (service `app.hearth.irc`). Config secrets are stripped from `config.json` when `inKeychain` is set.
+- `preview.ts` + `net.ts`: link previews with SSRF guards. Every hop must pass `checkPublic`.
+- `paths.ts`: config/data directories; `HEARTH_CONFIG_DIR`/`HEARTH_DATA_DIR` override them.
 
-**Tauri (`src-tauri/src/lib.rs`)**: thin `#[tauri::command]` wrappers over `State<Core>`, tray, close-to-tray and the updater.
+**Main process (`src/bun/index.ts`, `src/bun/commands.ts`)**: window (`BrowserWindow`, CEF), tray, close-to-tray, notifications, opener, updater, and the RPC server. `src/shared/rpc.ts` is the RPC schema; `IRC_COMMANDS` in `commands.ts` lists the commands forwarded to `Core.invoke`. Events go back with the `irc` push message.
 
+**Frontend (`src/lib`)**
+- `ipc.ts`: `invoke`/`listen` shim. It uses Electrobun RPC inside the app and the mock backend in a browser (`installMock`); `platform.ts` has the platform/shell flags.
 **Frontend (`src/lib`)**
 - `state.svelte.ts`: the `App`, `Conn` and `Buffer` classes using `$state` runes, a single `app` instance.
 - `incoming.ts`: turns each server message into state changes (`handleMessage`, `historyLine`).
@@ -51,24 +50,24 @@ CI (`.github/workflows/ci.yml`) runs all of the above on Linux/macOS/Windows. Re
 - `unread.ts`: unread and highlight counts, and read markers.
 - `commands.ts`: slash commands (`runInput`).
 - `api.ts`: typed `invoke` wrappers.
-- `types.ts`: types shared with Rust (serde `camelCase`).
+- `types.ts`: types shared with the backend (`camelCase` JSON).
 - `components/`: the UI. Keep it small and reuse `Segmented`, `Switch` and `Icon`.
 
 ## Conventions and gotchas
 
 - **Adding a command** takes these steps:
-  1. Implement it as a `Core` method in `crates/hearth-core/src/app.rs`.
-  2. Add a `#[tauri::command]` wrapper in `src-tauri/src/lib.rs` and register it in `generate_handler!`.
+  1. Implement it in `src/bun/core/app.ts` and add a case to `Core.invoke`.
+  2. Add its name to `IRC_COMMANDS` in `src/bun/commands.ts` (shell-level commands such as the tray or updater are handled in `src/bun/index.ts` instead).
   3. Add a wrapper in `api.ts`, and a case in `mock.ts` so the browser preview keeps working.
-- **Settings** are a JSON blob owned by the frontend (`Settings` in `types.ts`, with defaults). Rust reads only the keys it needs in `apply_settings`.
-- **CSP is strict** (`tauri.conf.json`). The webview must not fetch remote URLs or load remote images. Route network access through Rust, as `preview.rs` does, and return data URLs.
+- **Settings** are a JSON blob owned by the frontend (`Settings` in `types.ts`, with defaults). The backend reads only the keys it needs when settings are applied.
+- **CSP is strict** (set in `vite.config.ts`). The UI must not fetch remote URLs or load remote images. Route network access through the backend, as `preview.ts` does, and return data URLs.
 - **Sending from a buffer** uses `conn.sendFrom(buf, line)` when the reply should come back to that buffer. That call adds a labeled-response label.
 - **History dedupe:** `Buffer.merge` dedupes by msgid, then fuzzily (same nick and text within 3 s). Keep `time` tags on everything.
 - **Secrets never go in logs, config or test fixtures.**
-- **Comments are sparse** and explain *why*. Match the surrounding style. There is no prettier config, so follow the existing formatting (2-space TS/Svelte, rustfmt).
+- **Comments are sparse** and explain *why*. Match the surrounding style. There is no prettier config, so follow the existing formatting (2-space TS/Svelte).
 
 ## Testing
 
 - **Frontend:** `src/lib/test-utils.ts` provides `mockApi`, `connect(app, {caps, isupport})`, `feed(app, ...rawLines)` and `sent` (outgoing lines). Mock `./api` and `./notify` with `vi.mock` as in `state.test.ts`, and test behaviour by feeding raw IRC lines.
-- **Backend:** `crates/hearth-core/tests/` runs the actor against a scripted local TCP server. Add a test there for protocol changes such as CAP, SASL, batches or labels.
+- **Backend:** `src/bun/core/*.test.ts` (bun test) run the actor against a scripted local TCP server (`harness.ts`, `Peer`/`Listener`). Add a test there for protocol changes such as CAP, SASL, batches or labels. Use `ManualClock` for backoff, keepalive and pacing.
 - **UI changes:** check them visually with `bun run dev`. The mock query params `?view=search|channels|settings|switcher|shortcuts`, `?tab=<settings tab>&server=<id>`, `?theme=light`, `?layout=compact`, `?update=none` and `?empty` open the matching views; `?noavatars` turns off mock avatars. `?stress` opens `#stress`, a channel with about 10k lines and 5k members, for checking performance. `?stress=live` also posts a line every 3 s.
