@@ -227,3 +227,13 @@ test('disconnect takes children along', () => {
   expect(m.has('o')).toBe(true);
   db.close();
 });
+
+test('drain waits for connections to say goodbye', async () => {
+  const h = harness();
+  h.mgr.connect(h.server());
+  const p = await h.listener.accept();
+  await p.register('');
+  h.mgr.disconnectAll();
+  await h.mgr.drain(5000);
+  expect(await p.closed()).toEqual(['QUIT :Hearth']);
+});

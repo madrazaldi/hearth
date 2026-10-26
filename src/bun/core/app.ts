@@ -103,6 +103,13 @@ export class Core {
     this.db.flush();
   }
 
+  /** Like `shutdown`, then waits (briefly) for the QUIT lines to reach the servers. */
+  async shutdownGracefully(ms = 1500) {
+    this.shutdown();
+    await this.irc.drain(ms);
+    this.db.flush();
+  }
+
   // ---- Commands ----
 
   getConfig(): Config {

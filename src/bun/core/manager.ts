@@ -36,6 +36,8 @@ export function childId(server: string, netid: string): string {
 export class Manager implements Parent {
   private conns = new Map<string, Entry>();
   private generation = 1;
+  /** Connections that are still winding down, so shutdown can wait for their QUITs to go out. */
+  private running = new Set<Promise<void>>();
 
   constructor(
     private readonly emitter: Emitter,
@@ -50,7 +52,8 @@ export class Manager implements Parent {
     const conn = new Connection({ id, server, bind, generation, db: this.db, backlog }, this.emitter, this, this.clock);
     this.conns.set(id, { target: conn, generation, server: server.id, backlog });
     this.emitter.emit({ type: 'conn-added', conn: id, server: server.id, parent: bind === null ? null : server.id, netid: bind });
-    void conn.start();
+    const done = conn.start().finally(() => this.running.delete(done));
+    this.running.add(done);
   }
 
   connect(server: ServerConfig) {
@@ -91,6 +94,14 @@ export class Manager implements Parent {
       this.conns.delete(id);
       this.emitter.emit({ type: 'conn-removed', conn: id });
     }
+  }
+
+  /** Resolves once every connection has finished closing, or after `ms`. */
+  async drain(ms: number): Promise<void> {
+    let cancel = () => {};
+    const timeout = new Promise<void>((resolve) => (cancel = this.clock.after(ms, resolve)));
+    await Promise.race([Promise.allSettled([...this.running]), timeout]);
+    cancel();
   }
 
   /** Whether a connection with this id is live. */
