@@ -123,6 +123,7 @@ export class Db {
   private queue: Write[] = [];
   private scheduled = false;
   private enabled = true;
+  private closed = false;
   private cache = new Map<string, Statement>();
 
   private constructor(private readonly db: Database) {
@@ -170,6 +171,7 @@ export class Db {
   }
 
   private enqueue(w: Write) {
+    if (this.closed) return;
     this.queue.push(w);
     if (!this.scheduled) {
       this.scheduled = true;
@@ -315,7 +317,9 @@ export class Db {
   }
 
   close() {
+    if (this.closed) return;
     this.flush();
+    this.closed = true;
     this.cache.clear();
     this.db.close();
   }

@@ -26,8 +26,10 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  for (const c of cores.splice(0)) c.shutdown();
+  const done = cores.splice(0);
+  for (const c of done) c.shutdown();
   await realSleep(10);
+  for (const c of done) c.close();
   useKeychain(null);
   rmSync(dir, { recursive: true, force: true });
 });

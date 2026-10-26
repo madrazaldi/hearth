@@ -8,7 +8,7 @@ import { Core } from './core/app';
 const dirs: string[] = [];
 const cores: Core[] = [];
 afterEach(() => {
-  for (const c of cores.splice(0)) c.shutdown();
+  for (const c of cores.splice(0)) c.close();
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 

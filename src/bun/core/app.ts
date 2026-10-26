@@ -105,6 +105,12 @@ export class Core {
     this.db.flush();
   }
 
+  /** Like `shutdown`, then closes the log (Windows can't delete a database that's still open). */
+  close() {
+    this.shutdown();
+    this.db.close();
+  }
+
   /** Like `shutdown`, then waits (briefly) for the QUIT lines to reach the servers. */
   async shutdownGracefully(ms = 1500) {
     this.shutdown();
