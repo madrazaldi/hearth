@@ -139,6 +139,18 @@ describe('store', () => {
     expect(back.source).toEqual({ nick: 'ann', user: 'u', host: 'h' });
   });
 
+  test('clearing the log leaves search working for what comes after', () => {
+    const db = Db.memory();
+    for (let i = 0; i < 1000; i++) log(db, '#a', privmsg('2026-01-01T00:00:01.000Z', 'ann', '#a', `old ${i}`));
+    db.clearLogs();
+    expect(db.search(text('old'))).toEqual([]);
+    log(db, '#a', privmsg('2026-01-01T00:00:02.000Z', 'ann', '#a', 'fresh line'));
+    expect(db.search(text('fresh')).length).toBe(1);
+    // The delete trigger is back, so the index follows deletions again.
+    db.forgetServer('srv');
+    expect(db.search(text('fresh'))).toEqual([]);
+  });
+
   test('opens_and_reopens_a_file_database', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hearth-db-'));
     try {

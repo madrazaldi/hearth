@@ -13,6 +13,10 @@ import { dirname } from 'node:path';
 import { type Message, param, tag } from './message';
 import { formatMs, nowMs, parseMs } from './time';
 
+const DELETE_TRIGGER = `CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts (messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+END;`;
+
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
@@ -35,9 +39,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5 (
 CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
     INSERT INTO messages_fts (rowid, text) VALUES (new.id, new.text);
 END;
-CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-    INSERT INTO messages_fts (messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
-END;
+${DELETE_TRIGGER}
 CREATE TABLE IF NOT EXISTS buffers (
     network TEXT NOT NULL,
     folded TEXT NOT NULL,
@@ -267,10 +269,19 @@ export class Db {
     })();
   }
 
+  /**
+   * Runs on the thread every connection shares, so it must stay quick: without
+   * the per-row FTS trigger the delete is a truncate, and the vacuum then only
+   * copies the small tables that are left.
+   */
   clearLogs() {
     this.flush();
-    this.db.exec('DELETE FROM messages');
-    this.db.exec("INSERT INTO messages_fts (messages_fts) VALUES ('rebuild')");
+    this.db.transaction(() => {
+      this.db.exec('DROP TRIGGER messages_ad');
+      this.db.exec('DELETE FROM messages');
+      this.db.exec("INSERT INTO messages_fts (messages_fts) VALUES ('delete-all')");
+      this.db.exec(DELETE_TRIGGER);
+    })();
     this.db.exec('VACUUM');
   }
 
