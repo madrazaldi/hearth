@@ -1,6 +1,4 @@
-import { getVersion } from '@tauri-apps/api/app';
-import { relaunch } from '@tauri-apps/plugin-process';
-import { check, type Update } from '@tauri-apps/plugin-updater';
+import { platform } from './platform';
 import { app } from './state.svelte';
 
 type Phase = 'idle' | 'checking' | 'current' | 'available' | 'installing' | 'error';
@@ -16,14 +14,13 @@ class Updater {
   /** Download progress 0..1, or null while the size is unknown. */
   progress = $state<number | null>(null);
   error = $state<string | null>(null);
-  private update: Update | null = null;
   private announced: string | null = null;
   private pending = false;
 
   /** Reads the running version and, if enabled, checks quietly now and periodically. */
   async start() {
     try {
-      this.current = await getVersion();
+      this.current = await platform.version();
     } catch {}
     const tick = () => app.settings.checkUpdates && this.check(true);
     tick();
@@ -40,10 +37,9 @@ class Updater {
     this.phase = 'checking';
     this.error = null;
     try {
-      const found = await check();
-      await this.update?.close().catch(() => {});
-      this.update = found;
+      const found = await platform.checkForUpdate();
       if (!found) {
+        this.version = null;
         this.phase = 'current';
         return;
       }
@@ -55,7 +51,7 @@ class Updater {
       }
     } catch (e) {
       // A failed background recheck shouldn't hide an update that was already found.
-      this.phase = quiet ? (this.update ? 'available' : 'idle') : 'error';
+      this.phase = quiet ? (this.version ? 'available' : 'idle') : 'error';
       this.error = String(e);
     }
   }
@@ -69,18 +65,18 @@ class Updater {
   }
 
   async installAndRestart() {
-    if (!this.update || this.busy) return;
+    if (!this.version || this.busy) return;
     this.phase = 'installing';
     this.progress = null;
     let total = 0;
     let done = 0;
     try {
-      await this.update.downloadAndInstall((e) => {
-        if (e.event === 'Started') total = e.data.contentLength ?? 0;
-        else if (e.event === 'Progress' && total) this.progress = Math.min(1, (done += e.data.chunkLength) / total);
+      await platform.installUpdate((e) => {
+        if (e.event === 'Started') total = e.contentLength ?? 0;
+        else if (e.event === 'Progress' && total) this.progress = Math.min(1, (done += e.chunkLength ?? 0) / total);
       });
-      // Windows exits into the installer by itself; macOS and Linux need a relaunch.
-      await relaunch();
+      // Applying the update restarts the app by itself; this is for platforms where it doesn't.
+      await platform.relaunch();
     } catch (e) {
       this.phase = 'error';
       this.error = String(e);

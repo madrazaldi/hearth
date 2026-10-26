@@ -188,7 +188,7 @@
 
 <div
   class="flex h-full justify-center overflow-y-auto bg-background bg-[radial-gradient(1200px_400px_at_50%_-10%,color-mix(in_oklab,var(--brand)_7%,transparent),transparent_70%)] px-6 pt-14 pb-12"
-  data-tauri-drag-region
+  data-drag-region
 >
   <main class="w-full max-w-xl">
     <header class="mb-6 flex flex-col items-center text-center">

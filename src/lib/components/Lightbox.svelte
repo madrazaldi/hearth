@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Dialog as DialogPrimitive } from 'bits-ui';
-  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { openUrl } from '../platform';
   import { app } from '../state.svelte';
   import { lightbox } from '../lightbox.svelte';
   import { fileName } from '../media';

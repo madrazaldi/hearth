@@ -104,8 +104,8 @@
   }
 
   // ── Scroll anchoring ─────────────────────────────────────────
-  // WebKit has no overflow-anchor, and rows change height as they're first
-  // measured, so we keep our own anchor: while pinned we stick to the
+  // Rows change height as they're first measured and the browser's own
+  // overflow-anchor is switched off (see the CSS), so we keep our own anchor: while pinned we stick to the
   // bottom, otherwise an item stays at the same distance from the viewport
   // top across prepends, measurements and resizes.
   let pinned = true;

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { openUrl } from '../platform';
   import { parseFormatting, stripFormatting } from '../format';
   import { app } from '../state.svelte';
 

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { app, type Buffer } from '../state.svelte';
   import { commandInfos, runInput } from '../commands';
   import { emojiQuery, searchEmoji, typedShortcode, type Emoji } from '../emoji';
@@ -263,17 +262,6 @@
     }
   }
 
-  async function uploadPath(path: string) {
-    uploading++;
-    try {
-      insertText(await api.uploadFile(conn.serverId, filehost, path));
-    } catch (e) {
-      app.toast(`Upload failed: ${e}`, 'error');
-    } finally {
-      uploading--;
-    }
-  }
-
   function onPaste(e: ClipboardEvent) {
     const files = [...(e.clipboardData?.files ?? [])];
     if (!files.length) return;
@@ -289,20 +277,39 @@
     // Focus follows the buffer unless the user is selecting text elsewhere.
     if (!window.getSelection()?.toString()) ta?.focus({ preventScroll: true });
     autosize();
-    let unlisten: (() => void) | undefined;
-    getCurrentWebview()
-      .onDragDropEvent((ev) => {
-        const p = ev.payload;
-        if (p.type === 'enter' || p.type === 'over') dragging = !!filehost;
-        else if (p.type === 'leave') dragging = false;
-        else if (p.type === 'drop') {
-          dragging = false;
-          if (!filehost) return app.toast('This server does not accept file uploads', 'error');
-          p.paths.forEach(uploadPath);
-        }
-      })
-      .then((u) => (unlisten = u))
-      .catch(() => {});
+    // Dropped files arrive as DOM events; only drags that carry files count.
+    const hasFiles = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files');
+    let depth = 0;
+    const onDragEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth++;
+      dragging = !!filehost;
+    };
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = filehost ? 'copy' : 'none';
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      if (--depth <= 0) {
+        depth = 0;
+        dragging = false;
+      }
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      dragging = false;
+      if (!filehost) return app.toast('This server does not accept file uploads', 'error');
+      [...(e.dataTransfer?.files ?? [])].forEach(uploadBytes);
+    };
+    window.addEventListener('dragenter', onDragEnter);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
     const refocus = (e: KeyboardEvent) => {
       // Typing anywhere lands in the composer.
       const t = e.target;
@@ -319,7 +326,10 @@
     window.addEventListener('hearth:insert', onInsert);
     window.addEventListener('hearth:focus-composer', onFocusReq);
     return () => {
-      unlisten?.();
+      window.removeEventListener('dragenter', onDragEnter);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
       window.removeEventListener('keydown', refocus);
       window.removeEventListener('hearth:insert', onInsert);
       window.removeEventListener('hearth:focus-composer', onFocusReq);

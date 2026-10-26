@@ -23,10 +23,13 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Check versions agree
         run: bun scripts/version.mjs
+      # Type-checks the UI and the Bun side, then runs Vitest and `bun test`.
       - run: bun run check
       - run: bun run test
 
-  backend:
+  # The IRC engine runs on Bun in the app's main process: its tests exercise
+  # real sockets, TLS and the OS keychain bindings, so run them everywhere the app ships.
+  engine:
     strategy:
       fail-fast: false
       matrix:
@@ -34,38 +37,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      # tauri::generate_context! embeds the frontend build output.
-      - name: Stub frontend dist
-        shell: bash
-        run: mkdir -p dist && touch dist/index.html
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-
-  # Builds with the oldest supported toolchain, so rust-version in Cargo.toml stays honest.
-  msrv:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev
-      - name: Read rust-version
-        id: msrv
-        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.msrv.outputs.version }}
-      - uses: Swatinem/rust-cache@v2
-      - name: Stub frontend dist
-        run: mkdir -p dist && touch dist/index.html
-      - run: cargo check --workspace --all-targets --locked
+      - uses: oven-sh/setup-bun@v2
+      # The engine needs no Electrobun SDK, so skip the `prepare` hook that downloads it.
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun test src/bun

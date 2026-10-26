@@ -10,7 +10,7 @@
 
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { openUrl } from '../platform';
   import { app } from '../state.svelte';
   import { fileName, mediaLabel } from '../media';
   import { buttonVariants } from '$lib/components/ui/button';

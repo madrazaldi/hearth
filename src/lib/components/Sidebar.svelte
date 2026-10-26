@@ -302,7 +302,7 @@
   class="relative flex min-h-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
   aria-label="Sidebar"
 >
-  <div class={cn('flex gap-1 px-2.5 pb-1.5', isMac ? 'pt-10.5' : 'pt-2.5')} data-tauri-drag-region>
+  <div class={cn('flex gap-1 px-2.5 pb-1.5', isMac ? 'pt-10.5' : 'pt-2.5')} data-drag-region>
     <Button
       variant="outline"
       size="sm"

@@ -1,12 +1,11 @@
-// Browser-only preview: fakes the Tauri backend with a scripted IRC session so
+// Browser-only preview: fakes the Bun backend with a scripted IRC session so
 // the UI can be developed and screenshotted outside the app (`bun run dev`, open
 // http://localhost:1420/?theme=light&view=settings). `?stress` adds #stress,
 // a channel with ~10k lines of scrollback and ~5k members, for perf work;
 // `?stress=live` also posts a line every 3s (which trims the buffer to
 // Buffer's live-line cap).
 
-import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
-import { emit } from '@tauri-apps/api/event';
+import { emitMock as emit, installMock } from './ipc';
 import type { IrcEvent, IrcMessage, ServerConfig } from './types';
 import { defaultServer } from './types';
 
@@ -112,7 +111,7 @@ function scene(): IrcEvent[] {
   ev.push({ type: 'message', conn: L, msg: { tags: { '+typing': 'active' }, source: { nick: 'mira', user: 'mira', host: 'x' }, command: 'TAGMSG', params: ['ember'] } });
   ev.push({ type: 'message', conn: L, msg: { tags: { '+typing': 'active' }, source: { nick: 'oskar', user: 'oskar', host: 'x' }, command: 'TAGMSG', params: [chan] } });
 
-  for (const [c, name] of [['#rust', 'soju/1'], ['#svelte', 'soju/1'], ['#tauri', 'soju/1'], ['#debian', 'soju/2'], ['#oftc', 'soju/2']] as const) {
+  for (const [c, name] of [['#rust', 'soju/1'], ['#svelte', 'soju/1'], ['#bun', 'soju/1'], ['#debian', 'soju/2'], ['#oftc', 'soju/2']] as const) {
     m(name, msg('ember!ember@user/ember', 'JOIN', [c], { time: at(0) }));
     m(name, msg('srv', '353', ['ember', '=', c, 'ember @op user1 user2']));
     m(name, msg('srv', '366', ['ember', c, 'End']));
@@ -289,10 +288,9 @@ function firstRun(id: string) {
   );
 }
 
-mockWindows('main');
-mockIPC(
+installMock(
   async (cmd, args) => {
-    const a = args as Record<string, unknown>;
+    const a = args;
     switch (cmd) {
       case 'get_config':
         return {
@@ -345,24 +343,23 @@ mockIPC(
         throw new Error('file not found');
       case 'save_server':
         return (lastSaved = { ...(a.server as ServerConfig), id: 'new' });
-      // Updater and process plugins: `?update=none` pretends to be current.
-      case 'plugin:app|version':
+      // Platform integration: `?update=none` pretends to be current.
+      case 'app_version':
         return '0.1.0';
-      case 'plugin:updater|check':
+      case 'updater_check':
         await new Promise((r) => setTimeout(r, 600));
         if (params.get('update') === 'none') return null;
-        return { rid: 1, currentVersion: '0.1.0', version: '0.2.0', date: new Date().toISOString(), body: 'Mock release', rawJson: {} };
-      case 'plugin:updater|download_and_install':
+        return { version: '0.2.0', notes: 'Mock release' };
+      case 'updater_install':
         await new Promise((r) => setTimeout(r, 1500));
         return null;
-      case 'plugin:process|restart':
+      case 'relaunch':
         location.reload();
         return null;
       default:
         return null;
     }
   },
-  { shouldMockEvents: true },
 );
 
 // Scripted interactions for screenshots.

@@ -1,5 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { invoke, listen, type Unlisten } from './ipc';
 import type { CertInfo, Config, IrcEvent, IrcMessage, Preview, SavedBuffer, SearchHit, SearchQuery, ServerConfig, Settings } from './types';
 
 export const api = {
@@ -27,10 +26,17 @@ export const api = {
   generateCert: (server: string) => invoke<CertInfo>('generate_cert', { server }),
   certInfo: (path: string) => invoke<CertInfo>('cert_info', { path }),
   uploadFile: (server: string, url: string, path: string) => invoke<string>('upload_file', { server, url, path }),
+  /** File contents travel base64-encoded, which is far smaller on the bridge than a list of numbers. */
   uploadBytes: (server: string, url: string, name: string, contentType: string, data: Uint8Array) =>
-    invoke<string>('upload_bytes', { server, url, name, contentType, data: Array.from(data) }),
+    invoke<string>('upload_bytes', { server, url, name, contentType, data: toBase64(data) }),
 };
 
-export function onIrc(cb: (events: IrcEvent[]) => void): Promise<UnlistenFn> {
-  return listen<IrcEvent[]>('irc', (e) => cb(e.payload));
+function toBase64(data: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < data.length; i += 0x8000) out += String.fromCharCode(...data.subarray(i, i + 0x8000));
+  return btoa(out);
+}
+
+export function onIrc(cb: (events: IrcEvent[]) => void): Promise<Unlisten> {
+  return listen('irc', (events) => cb(events as IrcEvent[]));
 }

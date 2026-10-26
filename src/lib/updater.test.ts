@@ -5,10 +5,13 @@ import { mockApi } from './test-utils';
 
 vi.mock('./api', () => ({ api: mockApi, onIrc: vi.fn(async () => () => {}) }));
 vi.mock('./notify', () => ({ notify: vi.fn() }));
-vi.mock('@tauri-apps/api/app', () => ({ getVersion: vi.fn(async () => '0.1.0') }));
-vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: vi.fn() }));
-vi.mock('@tauri-apps/plugin-updater', () => ({
-  check: vi.fn(async () => ({ version: '0.2.0', close: async () => {} })),
+vi.mock('./platform', () => ({
+  platform: {
+    version: vi.fn(async () => '0.1.0'),
+    checkForUpdate: vi.fn(async () => ({ version: '0.2.0' })),
+    installUpdate: vi.fn(),
+    relaunch: vi.fn(),
+  },
 }));
 
 const { app } = await import('./state.svelte');

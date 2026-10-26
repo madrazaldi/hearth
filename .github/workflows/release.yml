@@ -1,17 +1,21 @@
 name: Release
 
-# Runs CI, then builds installers for Windows, Linux and macOS into a draft
-# GitHub Release, together with the updater's latest.json. The release notes
-# are generated from the commits since the previous tag (cliff.toml).
-# Publish the draft to ship it: the in-app
-# updater reads releases/latest, which never points at a draft.
+# Runs CI, then builds Electrobun apps (bundled Chromium) for macOS, Linux and
+# Windows into a draft GitHub Release. The release notes are generated from the
+# commits since the previous tag (cliff.toml). Publish the draft to ship it:
+# the in-app updater reads releases/latest/download, which never points at a
+# draft.
 #
-# Signing is opt-in per secret group, so forks and fresh clones still get
+# The updater needs the flat files Electrobun writes to artifacts/ (the
+# `<channel>-<os>-<arch>-update.json` and the archive next to it), uploaded
+# without renaming; they are attached alongside the installers.
+#
+# macOS signing is opt-in per secret group, so forks and fresh clones still get
 # (unsigned) builds:
-#   updater:  TAURI_SIGNING_PRIVATE_KEY [+ TAURI_SIGNING_PRIVATE_KEY_PASSWORD]
-#   Windows:  WINDOWS_CERTIFICATE (base64 .pfx), WINDOWS_CERTIFICATE_PASSWORD
-#   macOS:    APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD,
-#             APPLE_SIGNING_IDENTITY [+ APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID to notarize]
+#   sign:      ELECTROBUN_CERTIFICATE (base64 .p12), ELECTROBUN_CERTIFICATE_PASSWORD,
+#              ELECTROBUN_DEVELOPER_ID (the identity name)
+#   notarize:  ELECTROBUN_APPLEID, ELECTROBUN_APPLEIDPASS, ELECTROBUN_TEAMID
+# Windows and Linux builds are not signed (Electrobun has no signing step for them).
 
 on:
   push:
@@ -33,11 +37,12 @@ jobs:
     needs: ci
     runs-on: ubuntu-latest
     outputs:
-      id: ${{ steps.release.outputs.id }}
+      tag: ${{ steps.release.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
       - name: Generate release notes
         uses: orhun/git-cliff-action@v4
         with:
@@ -54,10 +59,10 @@ jobs:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
         run: |
-          version=$(jq -r .version src-tauri/tauri.conf.json)
+          version=$(bun scripts/version.mjs)
           tag="v$version"
           if [ "$REF_TYPE" = tag ] && [ "$REF_NAME" != "$tag" ]; then
-            echo "::error::Tag $REF_NAME does not match version $version in tauri.conf.json"
+            echo "::error::Tag $REF_NAME does not match version $version in electrobun.config.ts"
             exit 1
           fi
           # A manual run builds $GITHUB_SHA, so an existing tag elsewhere would
@@ -75,31 +80,24 @@ jobs:
 
           ### Install
 
-          - **Windows:** the `.msi` or `-setup.exe` installer.
-          - **macOS:** the universal `.dmg` (Apple silicon and Intel). Builds that are not notarized need right-click → Open on first launch, or `xattr -dr com.apple.quarantine /Applications/Hearth.app`.
-          - **Linux:** the `.AppImage`, `.deb` or `.rpm`.
+          - **macOS:** `macos-arm64-Hearth.dmg` (Apple silicon) or `macos-x64-Hearth.dmg` (Intel). Builds that are not notarized need right-click → Open on first launch, or `xattr -dr com.apple.quarantine /Applications/Hearth.app`.
+          - **Windows:** `win-x64-Hearth-Setup.zip`.
+          - **Linux:** `linux-x64-Hearth-Setup.tar.gz`.
 
           Installed copies update themselves from Settings › General.
           EOF
-          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+          gh api "repos/$GITHUB_REPOSITORY/releases" \
             -f tag_name="$tag" -f target_commitish="$GITHUB_SHA" -f name="Hearth $version" \
-            -F body=@notes.md -F draft=true --jq .id)
-          echo "id=$id" >> "$GITHUB_OUTPUT"
+            -F body=@notes.md -F draft=true >/dev/null
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
   build:
     needs: create-release
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # Oldest supported runner, so the AppImage and .deb link against an older glibc.
-          - os: ubuntu-22.04
-            args: ''
-          - os: windows-latest
-            args: ''
-          # One universal bundle for Apple silicon and Intel; the updater serves it to both.
-          - os: macos-latest
-            args: '--target universal-apple-darwin'
+        # Electrobun builds for the architecture of the machine it runs on.
+        os: [macos-latest, macos-15-intel, ubuntu-22.04, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -108,99 +106,55 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libdbus-1-dev
+          sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libnss3 libasound2
 
       - uses: oven-sh/setup-bun@v2
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-      - uses: Swatinem/rust-cache@v2
+      # Runs `electrobun prepare` through the `prepare` hook, which projects the SDK.
       - run: bun install --frozen-lockfile
 
-      # Secrets that are unset expand to empty strings, and the Tauri bundler
-      # treats an empty-but-present variable as "sign with this", so only export
-      # the groups that are complete.
-      - name: Configure signing
-        id: signing
+      # Secrets that are unset expand to empty strings, and a present-but-empty
+      # variable would turn signing on, so export only the groups that are complete.
+      - name: Configure macOS signing
+        if: runner.os == 'macOS'
         shell: bash
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CERTIFICATE: ${{ secrets.ELECTROBUN_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.ELECTROBUN_CERTIFICATE_PASSWORD }}
+          DEVELOPER_ID: ${{ secrets.ELECTROBUN_DEVELOPER_ID }}
+          APPLEID: ${{ secrets.ELECTROBUN_APPLEID }}
+          APPLEIDPASS: ${{ secrets.ELECTROBUN_APPLEIDPASS }}
+          TEAMID: ${{ secrets.ELECTROBUN_TEAMID }}
         run: |
-          put() {
-            local d="EOF_$RANDOM$RANDOM"
-            { echo "$1<<$d"; printf '%s\n' "$2"; echo "$d"; } >> "$GITHUB_ENV"
-          }
-
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            put TAURI_SIGNING_PRIVATE_KEY "$TAURI_SIGNING_PRIVATE_KEY"
-            put TAURI_SIGNING_PRIVATE_KEY_PASSWORD "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
-            echo "updater=true" >> "$GITHUB_OUTPUT"
+          if [ -n "$CERTIFICATE" ] && [ -n "$DEVELOPER_ID" ]; then
+            keychain="$RUNNER_TEMP/build.keychain-db"
+            pass=$(uuidgen)
+            security create-keychain -p "$pass" "$keychain"
+            security set-keychain-settings -lut 21600 "$keychain"
+            security unlock-keychain -p "$pass" "$keychain"
+            echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security import "$RUNNER_TEMP/cert.p12" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+            security set-key-partition-list -S apple-tool:,apple: -k "$pass" "$keychain" >/dev/null
+            security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+            rm "$RUNNER_TEMP/cert.p12"
+            echo "ELECTROBUN_DEVELOPER_ID=$DEVELOPER_ID" >> "$GITHUB_ENV"
+            if [ -n "$APPLEID" ] && [ -n "$APPLEIDPASS" ] && [ -n "$TEAMID" ]; then
+              echo "ELECTROBUN_APPLEID=$APPLEID" >> "$GITHUB_ENV"
+              echo "ELECTROBUN_APPLEIDPASS=$APPLEIDPASS" >> "$GITHUB_ENV"
+              echo "ELECTROBUN_TEAMID=$TEAMID" >> "$GITHUB_ENV"
+            else
+              echo "::warning::Apple notarization secrets not set: signing without notarizing"
+            fi
           else
-            echo "::warning::TAURI_SIGNING_PRIVATE_KEY not set: building without updater artifacts"
-            # Without the key the bundler refuses to build updater artifacts at all.
-            bun -e 'const f="src-tauri/tauri.conf.json",fs=require("fs"),c=JSON.parse(fs.readFileSync(f));c.bundle.createUpdaterArtifacts=false;fs.writeFileSync(f,JSON.stringify(c,null,2))'
-            echo "updater=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Apple signing secrets not set: building an unsigned app"
           fi
 
-          if [ "$RUNNER_OS" = Windows ]; then
-            if [ -n "$WINDOWS_CERTIFICATE" ]; then
-              echo "wincert=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "::warning::Windows signing secrets not set: building unsigned installers"
-            fi
-          fi
+      - name: Build
+        run: bun run build
 
-          # tauri-action signs, and notarizes, when these are in the environment.
-          if [ "$RUNNER_OS" = macOS ]; then
-            if [ -n "$APPLE_CERTIFICATE" ] && [ -n "$APPLE_SIGNING_IDENTITY" ]; then
-              put APPLE_CERTIFICATE "$APPLE_CERTIFICATE"
-              put APPLE_CERTIFICATE_PASSWORD "$APPLE_CERTIFICATE_PASSWORD"
-              put APPLE_SIGNING_IDENTITY "$APPLE_SIGNING_IDENTITY"
-              if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
-                put APPLE_ID "$APPLE_ID"
-                put APPLE_PASSWORD "$APPLE_PASSWORD"
-                put APPLE_TEAM_ID "$APPLE_TEAM_ID"
-              else
-                echo "::warning::Apple notarization secrets not set: signing without notarizing"
-              fi
-            else
-              echo "::warning::Apple signing secrets not set: building an unsigned app"
-            fi
-          fi
-
-      - name: Import Windows certificate
-        if: steps.signing.outputs.wincert == 'true'
-        shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: |
-          $pfx = Join-Path $env:RUNNER_TEMP 'cert.pfx'
-          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
-          $password = ConvertTo-SecureString -String $env:WINDOWS_CERTIFICATE_PASSWORD -Force -AsPlainText
-          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
-          Remove-Item $pfx
-          # Merged over tauri.conf.json automatically on Windows builds.
-          @{ bundle = @{ windows = @{
-            certificateThumbprint = $cert.Thumbprint
-            digestAlgorithm = 'sha256'
-            timestampUrl = 'http://timestamp.digicert.com'
-          } } } | ConvertTo-Json -Depth 5 | Set-Content src-tauri/tauri.windows.conf.json
-
-      - uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Finds the draft created above by its tag and adds the files to it.
+      - name: Upload to the draft release
+        uses: softprops/action-gh-release@v2
         with:
-          tauriScript: bun run tauri
-          releaseId: ${{ needs.create-release.outputs.id }}
-          args: ${{ matrix.args }}
-          includeUpdaterJson: ${{ steps.signing.outputs.updater == 'true' }}
+          tag_name: ${{ needs.create-release.outputs.tag }}
+          draft: true
+          files: artifacts/*
