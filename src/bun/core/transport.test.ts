@@ -91,6 +91,30 @@ describe('raw sockets', () => {
     expect(await c.closed()).toBeNull();
   });
 
+  test('ending with unread input half-closes instead of resetting', async () => {
+    // A reset makes Windows discard what the peer hasn't read yet, such as a QUIT.
+    let got = '';
+    let reset = false;
+    const done = Promise.withResolvers<void>();
+    const { port } = await listen((s) => {
+      s.write(':srv 001 me :Welcome\r\n:srv 422 me :No MOTD\r\n');
+      s.on('data', (d) => (got += d));
+      s.on('error', () => (reset = true));
+      s.on('end', () => {
+        s.end();
+        done.resolve();
+      });
+    });
+    const c = collector();
+    const conn = await connect(endpoint(port), c.handlers);
+    await conn.sendLine('QUIT :bye');
+    conn.end();
+    await done.promise;
+    expect(got).toBe('QUIT :bye\r\n');
+    expect(reset).toBe(false);
+    expect(await c.closed()).toBeNull();
+  });
+
   test('overlong_lines_are_rejected', async () => {
     const { port } = await listen((s) => {
       s.write(Buffer.alloc(MAX_LINE + 10, 'a'));

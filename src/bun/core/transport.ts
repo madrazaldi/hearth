@@ -30,7 +30,7 @@ export interface LineHandlers {
 export interface LineConn {
   /** Resolves once the line is handed to the socket (later, if the socket is backed up). */
   sendLine(line: string): Promise<void>;
-  /** Finish writing and close. */
+  /** Finish writing and half-close; reading goes on until the peer closes, or until `destroy`. */
   end(): void;
   /** Drop the link now. */
   destroy(): void;
@@ -208,7 +208,7 @@ async function connectSocket(ep: Endpoint, identity: Identity | null, h: LineHan
         };
       });
     },
-    end: () => void socket.end(),
+    end: () => void socket.shutdown(),
     destroy: () => void socket.terminate(),
   };
 }
