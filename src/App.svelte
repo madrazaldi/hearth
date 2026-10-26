@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { platform } from './lib/platform';
   import { app } from './lib/state.svelte';
   import { updater } from './lib/updater.svelte';
   import Sidebar from './lib/components/Sidebar.svelte';
@@ -44,9 +44,7 @@
   const attention = $derived(app.allBuffers.reduce((n, b) => n + b.highlights, 0));
   $effect(() => {
     const n = attention;
-    getCurrentWindow()
-      .setBadgeCount(n > 0 ? n : undefined)
-      .catch(() => {});
+    platform.setBadge(n).catch(() => {});
   });
 
   onMount(() => {
@@ -120,7 +118,7 @@
           <BufferView buf={app.active} />
         {/key}
       {:else}
-        <div class="empty" data-tauri-drag-region>
+        <div class="empty" data-drag-region>
           <p>{app.ready ? 'Connecting…' : ''}</p>
         </div>
       {/if}

@@ -3,7 +3,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2023"],
+    "lib": ["ES2023", "DOM"],
     "types": ["bun"],
     "strict": true,
     "noEmit": true,
@@ -11,8 +11,19 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "allowImportingTsExtensions": false,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "paths": {
+      "electrobun/main": [
+        "../../.hutch/devkit/api/sdks/main/index.ts"
+      ],
+      "electrobun": [
+        "../../.hutch/devkit/api/sdks/main/index.ts"
+      ]
+    }
   },
-  "include": ["./**/*.ts"]
+  "include": [
+    "./**/*.ts",
+    "../shared/**/*.ts",
+    "../../electrobun.config.ts"
+  ]
 }

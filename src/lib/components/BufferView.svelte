@@ -69,8 +69,8 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="flex h-full min-h-0 flex-col">
-  <header class="flex h-12 flex-none items-center gap-3 border-b pr-3 pl-5" data-tauri-drag-region>
-    <div class="flex min-w-0 flex-1 items-center gap-2.5" data-tauri-drag-region>
+  <header class="flex h-12 flex-none items-center gap-3 border-b pr-3 pl-5" data-drag-region>
+    <div class="flex min-w-0 flex-1 items-center gap-2.5" data-drag-region>
       <h1 class="m-0 text-[15px] font-semibold whitespace-nowrap">
         {#if buf.kind === 'channel'}<span class="mr-px font-normal text-muted-foreground">#</span>{buf.name.replace(/^#/, '')}{:else}{title}{/if}
       </h1>
@@ -91,7 +91,7 @@
           <RichText text={buf.topic} plain />
         </button>
       {:else if subtitle}
-        <span class="min-w-0 flex-1 truncate text-[13px] text-muted-foreground" data-tauri-drag-region>{subtitle}</span>
+        <span class="min-w-0 flex-1 truncate text-[13px] text-muted-foreground" data-drag-region>{subtitle}</span>
       {/if}
     </div>
     <div class="flex items-center gap-0.5">

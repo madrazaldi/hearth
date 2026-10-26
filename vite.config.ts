@@ -1,20 +1,38 @@
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+import { electrobunAliases } from './devkit.ts';
 
-const host = process.env.TAURI_DEV_HOST;
+// The packaged UI runs under this policy; the dev server and preview don't, so hot reload keeps working.
+// `ws://127.0.0.1:*` is Electrobun's local socket to the Bun process.
+const csp = [
+  "default-src 'self' views:",
+  "script-src 'self' views:",
+  "style-src 'self' views: 'unsafe-inline'",
+  "img-src 'self' views: data: blob:",
+  "font-src 'self' views: data:",
+  'connect-src ws://127.0.0.1:*',
+  "object-src 'none'",
+  "base-uri 'none'",
+  "frame-src 'none'",
+  "form-action 'none'",
+].join('; ');
 
-export default defineConfig({
-  plugins: [tailwindcss(), svelte()],
-  resolve: { alias: { $lib: fileURLToPath(new URL('./src/lib', import.meta.url)) } },
-  clearScreen: false,
-  server: {
-    port: 1420,
-    strictPort: true,
-    host: host || false,
-    hmr: host ? { protocol: 'ws', host, port: 1421 } : undefined,
-    watch: { ignored: ['**/src-tauri/**'] },
-  },
-  build: { target: 'safari16', chunkSizeWarningLimit: 2000 },
+const contentSecurityPolicy = (): Plugin => ({
+  name: 'hearth:csp',
+  apply: 'build',
+  transformIndexHtml: () => [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: csp }, injectTo: 'head-prepend' }],
 });
+
+export default defineConfig(async () => ({
+  plugins: [tailwindcss(), svelte(), contentSecurityPolicy()],
+  resolve: {
+    alias: [{ find: '$lib', replacement: fileURLToPath(new URL('./src/lib', import.meta.url)) }, ...(await electrobunAliases())],
+  },
+  clearScreen: false,
+  // `bun run dev` is the browser preview (src/lib/mock.ts); the desktop app serves the built files.
+  server: { port: 1420, strictPort: true },
+  // The app ships its own Chromium (CEF), so a modern target is enough.
+  build: { target: 'chrome120', chunkSizeWarningLimit: 2000 },
+}));

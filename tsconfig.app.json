@@ -16,7 +16,12 @@
     "allowJs": true,
     "checkJs": true,
     "moduleDetection": "force",
-    "paths": { "$lib": ["./src/lib"], "$lib/*": ["./src/lib/*"] }
+    "paths": {
+      "$lib": ["./src/lib"],
+      "$lib/*": ["./src/lib/*"],
+      "electrobun/view": ["./.hutch/devkit/api/browser/index.ts"]
+    }
   },
-  "include": ["src/**/*.ts", "src/**/*.js", "src/**/*.svelte"]
+  "include": ["src/**/*.ts", "src/**/*.js", "src/**/*.svelte"],
+  "exclude": ["src/bun"]
 }

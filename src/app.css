@@ -193,6 +193,14 @@
     cursor: default;
   }
 
+  /* Where the title bar would be, the window drags; anything clickable inside stays clickable. */
+  [data-drag-region] {
+    -webkit-app-region: drag;
+  }
+  [data-drag-region] :is(button, a, input, textarea, select, label, [role='button'], [role='tab'], [role='menuitem'], [contenteditable]) {
+    -webkit-app-region: no-drag;
+  }
+
   #app {
     position: fixed;
     inset: 0;
