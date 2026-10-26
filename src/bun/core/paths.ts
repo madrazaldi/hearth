@@ -3,7 +3,7 @@
 // installs keep their config and log.
 
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { posix, win32 } from 'node:path';
 
 export const APP_ID = 'app.hearth.irc';
 
@@ -15,6 +15,8 @@ export interface Dirs {
 export function appDirs(env: Record<string, string | undefined> = process.env, platform: string = process.platform, home: string = homedir()): Dirs {
   // Escape hatches for running a build against throwaway data.
   const override = { config: env.HEARTH_CONFIG_DIR, data: env.HEARTH_DATA_DIR };
+  // By the target platform's rules, not the host's, so every branch can be tested anywhere.
+  const join = platform === 'win32' ? win32.join : posix.join;
   let base: Dirs;
   if (platform === 'darwin') {
     const dir = join(home, 'Library', 'Application Support', APP_ID);
