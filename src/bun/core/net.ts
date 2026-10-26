@@ -271,9 +271,9 @@ class Parser {
   }
 
   private run() {
-    if (!this.framing) {
+    while (!this.framing) {
       const end = this.buf.indexOf('\r\n\r\n');
-      if (end < 0) {
+      if (end < 0 || end > MAX_HEADER_BYTES) {
         if (this.buf.length > MAX_HEADER_BYTES) throw new Error('response headers too large');
         return;
       }
@@ -290,7 +290,10 @@ class Parser {
         const v = line.slice(i + 1).trim();
         headers[k] = k in headers ? `${headers[k]}, ${v}` : v;
       }
-      this.framing = this.onHead(Number(m[1]), headers);
+      const status = Number(m[1]);
+      // Interim responses (e.g. 103 Early Hints) precede the real one; we never ask to upgrade.
+      if (status >= 100 && status < 200 && status !== 101) continue;
+      this.framing = this.onHead(status, headers);
     }
     const f = this.framing;
     switch (f.kind) {
@@ -342,9 +345,14 @@ class Parser {
         this.buf = this.buf.subarray(2);
         f.state = 'size';
       } else {
-        // Trailers end at an empty line; they are ignored.
+        // Trailers end at an empty line; they are ignored, but bounded like headers.
         const eol = this.buf.indexOf('\r\n');
-        if (eol < 0) return;
+        if (eol < 0) {
+          if (this.buf.length > MAX_HEADER_BYTES) throw new Error('response trailers too large');
+          return;
+        }
+        f.left += eol + 2;
+        if (f.left > MAX_HEADER_BYTES) throw new Error('response trailers too large');
         const empty = eol === 0;
         this.buf = this.buf.subarray(eol + 2);
         if (empty) return this.finish();

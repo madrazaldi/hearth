@@ -178,6 +178,27 @@ describe('safeGet', () => {
     expect(closed).toBe(true);
   });
 
+  test('interim responses are skipped', async () => {
+    const f = await fx((s) => {
+      s.write('HTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\n');
+      setTimeout(() => respond(s, 'HTTP/1.1 200 OK\nContent-Length: 2', 'ok'), 20);
+    });
+    const resp = await safeGet(f.url(), loopbackNet);
+    expect(resp.status).toBe(200);
+    expect(await readAll(resp.chunks())).toBe('ok');
+  });
+
+  test('oversized headers and trailers are refused', async () => {
+    const big = await fx((s) => respond(s, `HTTP/1.1 200 OK\nX-Big: ${'a'.repeat(70 * 1024)}\nContent-Length: 0`));
+    await expect(safeGet(big.url(), loopbackNet)).rejects.toThrow('headers too large');
+    const trailer = await fx((s) => {
+      s.write('HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\nX-T: ');
+      s.write('a'.repeat(70 * 1024));
+    });
+    const resp = await safeGet(trailer.url(), loopbackNet);
+    await expect(readAll(resp.chunks())).rejects.toThrow('trailers too large');
+  });
+
   test('compressed bodies are refused', async () => {
     const f = await fx((s) => respond(s, 'HTTP/1.1 200 OK\nContent-Encoding: gzip\nContent-Length: 3', 'abc'));
     const resp = await safeGet(f.url(), loopbackNet);
