@@ -171,14 +171,17 @@
     height: 100%;
   }
 
+  /* The conversation is a panel inset into the window, which is the sidebar's colour. */
   main {
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    height: 100%;
+    margin: var(--inset) var(--inset) var(--inset) 0;
     display: flex;
     flex-direction: column;
     background: var(--bg);
+    border-radius: calc(var(--radius) + 4px);
+    box-shadow: var(--panel-shadow);
   }
 
   .empty {

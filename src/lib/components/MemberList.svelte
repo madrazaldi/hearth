@@ -6,13 +6,14 @@
   import { memberLabel, stepIndex } from '../a11y';
   import { offsets, rangeFor } from '../virtual';
   import Avatar from './Avatar.svelte';
-  import { Input } from '$lib/components/ui/input';
+  import * as InputGroup from '$lib/components/ui/input-group';
+  import Icon from './Icon.svelte';
 
   let { buf, onnick }: { buf: Buffer; onnick: (nick: string, e: MouseEvent) => void } = $props();
 
   // Fixed row heights, so the list can be virtualized without measuring.
-  const HEAD_H = 36;
-  const ROW_H = 26;
+  const HEAD_H = 34;
+  const ROW_H = 32;
   const OVERSCAN = 400;
 
   let query = $state('');
@@ -117,10 +118,13 @@
   }
 </script>
 
-<aside aria-label="Members" class="flex min-h-0 w-(--members-w) flex-none flex-col border-l bg-sidebar/40">
+<aside aria-label="Members" class="flex min-h-0 w-(--members-w) flex-none flex-col border-l">
   {#if buf.members.size > 30}
-    <div class="px-2.5 pt-2.5 pb-1">
-      <Input bind:value={query} placeholder="Find member" aria-label="Find member" class="h-7 text-[12.5px] md:text-[12.5px]" />
+    <div class="px-3 pt-3 pb-1">
+      <InputGroup.Root class="h-8 rounded-lg">
+        <InputGroup.Addon><Icon name="search" size={13} /></InputGroup.Addon>
+        <InputGroup.Input bind:value={query} placeholder="Find member" aria-label="Find member" class="h-8 text-[12.5px] md:text-[12.5px]" />
+      </InputGroup.Root>
     </div>
   {/if}
   <div
@@ -135,17 +139,17 @@
         {@const r = model.rows[i]}
         {#if r.kind === 'head'}
           <div
-            class="eyebrow absolute inset-x-0 flex h-[36px] items-end justify-between px-2 pb-1"
+            class="absolute inset-x-0 flex h-[34px] items-end gap-1.5 px-2 pb-1.5 text-[11px] font-semibold tracking-wider text-muted-foreground/80 uppercase"
             style="top:{offs[i]}px"
             aria-hidden="true"
           >
-            {r.title} <span class="font-normal tabular-nums">{counts[r.title] ?? 0}</span>
+            {r.title} <span class="font-medium tabular-nums opacity-70">— {counts[r.title] ?? 0}</span>
           </div>
         {:else}
           {@const m = r.m}
           <div class="absolute inset-x-0" style="top:{offs[i]}px" role="listitem" aria-setsize={model.members.length} aria-posinset={r.pos}>
             <button
-              class="member focus-inset flex h-[26px] w-full items-center gap-1 rounded-md pr-2 pl-1 text-left text-[13px] hover:bg-accent/60 focus-visible:bg-accent/60"
+              class="member focus-inset flex h-[32px] w-full items-center gap-2.5 rounded-md px-2 text-left text-[13.5px] transition-colors hover:bg-accent/70 focus-visible:bg-accent/70"
               class:away={m.away}
               data-nick={m.nick}
               tabindex={i === focusRow ? 0 : -1}
@@ -155,9 +159,12 @@
               onclick={(e) => onnick(m.nick, e)}
               title={m.user ? `${m.nick}!${m.user}@${m.host}${m.account ? ` · ${m.account}` : ''}` : m.nick}
             >
-              <span class="mono w-3 flex-none text-center text-[11.5px] text-muted-foreground">{m.prefix[0] ?? ''}</span>
-              {#if app.settings.loadAvatars}<span class="mr-[3px] flex"><Avatar conn={buf.conn} nick={m.nick} /></span>{/if}
-              <span class="nick truncate" style="--h:{nickHue(m.nick)}">{m.nick}</span>
+              <span class="relative flex flex-none">
+                <Avatar conn={buf.conn} nick={m.nick} size={24} />
+                {#if m.away}<i class="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full bg-warn ring-2 ring-background"></i>{/if}
+              </span>
+              <span class="nick min-w-0 flex-1 truncate font-medium" style="--h:{nickHue(m.nick)}">{m.nick}</span>
+              {#if m.prefix[0]}<span class="mono flex-none text-[11px] text-muted-foreground/70">{m.prefix[0]}</span>{/if}
             </button>
           </div>
         {/if}
@@ -173,6 +180,6 @@
   /* Away members fade as a whole, avatar included. */
   .away :global(.nick),
   .away :global(.avatar) {
-    opacity: 0.42;
+    opacity: 0.45;
   }
 </style>

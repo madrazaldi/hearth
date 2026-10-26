@@ -297,7 +297,7 @@ installMock(
           servers: empty ? [] : [server],
           settings: {
             theme: params.get('theme') ?? 'dark',
-            layout: params.get('layout') ?? 'columns',
+            layout: params.get('layout') ?? 'cozy',
             linkPreviews: true,
             loadAvatars: !params.has('noavatars'),
             aliases: { ns: '/msg NickServ $*', j: '/join $1', hi: 'hello $1!; /me waves' },

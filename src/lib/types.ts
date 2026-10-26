@@ -54,7 +54,7 @@ export interface Config {
 
 export interface Settings {
   theme: 'system' | 'dark' | 'light';
-  layout: 'columns' | 'compact';
+  layout: 'cozy' | 'columns' | 'compact';
   fontSize: number;
   clock: '24h' | '12h';
   showSeconds: boolean;
@@ -212,7 +212,7 @@ export const defaultServer = (): ServerConfig => ({
 
 export const defaultSettings = (): Settings => ({
   theme: 'system',
-  layout: 'columns',
+  layout: 'cozy',
   fontSize: 14,
   clock: '24h',
   showSeconds: false,

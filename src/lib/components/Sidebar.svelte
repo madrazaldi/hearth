@@ -11,6 +11,10 @@
   import { Kbd } from '$lib/components/ui/kbd';
   import * as ContextMenu from '$lib/components/ui/context-menu';
   import * as Tooltip from '$lib/components/ui/tooltip';
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
+  import Avatar from './Avatar.svelte';
+  import { nickHue } from '../nickcolor';
+  import logo from '../../assets/logo.png';
 
   const LEVELS: { value: NotifyLevel | 'default'; label: string }[] = [
     { value: 'default', label: 'Default' },
@@ -146,7 +150,7 @@
 
   function dotClass(status: string, away = false) {
     return cn(
-      'size-1.5 flex-none rounded-full',
+      'flex-none rounded-full',
       away
         ? 'bg-warn'
         : status === 'connected'
@@ -162,6 +166,20 @@
   function name(b: Buffer) {
     return b.kind === 'channel' ? b.name.replace(/^#/, '') : b.name;
   }
+
+  /** A network's tile: its first letter, tinted by the same hash as nicks. */
+  function initial(s: string) {
+    return [...s.replace(/^[^\p{L}\p{N}]+/u, '')][0]?.toUpperCase() ?? '?';
+  }
+
+  function presence(c: Conn): string {
+    if (c.status === 'connected') return c.away ? 'Away' : 'Online';
+    if (c.status === 'disconnected') return 'Offline';
+    return 'Connecting…';
+  }
+
+  const mod = isMac ? '⌘' : 'Ctrl+';
+
 </script>
 
 
@@ -169,36 +187,47 @@
   <Tooltip.Root>
     <Tooltip.Trigger>
       {#snippet child({ props })}
-        <Button {...props} variant="ghost" size="icon-sm" class="text-muted-foreground" aria-label={label} {onclick}>
+        <Button
+          {...props}
+          variant="ghost"
+          size="icon-sm"
+          class="text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+          aria-label={label}
+          {onclick}
+        >
           <Icon name={icon} size={15} />
         </Button>
       {/snippet}
     </Tooltip.Trigger>
-    <Tooltip.Content side="top">
+    <Tooltip.Content side="bottom">
       {label}
       {#if shortcut}<Kbd>{shortcut}</Kbd>{/if}
     </Tooltip.Content>
   </Tooltip.Root>
 {/snippet}
 
+{#snippet badge(n: number)}
+  <Badge class="h-4.5 min-w-4.5 rounded-full bg-brand px-1.5 text-[10.5px] font-semibold text-brand-text tabular-nums">{n}</Badge>
+{/snippet}
+
 {#snippet buffers(conn: Conn)}
-  <ul role="group" class="m-0 list-none p-0">
+  <ul role="group" class="m-0 mt-0.5 grid list-none gap-px p-0">
     {#each conn.channelBuffers as b (b.id)}
       {@const id = 'b' + b.id}
       {@const active = app.active === b}
       {@const muted = b.level === 'none'}
+      {@const unread = b.unread > 0 && !muted}
       <ContextMenu.Root>
         <ContextMenu.Trigger>
           {#snippet child({ props })}
             <li
               {...props}
               class={cn(
-                'focus-inset group/buf relative flex h-7 w-full items-center gap-2 rounded-md pr-1.5 pl-2.5 text-[13.5px] text-sidebar-foreground/65 transition-colors select-none',
-                'hover:bg-sidebar-accent/60 hover:text-sidebar-foreground data-[state=open]:bg-sidebar-accent/60',
-                b.unread > 0 && 'font-medium text-sidebar-foreground',
-                active && 'bg-sidebar-accent text-sidebar-accent-foreground',
-                muted && 'opacity-60',
-                muted && b.unread > 0 && 'font-normal',
+                'focus-inset group/buf relative flex h-7.5 w-full items-center gap-2 rounded-md pr-1 pl-1.5 text-[13.5px] text-sidebar-foreground/62 transition-colors select-none',
+                'hover:bg-sidebar-accent/70 hover:text-sidebar-foreground data-[state=open]:bg-sidebar-accent/70',
+                unread && 'font-semibold text-sidebar-foreground',
+                active && 'bg-sidebar-accent font-medium text-sidebar-accent-foreground shadow-xs',
+                muted && 'opacity-55',
               )}
               role="treeitem"
               aria-level={2}
@@ -213,46 +242,41 @@
               }}
               onkeydown={(e) => onItemKey(e, { id, conn, buf: b })}
             >
-              {#if active}
-                <span class="absolute inset-y-2 left-0 w-0.5 rounded-full bg-brand" aria-hidden="true"></span>
-              {/if}
               <span
                 class={cn(
-                  'relative grid w-3.5 flex-none place-items-center font-mono text-[13px] font-normal text-muted-foreground/70',
-                  (active || b.unread > 0) && 'text-muted-foreground',
+                  'relative grid size-5 flex-none place-items-center text-sidebar-foreground/45',
+                  (active || unread) && 'text-sidebar-foreground/80',
+                  active && 'text-brand',
                 )}
                 aria-hidden="true"
               >
-                {#if b.kind === 'channel'}#{:else}<Icon name="user" size={12} stroke={1.6} />{/if}
-                {#if b.kind === 'query' && conn.online.has(conn.fold(b.name))}
-                  <i
-                    class={cn(
-                      'absolute -right-0.5 -bottom-px size-1.5 rounded-full ring-[1.5px] ring-sidebar',
-                      conn.online.get(conn.fold(b.name)) ? 'bg-ok' : 'bg-muted-foreground/60',
-                    )}
-                  ></i>
+                {#if b.kind === 'channel'}
+                  <Icon name="hash" size={14} stroke={2.2} />
+                {:else}
+                  <Avatar {conn} nick={b.name} size={18} />
+                  {#if conn.online.has(conn.fold(b.name))}
+                    <i
+                      class={cn(
+                        'absolute -right-px -bottom-px size-2 rounded-full ring-2 ring-sidebar',
+                        conn.online.get(conn.fold(b.name)) ? 'bg-ok' : 'bg-muted-foreground/60',
+                      )}
+                    ></i>
+                  {/if}
                 {/if}
               </span>
-              <span
-                class={cn(
-                  'min-w-0 flex-1 truncate text-left',
-                  b.kind === 'channel' && !b.joined && 'italic opacity-55',
-                )}>{name(b)}</span
-              >
+              <span class={cn('min-w-0 flex-1 truncate text-left', b.kind === 'channel' && !b.joined && 'italic opacity-55')}>{name(b)}</span>
               {#if muted}
-                <span class="grid place-items-center pr-0.5 text-muted-foreground/70 group-hover/buf:hidden" title="Muted">
+                <span class="grid place-items-center pr-1 text-muted-foreground/70 group-hover/buf:hidden" title="Muted">
                   <Icon name="bellOff" size={12} />
                 </span>
               {:else if b.highlights > 0}
-                <Badge class="h-4.5 min-w-4.5 bg-brand px-1.5 text-[11px] font-semibold text-(--brand-text) tabular-nums group-hover/buf:hidden">
-                  {b.highlights}
-                </Badge>
+                <span class="group-hover/buf:hidden">{@render badge(b.highlights)}</span>
               {:else if b.typing.size > 0 && b.kind === 'query'}
                 <span class="typing-dots group-hover/buf:hidden"><i></i><i></i><i></i></span>
               {/if}
               <!-- Mouse-only shortcut; from the keyboard it's in the context menu and on Cmd/Ctrl+W. -->
               <span
-                class="hidden size-5 place-items-center rounded text-muted-foreground group-hover/buf:grid hover:bg-sidebar-accent hover:text-foreground"
+                class="hidden size-5.5 place-items-center rounded-md text-muted-foreground group-hover/buf:grid hover:bg-sidebar-border hover:text-foreground"
                 role="button"
                 tabindex="-1"
                 aria-hidden="true"
@@ -269,14 +293,14 @@
           {/snippet}
         </ContextMenu.Trigger>
         <ContextMenu.Content class="min-w-48" aria-label={b.name}>
-          <ContextMenu.Item onSelect={() => app.markRead(b)}>Mark as read</ContextMenu.Item>
+          <ContextMenu.Item onSelect={() => app.markRead(b)}><Icon name="read" size={15} />Mark as read</ContextMenu.Item>
           {#if b.kind === 'channel' && !b.joined}
-            <ContextMenu.Item onSelect={() => app.join(b.conn, b.name)}>Rejoin</ContextMenu.Item>
+            <ContextMenu.Item onSelect={() => app.join(b.conn, b.name)}><Icon name="refresh" size={15} />Rejoin</ContextMenu.Item>
           {/if}
           {#if b.kind === 'query' && b.conn.canMonitor}
             {@const watched = app.isWatched(b.conn, b.name)}
             <ContextMenu.Item onSelect={() => (watched ? app.unwatch(b.conn, b.name) : app.watch(b.conn, b.name))}>
-              {watched ? 'Stop watching' : 'Tell me when online'}
+              <Icon name="eye" size={15} />{watched ? 'Stop watching' : 'Tell me when online'}
             </ContextMenu.Item>
           {/if}
           <ContextMenu.Separator />
@@ -289,8 +313,8 @@
             </ContextMenu.RadioGroup>
           </ContextMenu.Group>
           <ContextMenu.Separator />
-          <ContextMenu.Item onSelect={() => app.closeBuffer(b)}>
-            {b.kind === 'channel' && b.joined ? 'Leave channel' : 'Close'}
+          <ContextMenu.Item variant="destructive" onSelect={() => app.closeBuffer(b)}>
+            <Icon name="x" size={15} />{b.kind === 'channel' && b.joined ? 'Leave channel' : 'Close'}
           </ContextMenu.Item>
         </ContextMenu.Content>
       </ContextMenu.Root>
@@ -298,25 +322,29 @@
   </ul>
 {/snippet}
 
-<aside
-  class="relative flex min-h-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
-  aria-label="Sidebar"
->
-  <div class={cn('flex gap-1 px-2.5 pb-1.5', isMac ? 'pt-10.5' : 'pt-2.5')} data-drag-region>
+<aside class="relative flex min-h-0 flex-col bg-sidebar text-sidebar-foreground" aria-label="Sidebar">
+  <div class={cn('flex flex-col gap-2.5 px-2.5 pb-2', isMac ? 'pt-10' : 'pt-2.5')} data-drag-region>
+    <div class="flex h-8 items-center gap-2 pl-1" data-drag-region>
+      <img class="size-6 rounded-md shadow-sm" src={logo} width="24" height="24" alt="" draggable="false" />
+      <span class="text-[14px] font-semibold tracking-tight">Hearth</span>
+      <div class="ml-auto flex items-center">
+        {@render iconBtn('Search messages', 'list', () => (app.searchOpen = true), isMac ? '⌘⇧F' : 'Ctrl+Shift+F')}
+        {@render iconBtn('Add network', 'plus', () => (app.settingsOpen = { tab: 'servers', serverId: 'new' }))}
+      </div>
+    </div>
     <Button
       variant="outline"
       size="sm"
-      class="h-8 min-w-0 flex-1 justify-start gap-2 bg-transparent pr-1.5 pl-2.5 text-[13px] font-normal text-muted-foreground hover:text-foreground"
+      class="h-8 min-w-0 justify-start gap-2 rounded-lg border-sidebar-border bg-sidebar-accent/40 pr-1.5 pl-2.5 text-[13px] font-normal text-sidebar-foreground/55 shadow-none hover:bg-sidebar-accent hover:text-sidebar-foreground dark:bg-sidebar-accent/40 dark:hover:bg-sidebar-accent"
       onclick={() => (app.switcherOpen = true)}
     >
       <Icon name="search" size={14} />
       <span class="flex-1 text-left">Jump to…</span>
       <Kbd aria-hidden="true">{isMac ? '⌘' : 'Ctrl '}K</Kbd>
     </Button>
-    {@render iconBtn('Search messages', 'list', () => (app.searchOpen = true), isMac ? '⌘⇧F' : 'Ctrl+Shift+F')}
   </div>
 
-  <nav class="flex-1 overflow-y-auto px-2 pt-1.5 pb-4" aria-label="Networks and channels">
+  <nav class="flex-1 overflow-y-auto px-2.5 pt-1 pb-4" aria-label="Networks and channels">
     <ul class="m-0 list-none p-0" role="tree" aria-label="Networks and channels" bind:this={tree}>
       {#each app.orderedConns as conn (conn.id)}
         {@const label = statusLabel(conn)}
@@ -329,7 +357,7 @@
               <!-- The item holds its channels too; the ring is drawn on just its own row. -->
               <li
                 {...props}
-                class={cn('group/net select-none outline-none', conn.isControl ? 'mt-0' : conn.parentId ? 'mt-1.5' : 'mt-2.5')}
+                class={cn('group/net select-none outline-none', conn.isControl ? 'mt-0' : 'mt-3')}
                 role="treeitem"
                 aria-level={1}
                 aria-selected={active}
@@ -344,44 +372,50 @@
                 {#if conn.isControl}
                   <div
                     class={cn(
-                      'flex items-baseline gap-2 rounded-md px-2 pt-3.5 pb-1 text-left outline-2 -outline-offset-2 outline-transparent group-focus-visible/net:outline-ring',
-                      '[&_.eyebrow]:transition-colors hover:[&_.eyebrow]:text-foreground',
-                      active && '[&_.eyebrow]:text-foreground',
+                      'flex h-7 items-center gap-1.5 rounded-md px-1.5 text-[11.5px] font-medium tracking-wide text-sidebar-foreground/50 uppercase outline-2 -outline-offset-2 outline-transparent transition-colors group-focus-visible/net:outline-ring',
+                      'hover:text-sidebar-foreground',
+                      active && 'text-sidebar-foreground',
                     )}
                     title="Bouncer console"
                   >
-                    <span class="eyebrow">{conn.name}</span>
+                    <Icon name="layers" size={12} />
+                    <span class="truncate">{conn.name}</span>
+                    <span class={cn(dotClass(conn.status), 'size-1.5')}></span>
                     {#if label}
-                      <span class={cn('ml-auto text-[11px] whitespace-nowrap text-muted-foreground', conn.status === 'disconnected' && 'text-destructive')}>{label}</span>
+                      <span class={cn('ml-auto text-[11px] tracking-normal whitespace-nowrap normal-case', conn.status === 'disconnected' && 'text-destructive')}>{label}</span>
                     {/if}
                   </div>
-                  {#if conn.buffers.size}<div class="pt-0.5">{@render buffers(conn)}</div>{/if}
+                  {#if conn.buffers.size}{@render buffers(conn)}{/if}
                 {:else}
-                  <div class="group/row flex items-center">
-                    <div
-                      class={cn(
-                        'flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-[13px] font-semibold text-sidebar-foreground/80 transition-colors',
-                        'outline-2 -outline-offset-2 outline-transparent group-focus-visible/net:outline-ring',
-                        'hover:bg-sidebar-accent/50 hover:text-sidebar-foreground group-data-[state=open]/net:bg-sidebar-accent/50',
-                        active && 'bg-sidebar-accent text-sidebar-accent-foreground',
-                      )}
+                  <div
+                    class={cn(
+                      'group/row flex h-8 min-w-0 items-center gap-2 rounded-md pr-1 pl-1.5 text-[13px] font-semibold text-sidebar-foreground/85 transition-colors',
+                      'outline-2 -outline-offset-2 outline-transparent group-focus-visible/net:outline-ring',
+                      'hover:bg-sidebar-accent/70 hover:text-sidebar-foreground group-data-[state=open]/net:bg-sidebar-accent/70',
+                      active && 'bg-sidebar-accent text-sidebar-accent-foreground shadow-xs',
+                    )}
+                  >
+                    <span
+                      class="nettile relative grid size-5 flex-none place-items-center rounded-[5px] text-[10.5px] font-bold"
+                      style="--h:{nickHue(conn.name)}"
+                      aria-hidden="true"
                     >
-                      <span class={dotClass(conn.status)}></span>
-                      <span class="truncate">{conn.name}</span>
-                      {#if label}
-                        <span class={cn('ml-auto text-[11px] font-normal whitespace-nowrap text-muted-foreground', conn.status === 'disconnected' && 'text-destructive')}>{label}</span>
-                      {/if}
-                      {#if conn.collapsed}
-                        {@const hl = conn.channelBuffers.reduce((n, b) => n + b.highlights, 0)}
-                        {#if hl}
-                          <Badge class="h-4.5 min-w-4.5 bg-brand px-1.5 text-[11px] font-semibold text-(--brand-text) tabular-nums">{hl}</Badge>
-                        {/if}
-                      {/if}
-                    </div>
+                      {initial(conn.name)}
+                      <i class={cn(dotClass(conn.status), 'absolute -right-0.75 -bottom-0.75 size-2 ring-2 ring-sidebar')}></i>
+                    </span>
+                    <span class="truncate">{conn.name}</span>
+                    {#if label}
+                      <span class={cn('ml-auto text-[11px] font-normal whitespace-nowrap text-muted-foreground', conn.status === 'disconnected' && 'text-destructive')}>{label}</span>
+                    {/if}
+                    {#if conn.collapsed}
+                      {@const hl = conn.channelBuffers.reduce((n, b) => n + b.highlights, 0)}
+                      {#if hl}<span class={label ? '' : 'ml-auto'}>{@render badge(hl)}</span>{/if}
+                    {/if}
                     <!-- Left/Right arrows fold from the keyboard. -->
                     <span
                       class={cn(
-                        'grid size-5.5 place-items-center rounded text-muted-foreground/70 opacity-0 transition-[opacity,transform] duration-150 group-hover/row:opacity-100 hover:text-foreground',
+                        'grid size-5.5 flex-none place-items-center rounded-md text-muted-foreground/70 opacity-0 transition-[opacity,transform] duration-150 group-hover/row:opacity-100 hover:bg-sidebar-border hover:text-foreground',
+                        !label && !(conn.collapsed && conn.channelBuffers.some((b) => b.highlights)) && 'ml-auto',
                         conn.collapsed && '-rotate-90 opacity-100',
                       )}
                       role="button"
@@ -403,24 +437,25 @@
               </li>
             {/snippet}
           </ContextMenu.Trigger>
-          <ContextMenu.Content class="min-w-48" aria-label={conn.name}>
-            <ContextMenu.Item onSelect={() => app.open(conn.server)}>Open server log</ContextMenu.Item>
+          <ContextMenu.Content class="min-w-52" aria-label={conn.name}>
+            <ContextMenu.Item onSelect={() => app.open(conn.server)}><Icon name="terminal" size={15} />Open server log</ContextMenu.Item>
             {#if conn.isControl}
               <ContextMenu.Item onSelect={() => (app.settingsOpen = { tab: 'servers', serverId: conn.serverId })}>
-                Manage networks…
+                <Icon name="layers" size={15} />Manage networks…
               </ContextMenu.Item>
             {:else if conn.status === 'connected'}
-              <ContextMenu.Item onSelect={() => app.browseChannels(conn)}>Browse channels…</ContextMenu.Item>
+              <ContextMenu.Item onSelect={() => app.browseChannels(conn)}><Icon name="compass" size={15} />Browse channels…</ContextMenu.Item>
             {/if}
-            <ContextMenu.Item onSelect={() => api.reconnect(conn.serverId)}>Reconnect</ContextMenu.Item>
+            <ContextMenu.Separator />
+            <ContextMenu.Item onSelect={() => api.reconnect(conn.serverId)}><Icon name="refresh" size={15} />Reconnect</ContextMenu.Item>
             {#if conn.status === 'disconnected' && !conn.retryAt}
-              <ContextMenu.Item onSelect={() => api.connect(conn.serverId)}>Connect</ContextMenu.Item>
+              <ContextMenu.Item onSelect={() => api.connect(conn.serverId)}><Icon name="plug" size={15} />Connect</ContextMenu.Item>
             {:else}
-              <ContextMenu.Item onSelect={() => api.disconnect(conn.serverId)}>Disconnect</ContextMenu.Item>
+              <ContextMenu.Item onSelect={() => api.disconnect(conn.serverId)}><Icon name="unplug" size={15} />Disconnect</ContextMenu.Item>
             {/if}
             <ContextMenu.Separator />
             <ContextMenu.Item onSelect={() => (app.settingsOpen = { tab: 'servers', serverId: conn.serverId })}>
-              Edit server…
+              <Icon name="edit" size={15} />Edit server…
             </ContextMenu.Item>
           </ContextMenu.Content>
         </ContextMenu.Root>
@@ -429,17 +464,64 @@
   </nav>
 
   <footer class="flex items-center gap-1 border-t border-sidebar-border p-2">
-    {@render iconBtn('Add network', 'plus', () => (app.settingsOpen = { tab: 'servers', serverId: 'new' }))}
-    <div class="flex min-w-0 flex-1 items-center gap-2 px-1.5 text-[12.5px] text-muted-foreground">
-      {#if app.active}
-        {@const c = app.active.conn}
-        <span class={dotClass(c.status, c.away)}></span>
-        <span class="truncate font-mono text-xs">{c.nick || '—'}</span>
-        {#if c.away}<span class="text-[11px] text-warn">away</span>{/if}
-        <span class="sr-only">, {c.status}</span>
-      {/if}
-    </div>
-    {@render iconBtn('Settings', 'settings', () => (app.settingsOpen = { tab: 'appearance' }))}
+    {#if app.active}
+      {@const c = app.active.conn}
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger>
+          {#snippet child({ props })}
+            <button
+              {...props}
+              class="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg p-1.5 text-left transition-colors hover:bg-sidebar-accent data-[state=open]:bg-sidebar-accent"
+              aria-label="{c.nick || 'You'} on {c.name}, {presence(c)}. Account menu"
+            >
+              <span class="relative flex">
+                <Avatar conn={c} nick={c.nick || '?'} size={30} />
+                <i class={cn(dotClass(c.status, c.away), 'absolute -right-0.5 -bottom-0.5 size-2.5 ring-2 ring-sidebar')}></i>
+              </span>
+              <span class="grid min-w-0 flex-1 leading-tight">
+                <span class="truncate text-[13px] font-semibold">{c.nick || '—'}</span>
+                <span class="truncate text-[11.5px] text-muted-foreground">{presence(c)} · {c.name}</span>
+              </span>
+              <span class="text-muted-foreground"><Icon name="updown" size={14} /></span>
+            </button>
+          {/snippet}
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Content side="top" align="start" sideOffset={6} class="w-60">
+          <DropdownMenu.Label class="flex items-center gap-2.5 py-1.5 font-normal">
+            <Avatar conn={c} nick={c.nick || '?'} size={32} />
+            <span class="grid min-w-0 leading-tight">
+              <span class="truncate text-[13px] font-semibold">{c.nick || '—'}</span>
+              <span class="truncate text-xs text-muted-foreground">{c.name}</span>
+            </span>
+          </DropdownMenu.Label>
+          <DropdownMenu.Separator />
+          {#if c.status === 'connected' && !c.isControl}
+            <DropdownMenu.Item onSelect={() => c.send(c.away ? 'AWAY' : 'AWAY :Away')}>
+              <Icon name="coffee" size={15} />{c.away ? "I'm back" : 'Set yourself away'}
+            </DropdownMenu.Item>
+          {/if}
+          <DropdownMenu.Item onSelect={() => (app.settingsOpen = { tab: 'servers', serverId: 'new' })}>
+            <Icon name="plus" size={15} />Add network…
+          </DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={() => (app.searchOpen = true)}>
+            <Icon name="list" size={15} />Search messages
+            <DropdownMenu.Shortcut>{mod}⇧F</DropdownMenu.Shortcut>
+          </DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={() => (app.shortcutsOpen = true)}>
+            <Icon name="keyboard" size={15} />Keyboard shortcuts
+            <DropdownMenu.Shortcut>{mod}/</DropdownMenu.Shortcut>
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator />
+          <DropdownMenu.Item onSelect={() => (app.settingsOpen = { tab: 'appearance' })}>
+            <Icon name="gear" size={15} />Settings
+            <DropdownMenu.Shortcut>{mod},</DropdownMenu.Shortcut>
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Root>
+    {:else}
+      <div class="flex-1"></div>
+    {/if}
+    {@render iconBtn('Settings', 'gear', () => (app.settingsOpen = { tab: 'appearance' }), `${mod},`)}
   </footer>
 
   <div
@@ -457,6 +539,11 @@
 </aside>
 
 <style>
+  .nettile {
+    color: oklch(var(--nick-l) var(--nick-c) var(--h));
+    background: color-mix(in oklch, oklch(var(--nick-l) var(--nick-c) var(--h)) 22%, var(--sidebar-accent));
+  }
+
   .typing-dots {
     display: flex;
     gap: 2px;
