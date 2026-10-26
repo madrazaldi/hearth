@@ -321,6 +321,8 @@ class Session {
         this.lastRefill = now;
         if (this.tokens < 1) {
           await sleep(this.clock, (1 - this.tokens) * REFILL_S * 1000);
+          // close() gave up on us while we waited; the backlog belongs to the next session now.
+          if (this.writerStopped) return;
           this.tokens = 1;
           this.lastRefill = this.clock.now();
         }
@@ -330,11 +332,13 @@ class Session {
       try {
         await this.link.sendLine(line);
       } catch (e) {
+        if (this.writerStopped) return;
         this.spec.backlog.n--;
         this.writerStopped = true;
         this.finish(this.endedBy(e instanceof Error ? e : new Error(String(e))));
         return;
       }
+      if (this.writerStopped) return;
       this.spec.backlog.n--;
       if (quitting) {
         // Nothing may follow a QUIT.
@@ -372,6 +376,9 @@ class Session {
     let cancel = () => {};
     await Promise.race([flushed, new Promise<void>((resolve) => (cancel = this.clock.after(2000, resolve)))]);
     cancel();
+    // A writer still pacing or blocked must not send or count anything once the next session starts.
+    this.writerStopped = true;
+    this.out.length = 0;
     link.end();
     // A peer that never answers the half-close must not leak the socket.
     const t = setTimeout(() => link.destroy(), 3000);
