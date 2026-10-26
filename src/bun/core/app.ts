@@ -42,6 +42,8 @@ export class Core {
   private readonly previews = new Previewer();
   private closeToTrayFlag = false;
   private loadAvatars = false;
+  // Saves and deletes await the keychain, so they're queued per server to keep a delete from being undone by a save.
+  private serverOps = new Map<string, Promise<unknown>>();
 
   private constructor(
     private readonly store: Store,
@@ -116,30 +118,44 @@ export class Core {
     return { servers: this.config.servers.map((s) => publicServer(s) as ServerConfig), settings: this.config.settings };
   }
 
+  private serially<T>(id: string, op: () => Promise<T>): Promise<T> {
+    const run = (this.serverOps.get(id) ?? Promise.resolve()).then(op, op);
+    const tail = run.catch(() => {});
+    this.serverOps.set(id, tail);
+    void tail.then(() => {
+      if (this.serverOps.get(id) === tail) this.serverOps.delete(id);
+    });
+    return run;
+  }
+
   async saveServer(input: ServerConfig): Promise<ServerConfig> {
     const server = normalizeServer(input);
     if (server.host.trim() === '') throw new Error('host is required');
     if (server.id === '') server.id = randomUUID().replaceAll('-', '').slice(0, 12);
     if (server.name.trim() === '') server.name = server.host;
     if (server.sasl !== 'plain') server.saslPassword = '';
-    await secrets.store(server);
-    const i = this.config.servers.findIndex((s) => s.id === server.id);
-    if (i >= 0) this.config.servers[i] = server;
-    else this.config.servers.push(server);
-    this.persist();
-    return publicServer(server) as ServerConfig;
+    return this.serially(server.id, async () => {
+      await secrets.store(server);
+      const i = this.config.servers.findIndex((s) => s.id === server.id);
+      if (i >= 0) this.config.servers[i] = server;
+      else this.config.servers.push(server);
+      this.persist();
+      return publicServer(server) as ServerConfig;
+    });
   }
 
-  async deleteServer(id: string) {
-    this.irc.disconnect(id, null);
-    this.config.servers = this.config.servers.filter((s) => s.id !== id);
-    await secrets.forget(id);
-    try {
-      this.db.forgetServer(id);
-    } catch (e) {
-      console.warn(`could not delete logs for ${id}: ${errText(e)}`);
-    }
-    this.persist();
+  async deleteServer(id: string): Promise<void> {
+    return this.serially(id, async () => {
+      this.irc.disconnect(id, null);
+      this.config.servers = this.config.servers.filter((s) => s.id !== id);
+      await secrets.forget(id);
+      try {
+        this.db.forgetServer(id);
+      } catch (e) {
+        console.warn(`could not delete logs for ${id}: ${errText(e)}`);
+      }
+      this.persist();
+    });
   }
 
   saveSettings(settings: Record<string, unknown>) {

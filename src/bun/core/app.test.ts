@@ -10,14 +10,17 @@ import { useKeychain, type Keychain } from './secrets';
 let dir: string;
 let cores: Core[] = [];
 const vault = new Map<string, string>();
+const legacyVault = new Map<string, string>();
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'hearth-core-'));
   vault.clear();
+  legacyVault.clear();
   const k: Keychain = {
     get: async (s, n) => vault.get(`${s}/${n}`) ?? null,
     set: async (s, n, v) => void vault.set(`${s}/${n}`, v),
     delete: async (s, n) => vault.delete(`${s}/${n}`),
+    legacy: async (s, n) => legacyVault.get(`${s}/${n}`) ?? null,
   };
   useKeychain(k);
 });
@@ -91,6 +94,17 @@ test('deleting a server removes its secrets, logs and entry', async () => {
   expect(JSON.parse(readFileSync(join(dir, 'config.json'), 'utf8')).servers).toEqual([]);
 });
 
+test('a delete during a save is not undone by it', async () => {
+  const core = await open();
+  const saved = await core.saveServer({ ...defaultServer(), id: 'x', host: 'h', nick: 'n', password: 'pw' });
+  // Both start before either finishes its keychain work.
+  const save = core.saveServer({ ...saved, password: 'pw2' });
+  const del = core.deleteServer('x');
+  await Promise.all([save, del]);
+  expect(core.getConfig().servers).toEqual([]);
+  expect(vault.size).toBe(0);
+});
+
 test('settings the backend acts on are applied', async () => {
   const core = await open();
   expect(core.closeToTray()).toBe(false);
@@ -108,6 +122,17 @@ test('the config survives a restart', async () => {
   const b = await open();
   expect(b.getConfig().servers[0].password).toBe('pw');
   expect(b.getConfig().settings).toEqual({ theme: 'light' });
+});
+
+test('secrets the Rust engine stored are found and moved over', async () => {
+  const a = await open();
+  await a.saveServer({ ...defaultServer(), id: 'x', host: 'h', nick: 'n', password: 'pw' });
+  a.shutdown();
+  for (const [k, v] of vault) legacyVault.set(k, v);
+  vault.clear();
+  const b = await open();
+  expect(b.getConfig().servers[0].password).toBe('pw');
+  expect(vault.get('app.hearth.irc/x:password')).toBe('pw');
 });
 
 test('local history limits are clamped and results come back', async () => {
