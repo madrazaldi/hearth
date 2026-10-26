@@ -158,11 +158,20 @@ Electrobun.events.on('before-quit', (event) => {
 
 // ---- Menus and tray ----
 
+// Electrobun only gives the edit roles their standard shortcuts; the app and window roles need an explicit accelerator.
 if (isMac) {
   ApplicationMenu.setApplicationMenu([
     {
       label: 'Hearth',
-      submenu: [{ role: 'about' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'showAll' }, { type: 'separator' }, { role: 'quit' }],
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'hide', accelerator: 'CommandOrControl+H' },
+        { role: 'hideOthers', accelerator: 'Alt+Command+H' },
+        { role: 'showAll' },
+        { type: 'separator' },
+        { role: 'quit', accelerator: 'CommandOrControl+Q' },
+      ],
     },
     {
       label: 'Edit',
@@ -170,7 +179,13 @@ if (isMac) {
     },
     {
       label: 'Window',
-      submenu: [{ role: 'minimize' }, { role: 'zoom' }, { role: 'close' }, { type: 'separator' }, { role: 'toggleFullScreen' }],
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        { role: 'close', accelerator: 'CommandOrControl+W' },
+        { type: 'separator' },
+        { role: 'toggleFullScreen', accelerator: 'Control+Command+F' },
+      ],
     },
   ]);
 }
