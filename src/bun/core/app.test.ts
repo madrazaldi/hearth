@@ -20,7 +20,10 @@ beforeEach(() => {
     get: async (s, n) => vault.get(`${s}/${n}`) ?? null,
     set: async (s, n, v) => void vault.set(`${s}/${n}`, v),
     delete: async (s, n) => vault.delete(`${s}/${n}`),
-    legacy: async (s, n) => legacyVault.get(`${s}/${n}`) ?? null,
+    legacy: {
+      get: async (s, n) => legacyVault.get(`${s}/${n}`) ?? null,
+      delete: async (s, n) => void legacyVault.delete(`${s}/${n}`),
+    },
   };
   useKeychain(k);
 });
@@ -135,6 +138,12 @@ test('secrets the Rust engine stored are found and moved over', async () => {
   const b = await open();
   expect(b.getConfig().servers[0].password).toBe('pw');
   expect(vault.get('app.hearth.irc/x:password')).toBe('pw');
+  // The old entry is gone, so clearing the password sticks.
+  expect(legacyVault.size).toBe(0);
+  await b.saveServer({ ...b.getConfig().servers[0], password: '' });
+  b.shutdown();
+  const c = await open();
+  expect(c.getConfig().servers[0].password).toBe('');
 });
 
 test('local history limits are clamped and results come back', async () => {

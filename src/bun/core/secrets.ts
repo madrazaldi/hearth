@@ -17,32 +17,41 @@ export interface Keychain {
   get(service: string, name: string): Promise<string | null>;
   set(service: string, name: string, value: string): Promise<void>;
   delete(service: string, name: string): Promise<boolean>;
-  /** An entry written by the Rust engine, where its format differs from Bun's. */
-  legacy?(service: string, name: string): Promise<string | null>;
+  /** Entries written by the Rust engine, where their format differs from Bun's. */
+  legacy?: {
+    get(service: string, name: string): Promise<string | null>;
+    delete(service: string, name: string): Promise<void>;
+  };
 }
 
 const bunKeychain: Keychain = {
   get: (service, name) => Bun.secrets.get({ service, name }),
   set: (service, name, value) => Bun.secrets.set({ service, name, value }),
   delete: (service, name) => Bun.secrets.delete({ service, name }),
-  legacy: async (service, name) => {
-    if (process.platform === 'win32') return windowsLegacy(service, name);
-    if (process.platform === 'linux') return linuxLegacy(service, name);
-    return null;
-  },
+  legacy:
+    process.platform === 'win32'
+      ? { get: (service, name) => windowsLegacy(service, name, 'read'), delete: async (service, name) => void (await windowsLegacy(service, name, 'delete')) }
+      : process.platform === 'linux'
+        ? { get: linuxLegacy, delete: linuxLegacyDelete }
+        : undefined,
 };
 
 /** keyring-rs: a generic credential named `<account>.<service>` holding UTF-16. */
-async function windowsLegacy(service: string, name: string): Promise<string | null> {
+async function windowsLegacy(service: string, name: string, op: 'read' | 'delete'): Promise<string | null> {
   const { dlopen, ptr, read, toArrayBuffer } = await import('bun:ffi');
   const lib = dlopen('advapi32.dll', {
     CredReadW: { args: ['ptr', 'u32', 'u32', 'ptr'], returns: 'i32' },
+    CredDeleteW: { args: ['ptr', 'u32', 'u32'], returns: 'i32' },
     CredFree: { args: ['ptr'], returns: 'void' },
   });
   try {
     const target = Buffer.from(`${name}.${service}\0`, 'utf16le');
-    const out = new BigUint64Array(1);
     const CRED_TYPE_GENERIC = 1;
+    if (op === 'delete') {
+      lib.symbols.CredDeleteW(ptr(target), CRED_TYPE_GENERIC, 0);
+      return null;
+    }
+    const out = new BigUint64Array(1);
     if (!lib.symbols.CredReadW(ptr(target), CRED_TYPE_GENERIC, 0, ptr(out))) return null;
     const cred = Number(out[0]) as Pointer;
     try {
@@ -67,6 +76,11 @@ async function linuxLegacy(service: string, name: string): Promise<string | null
   return (await p.exited) === 0 && out !== '' ? out : null;
 }
 
+async function linuxLegacyDelete(service: string, name: string): Promise<void> {
+  if (!Bun.which('secret-tool')) return;
+  await Bun.spawn(['secret-tool', 'clear', 'service', service, 'username', name], { stdout: 'ignore', stderr: 'ignore' }).exited;
+}
+
 let keychain: Keychain = bunKeychain;
 
 export function useKeychain(k: Keychain | null) {
@@ -86,7 +100,7 @@ async function get(server: string, kind: string): Promise<string | null> {
   }
   if (value !== null || !keychain.legacy) return value;
   try {
-    value = await keychain.legacy(SERVICE, name);
+    value = await keychain.legacy.get(SERVICE, name);
   } catch (e) {
     console.warn(`legacy keychain read failed: ${e}`);
     return null;
@@ -94,6 +108,8 @@ async function get(server: string, kind: string): Promise<string | null> {
   if (value) {
     try {
       await keychain.set(SERVICE, name, value);
+      // Left behind, the old entry would bring the secret back after the user clears it.
+      await keychain.legacy.delete(SERVICE, name);
     } catch (e) {
       console.warn(`could not migrate a keychain entry: ${e}`);
     }
@@ -104,8 +120,10 @@ async function get(server: string, kind: string): Promise<string | null> {
 /** Store (or with an empty value, remove) one secret. Returns false when the keychain is unavailable. */
 async function put(server: string, kind: string, value: string): Promise<boolean> {
   try {
-    if (value === '') await keychain.delete(SERVICE, account(server, kind));
-    else await keychain.set(SERVICE, account(server, kind), value);
+    if (value === '') {
+      await keychain.delete(SERVICE, account(server, kind));
+      await keychain.legacy?.delete(SERVICE, account(server, kind));
+    } else await keychain.set(SERVICE, account(server, kind), value);
     return true;
   } catch (e) {
     console.warn(`keychain write failed, keeping secrets in the config file: ${e}`);
