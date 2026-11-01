@@ -153,7 +153,7 @@ jobs:
 
       # Finds the draft created above by its tag and adds the files to it.
       - name: Upload to the draft release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.create-release.outputs.tag }}
           draft: true
