@@ -1,16 +1,14 @@
 # Monthly, grouped so a month's routine bumps arrive as one PR per ecosystem.
-# electrobun is pinned exactly: its version also selects the runtime and SDK
-# that `electrobun prepare` projects, so bump it by hand and rebuild.
+# gpui-kit (and with it gpui-pre) is pinned exactly in crates/hearth-app/Cargo.toml:
+# bump it by hand, since each release can need changes in the UI code.
 version: 2
 updates:
-  - package-ecosystem: bun
+  - package-ecosystem: cargo
     directory: /
     schedule:
       interval: monthly
-    ignore:
-      - dependency-name: electrobun
     groups:
-      npm:
+      cargo:
         update-types: [minor, patch]
 
   - package-ecosystem: github-actions

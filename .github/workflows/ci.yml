@@ -14,22 +14,17 @@ concurrency:
 permissions:
   contents: read
 
-jobs:
-  frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - name: Check versions agree
-        run: bun scripts/version.mjs
-      # Type-checks the UI and the Bun side, then runs Vitest and `bun test`.
-      - run: bun run check
-      - run: bun run test
+env:
+  CARGO_TERM_COLOR: always
+  # Debug info is most of a build's disk use and link time, and nothing in CI reads it.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
 
-  # The IRC engine runs on Bun in the app's main process: its tests exercise
-  # real sockets, TLS and the OS keychain bindings, so run them everywhere the app ships.
-  engine:
+jobs:
+  # The engine's tests exercise real sockets, TLS and the OS keychain, and the
+  # app has per-platform code (tray, notifications, updater), so everything
+  # runs on every platform the app ships on.
+  check:
     strategy:
       fail-fast: false
       matrix:
@@ -37,7 +32,29 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-      # The engine needs no Electrobun SDK, so skip the `prepare` hook that downloads it.
-      - run: bun install --frozen-lockfile --ignore-scripts
-      - run: bun test src/bun
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: scripts/install-linux-deps.sh
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Only main saves caches; pull requests restore the closest one.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # The version lives in the workspace Cargo.toml; Cargo.lock must follow it.
+      - name: Check versions agree
+        run: cargo xtask check-version
+
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --locked

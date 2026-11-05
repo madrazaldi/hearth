@@ -1,0 +1,18 @@
+[workspace]
+members = ["crates/hearth-core", "crates/hearth-model", "crates/hearth-app", "xtask"]
+default-members = ["crates/hearth-app"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/madrazaldi/hearth"
+
+[profile.dev.package."*"]
+# GPUI is unusably slow unoptimized; keep our own crates fast to rebuild.
+opt-level = 2
+
+[profile.release]
+lto = "thin"

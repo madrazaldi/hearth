@@ -1,0 +1,18 @@
+[package]
+name = "hearth-model"
+description = "Hearth's client state: buffers, unread counts, history, commands. No UI toolkit."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hearth-core = { path = "../hearth-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+url = "2"
+percent-encoding = "2"
+base64 = "0.23"
