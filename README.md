@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/assets/logo.png" width="96" height="96" alt="">
+  <img src="crates/hearth-app/assets/logo.png" width="96" height="96" alt="">
 </p>
 
 <h1 align="center">Hearth</h1>
@@ -19,7 +19,7 @@
   <img src="docs/screenshots/chat-dark.png" alt="Hearth showing a busy channel with replies, reactions, a link preview and the member list">
 </p>
 
-Hearth is built on a TypeScript engine running on Bun (`src/bun/core`) that handles connections, storage and the keychain, with a Svelte 5 interface on top, packaged with [Electrobun](https://electrobun.dev) and its bundled Chromium (CEF). It treats modern IRC features (history, read markers, replies, reactions, multiline messages) as part of the client rather than add-ons.
+Hearth is a native Rust app: an IRC engine (`crates/hearth-core`) that handles connections, storage and the keychain, a toolkit-free client state model (`crates/hearth-model`), and a GPU-rendered interface built with [GPUI Kit](https://github.com/longbridge/gpui-kit) (`crates/hearth-app`). It treats modern IRC features (history, read markers, replies, reactions, multiline messages) as part of the client rather than add-ons.
 
 ## Download
 
@@ -27,11 +27,12 @@ Get the latest installer from the [releases page](https://github.com/madrazaldi/
 
 | Platform | File |
 | --- | --- |
-| Windows | `Hearth_x.y.z_x64-setup.exe` or `Hearth_x.y.z_x64_en-US.msi` |
-| macOS (Apple silicon and Intel) | `Hearth_x.y.z_universal.dmg` |
-| Linux | `.AppImage`, `.deb` or `.rpm` |
+| Windows | `hearth-x.y.z-windows-x86_64-setup.exe` |
+| macOS (Apple silicon) | `hearth-x.y.z-macos-aarch64.dmg` |
+| macOS (Intel) | `hearth-x.y.z-macos-x86_64.dmg` |
+| Linux | `hearth-x.y.z-linux-x86_64.AppImage` or `.deb` |
 
-Hearth updates itself: new versions show up under Settings › General.
+The macOS app, the Windows installer and the AppImage update themselves: new versions show up under Settings › General. The `.deb` updates with your package manager.
 
 > [!NOTE]
 > The macOS build is not notarized yet, so Gatekeeper blocks the first launch. Right-click Hearth in Applications and choose **Open**, or run `xattr -dr com.apple.quarantine /Applications/Hearth.app`. On Windows, SmartScreen may warn about an unrecognized app until the installers are code-signed.
@@ -74,14 +75,14 @@ Hearth updates itself: new versions show up under Settings › General.
 - **Saved scrollback:** messages are stored locally in SQLite (`hearth.db` in the app-data directory), so scrollback survives restarts and works on servers without chathistory. It can be turned off and wiped under Settings → Privacy & data.
 - **Search:** ⌘⇧F searches every buffer, one network or the current buffer, using the local full-text index plus bouncer search. Narrow it with `from:nick`, `in:#channel`, `on:`, `before:` and `after:` (a `YYYY-MM-DD` date, `today` or `yesterday`); `from:` and `in:` autocomplete. Older results load as you scroll. Choosing a result jumps to the message even if it was never loaded: the history around it is fetched, and the messages between it and the present fill in as you scroll. Reopening search brings back the last query and results.
 - **Replies and reactions:** hover a message to reply, react, copy it or delete your own.
-- **Link previews** (opt-in): pages and images are fetched by the Bun backend, which refuses local and private addresses at every redirect.
+- **Link previews** (opt-in): pages and images are fetched by the engine, never by the interface, and it refuses local and private addresses at every redirect.
 - **Inline images**: with link previews on, image links (including soju FILEHOST uploads) show as thumbnails you can open full size. Images are checked by their bytes (PNG, JPEG, GIF, WebP; at most 8 MB), animations play on hover unless autoplay is on, and images in messages that mention NSFW stay blurred until clicked. Video and audio links get a compact card that opens in your browser; nothing is streamed into the app.
 - **Channel browser** for `/list`, with filtering and sorting.
 - **Saved buffers:** open channels and private conversations are remembered per network, including channel keys, and restored on launch.
 - **Ignore list** with nick or `nick!user@host` wildcard masks. **Per-buffer notifications:** all messages, mentions only, or muted.
 - **Watch list:** MONITOR shows online presence for private conversations and announces watched nicks.
 - **Tray:** optionally keep running in the menu bar or system tray when the window closes, and mark yourself away after a period in the background.
-- **Unread state:** read markers sync between devices, the sidebar shows unread counts and mention badges, a "New" divider marks where you left off, and the dock badge counts mentions.
+- **Unread state:** read markers sync between devices, the sidebar shows unread counts and mention badges, a "New" divider marks where you left off, and the dock badge (the tray tooltip on Windows and Linux) counts mentions.
 - **Desktop notifications** for mentions, highlight words and private messages.
 - **Highlight rules:** global highlight words, plus per-server words and `/regex/flags` patterns with a live test field, and "never highlight" nicks or masks for bots and relays.
 - **Aliases:** your own slash commands, set up under Settings → Aliases. For example `/ns` → `/msg NickServ $*`. They support `$1`…`$9`, `$2-`, `$*`, `$nick`, `$channel` and `$network`, and several commands separated by `;`. An alias can replace a built-in command and still call it.
@@ -110,7 +111,6 @@ Hearth updates itself: new versions show up under Settings › General.
 - **Security:**
   - Passwords are kept in the OS keychain, and existing plain-text passwords are migrated out of the config file.
   - Client certificates (CertFP) can be generated in the app.
-  - The UI runs under a strict Content Security Policy.
 
 ## Commands
 
@@ -125,7 +125,7 @@ Type `/help` in the app for the full list. The main ones are `/join`, `/part`, `
 | ⌘1–9 | Go to the Nth channel |
 | ⌘F | Filter messages in the current buffer |
 | ⌘⇧F | Search messages |
-| ⌘W | Close or leave the buffer |
+| ⌘W | Close the window (Ctrl+W closes or leaves the buffer on Windows and Linux) |
 | ⌘⇧M | Toggle the member list |
 | ⌘, | Open Settings |
 | ⌘/ | Show all keyboard shortcuts |
@@ -138,97 +138,100 @@ On Windows and Linux, use Ctrl instead of ⌘ and Alt instead of ⌥.
 
 ## Development
 
-You need [Bun](https://bun.sh). Electrobun downloads its own runtime and the bundled Chromium (CEF) on first use, so there is no native toolchain to install. On Linux the app needs the usual GTK and tray libraries at runtime.
+You need a stable [Rust toolchain](https://rustup.rs) (see `rust-version` in `Cargo.toml`). On Linux, install the libraries GPUI needs with `scripts/install-linux-deps.sh`. The first build compiles GPUI and takes a few minutes; later builds are incremental.
 
 ```sh
-bun install
-bun run dev            # the UI alone in a browser, against the scripted mock (src/lib/mock.ts)
-bun run start          # build the UI and run the real app (Electrobun dev mode)
-bun run check          # svelte-check + tsc for the UI, the build scripts and the Bun backend
-bun run test           # Vitest for the UI, then bun test for the backend (actor tests against a scripted server)
-bun run build          # stable release build into build/ and artifacts/
-bun run probe          # headless smoke test of the backend against a real server
+cargo run                          # the app (crates/hearth-app), with your real config and logs
+HEARTH_MOCK=1 cargo run            # the app against a scripted IRC session, no server needed
+cargo test --workspace             # engine, client state and app tests
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all                    # rustfmt.toml sets the line width
+cargo xtask screenshots            # regenerate docs/screenshots offscreen (no window opens)
 ```
 
-`electrobun prepare` (run for you by `install`, `start` and `build`) projects the Electrobun SDK into `.hutch/devkit`, which is git-ignored; the UI and backend type-check against it.
+`HEARTH_MOCK=1` (or `--mock`) replays a scripted session from `crates/hearth-model/src/mock.rs` (Libera.Chat, OFTC and Rizon behind a soju bouncer), so UI work needs no server. Environment variables shape it: `HEARTH_THEME=light|dark|system`, `HEARTH_LAYOUT=columns|compact`, `HEARTH_VIEW=settings|switcher|search|channels|shortcuts`, `HEARTH_TAB=<settings tab>` and `HEARTH_SERVER=<id>` (edit a server), `HEARTH_BUFFER=<buffer>`, `HEARTH_QUERY=<search>`, `HEARTH_UPDATE=available|error` (the scripted updater's answer; by default there is no update), `HEARTH_EMPTY=1` (first-run screen), `HEARTH_NOAVATARS=1`, and `HEARTH_STRESS=1` (a `#stress` channel with about 10k lines of scrollback and 5k members, for performance work; `HEARTH_STRESS=live` adds a new line every 3 seconds). `HEARTH_BACKGROUND=1` opens the window without taking focus.
 
-When `bun run dev` runs in a plain browser instead of inside the app, Hearth replays a scripted IRC session from `src/lib/mock.ts`. This lets you work on the UI without a server. Query parameters control the preview: `?theme=light`, `?layout=columns|compact`, `?view=settings`, `?view=switcher`, `?view=search`, `?view=channels`, `?view=shortcuts`, `?tab=privacy` (open a Settings tab; add `&server=<id>` to edit a server), `?update=none` (the mock updater reports no update; by default it offers 0.2.0), `?empty` (first-run screen) and `?stress` (a `#stress` channel with about 10k lines of scrollback and 5k members, for performance work; `?stress=live` adds a new line every 3 seconds).
+A development run uses the same config and log directories as an installed Hearth (the identifier is still `app.hearth.irc`, and the keychain entries are the ones earlier versions wrote, so existing installs carry over). Set `HEARTH_CONFIG_DIR` and `HEARTH_DATA_DIR` to point it at throwaway data instead.
 
-`bun run start` uses the same config and log directories as an installed Hearth (the identifier is still `app.hearth.irc`, so existing installs carry over). Set `HEARTH_CONFIG_DIR` and `HEARTH_DATA_DIR` to point a development run at throwaway data instead.
+CI (`.github/workflows/ci.yml`) runs on every push and pull request: formatting, clippy and the tests on Linux, macOS and Windows, and a check that every crate follows the workspace version.
 
-`bun run screenshots` regenerates the images in `docs/screenshots` from the mock while `bun run dev` is running. It uses an installed Chrome; set `HEARTH_CHROME` to the binary of another Chromium-based browser to use that instead.
-
-CI (`.github/workflows/ci.yml`) runs on every push and pull request: type checks, Vitest and the Bun backend tests on Linux, macOS and Windows, and a check that the version numbers agree.
-
-To smoke-test the backend headlessly:
+To smoke-test the engine headlessly against a real server:
 
 ```sh
-HEARTH_HOST=irc.libera.chat HEARTH_NICK=someone bun run probe
+HEARTH_HOST=irc.libera.chat HEARTH_NICK=someone cargo run -p hearth-core --example probe
 ```
 
 ## Releasing
 
-Versions follow [semver](https://semver.org). The version lives in `electrobun.config.ts` and `package.json`, and CI fails if they disagree.
+Versions follow [semver](https://semver.org). The version lives once, in the workspace `Cargo.toml`, and CI fails if a crate or `Cargo.lock` disagrees.
 
-1. Run `bun run bump 0.2.0`. It sets both.
+1. Run `cargo xtask bump 0.2.0`.
 2. Commit (`chore(release): v0.2.0`), then tag and push: `git tag v0.2.0 && git push origin main v0.2.0`. The tag must match the version.
-3. `.github/workflows/release.yml` runs CI, then builds macOS (arm64 and x64), Linux and Windows apps into a **draft** GitHub Release. Each build ships its installer plus the flat files Electrobun's updater reads (`stable-<os>-<arch>-update.json` and the archive next to it). The release notes are generated from the commits since the previous tag by [git-cliff](https://git-cliff.org) (`cliff.toml`), grouped by conventional-commit type, so prefer `feat:`, `fix:` and `perf:` prefixes. The workflow can also be started by hand from the Actions tab.
-4. Check the draft, edit the notes if needed, and publish it. The in-app updater reads `https://github.com/madrazaldi/hearth/releases/latest/download/`, which only sees published releases.
+3. `.github/workflows/release.yml` runs CI, then builds macOS (Apple silicon and Intel), Linux and Windows installers with [cargo-packager](https://github.com/crabnebula-dev/cargo-packager) into a **draft** GitHub Release, plus the `latest.json` the updater reads. The release notes are generated from the commits since the previous tag by [git-cliff](https://git-cliff.org) (`cliff.toml`), grouped by conventional-commit type, so prefer `feat:`, `fix:` and `perf:` prefixes. The workflow can also be started by hand from the Actions tab.
+4. Check the draft, edit the notes if needed, and publish it. The in-app updater reads `https://github.com/madrazaldi/hearth/releases/latest/download/latest.json`, which only sees published releases.
 
-Electrobun's updater is hash-based: it compares the `hash` in the update file with the installed build and downloads the archive it names, so there is no separate update signing key. Update integrity rests on HTTPS and the GitHub release. Dev builds disable updates.
+Updates are signed with [minisign](https://jedisct1.github.io/minisign/): the public key is compiled into the app, and an update whose signature does not verify is refused. Builds without a key (development builds, forks) never update themselves.
 
-Signing is optional. Without the secrets below the workflow still builds, just unsigned (Repository secrets under Settings > Secrets and variables > Actions):
+Everything below is optional; without a group's secrets the workflow still builds, just unsigned or without updates (Repository secrets under Settings > Secrets and variables > Actions):
 
 | Secret | Purpose |
 | --- | --- |
-| `ELECTROBUN_CERTIFICATE` | Base64 of a Developer ID Application `.p12`. |
-| `ELECTROBUN_CERTIFICATE_PASSWORD` | Password of that `.p12`. |
-| `ELECTROBUN_DEVELOPER_ID` | For example `Developer ID Application: Name (TEAMID)`. |
-| `ELECTROBUN_APPLEID`, `ELECTROBUN_APPLEIDPASS`, `ELECTROBUN_TEAMID` | Apple ID, app-specific password and team, to notarize. |
+| `UPDATER_PRIVATE_KEY`, `UPDATER_PRIVATE_KEY_PASSWORD` | Signs update archives. Generate a pair with `cargo packager signer generate`. |
+| `UPDATER_PUBKEY` | The public half, compiled into the app. |
+| `MACOS_CERTIFICATE` | Base64 of a Developer ID Application `.p12`. |
+| `MACOS_CERTIFICATE_PASSWORD` | Password of that `.p12`. |
+| `MACOS_DEVELOPER_ID` | For example `Developer ID Application: Name (TEAMID)`. |
+| `MACOS_APPLE_ID`, `MACOS_APPLE_PASSWORD`, `MACOS_TEAM_ID` | Apple ID, app-specific password and team, to notarize. |
 
-Electrobun has no signing step for Windows or Linux, so SmartScreen warns on first run there. Without Apple secrets the macOS app is unsigned and Gatekeeper blocks the first launch (see Download).
+The `ELECTROBUN_*` names the macOS secrets had before are still read. Windows and Linux builds are not code-signed, so SmartScreen warns on first run there. Without Apple secrets the macOS app is unsigned and Gatekeeper blocks the first launch (see Download).
 
-Dependabot (`.github/dependabot.yml`) opens grouped monthly PRs for npm and GitHub Actions updates.
+To build an installer locally: `cargo install cargo-packager --locked`, then `cargo packager --release -p hearth-app`.
+
+Dependabot (`.github/dependabot.yml`) opens grouped monthly PRs for Cargo and GitHub Actions updates.
 
 ## Architecture
 
 ```
-src/bun/core   the engine: IRC connections, log store, keychain, previews, uploads, and `Core`, every command the UI calls
-src/bun        the Electrobun main process: window, tray, close-to-tray, notifications, updater, and the RPC wiring
-src/shared     the RPC schema shared by both sides
-src            the Svelte UI
+crates/hearth-core    the engine: IRC connections, log store, keychain, previews, uploads, and `Core`, every command the app calls
+crates/hearth-model   the client state: connections, buffers, incoming messages, history, unread counts, slash commands, and the scripted mock
+crates/hearth-app     the GPUI Kit app: views, the host that runs the model against the engine, and desktop integration
+xtask                 version bumps, release staging and screenshots (`cargo xtask`)
 ```
 
-The UI talks to the main process through one RPC channel. `src/lib/ipc.ts` exposes `invoke(command, args)` and `listen(event, handler)`; inside the app they go over Electrobun's RPC, and in a plain browser they go to the mock. The main process pushes IRC events (batched, one payload per burst) and updater progress back the same way.
+The engine runs on its own tokio runtime and hands event batches (one per burst) to the app. The model is a synchronous state machine with no UI toolkit or async runtime: it takes engine events in and queues `Effect`s out (send these lines, save these buffers, fetch this history), and the app's host executes them against the engine and feeds results back with `resolve`. That keeps the client logic testable by feeding raw IRC lines.
 
-### Core (`src/bun/core`)
+### Engine (`crates/hearth-core`)
 
-- `app.ts` is `Core`: config and commands.
-- `message.ts` parses and serializes IRC messages, including tags. `time.ts` handles server-time tags.
-- `transport.ts` reduces TCP, TLS and WebSocket to a line reader and a line writer (`Bun.connect` and the native WebSocket).
-- `client.ts` runs one actor per connection. It handles registration, CAP and SASL, STS, keepalive, reconnects, labeled-response routing, chathistory batches, folding `draft/multiline` batches into single messages, and message logging. `clock.ts` lets the tests drive backoff and keepalive timers by hand.
-- `scram.ts` implements SCRAM-SHA-256.
-- `manager.ts` owns all connections and spawns a child connection for each bouncer network.
-- `events.ts` batches events into a single payload per burst before sending them to the UI.
-- `store.ts` is the SQLite log (`bun:sqlite`, WAL). It holds messages with an FTS5 index, saved buffers and STS policies, and writes are batched into transactions.
-- `secrets.ts` stores and loads keychain entries with `Bun.secrets`. `certs.ts` generates client certificates and computes their fingerprints.
-- `preview.ts` fetches link previews and metadata avatars, with SSRF guards (`net.ts`) and a cache. `upload.ts` handles file uploads.
-- `harness.ts` and `*.test.ts` drive the connection actor against a scripted local server (`bun test`).
+- `app.rs` is `Core`: config and commands. Its async commands return futures that run on the engine's runtime, so the app awaits them from GPUI's executor.
+- `irc/message.rs` parses and serializes IRC messages, including tags. `irc/time.rs` handles server-time tags.
+- `irc/transport.rs` reduces TCP, TLS (rustls) and WebSocket to a line reader and a line writer.
+- `irc/client.rs` runs one actor per connection. It handles registration, CAP and SASL, STS, keepalive, reconnects, labeled-response routing, chathistory batches, folding `draft/multiline` batches into single messages, and message logging.
+- `irc/scram.rs` implements SCRAM-SHA-256.
+- `irc/manager.rs` owns all connections and spawns a child connection for each bouncer network.
+- `irc/events.rs` batches events into a single delivery per burst.
+- `store.rs` is the SQLite log (rusqlite, WAL). It holds messages with an FTS5 index, saved buffers and STS policies, and writes are batched into transactions.
+- `secrets.rs` stores and loads keychain entries. `certs.rs` generates client certificates and computes their fingerprints. `paths.rs` picks the config and data directories.
+- `preview.rs` fetches link previews and metadata avatars, with SSRF guards on every hop and a cache. `upload.rs` handles file uploads.
+- `tests/` drive the connection actor against a scripted local server.
 
-### Frontend (`src/lib`)
+### Client state (`crates/hearth-model`)
 
-- `state.svelte.ts` holds all client state (connections, buffers, members) using Svelte 5 runes.
-- `incoming.ts` turns server messages into state changes.
-- `history.ts` loads chathistory, falls back to the local log and dedupes merged lines. It also tracks the gaps a jump leaves between loaded stretches and fills them.
-- `search.ts` parses search filters and pages through the local log and the bouncer (buffer by buffer where the bouncer requires `in`).
-- `saved.ts` saves and restores open buffers.
-- `monitor.ts` tracks watched nicks with MONITOR.
-- `unread.ts` counts unread messages and highlights and syncs read markers.
-- `ignore.ts` matches ignore masks.
-- `*.test.ts` are Vitest suites. `test-utils.ts` feeds raw IRC lines into a mocked backend.
-- `commands.ts` implements slash commands. `multiline.ts` splits composer text into `draft/multiline` batches.
-- `format.ts` parses mIRC formatting and finds links.
-- `components/` holds the UI.
+- `state.rs` (`App`), `conn.rs` and `buffer.rs` hold all client state. `effect.rs` is what the host executes.
+- `incoming.rs` turns server messages into state changes.
+- `history.rs` loads chathistory, falls back to the local log and dedupes merged lines. It also tracks the gaps a jump leaves between loaded stretches and fills them.
+- `search.rs` and `search_panel.rs` parse search filters and page through the local log and the bouncer (buffer by buffer where the bouncer requires `in`).
+- `saved.rs`, `monitor.rs`, `unread.rs` and `ignore.rs` save open buffers, track watched nicks, count unread messages and highlights, and match ignore masks.
+- `commands.rs` and `aliases.rs` implement slash commands. `multiline.rs` splits composer text into `draft/multiline` batches. `composer.rs` handles completion and input history.
+- `format.rs` parses mIRC formatting and finds links. `timeline.rs` groups lines for the message list.
+- `panels.rs`, `welcome.rs` and `rows.rs` hold the logic behind the sidebar, switcher, channel browser, settings forms and first-run flow, so the views stay thin.
+- `mock.rs` is the scripted session. `testing.rs` feeds raw IRC lines in tests.
+
+### App (`crates/hearth-app`)
+
+- `host/` owns the model in a global GPUI entity that outlives windows, pumps engine events into it, runs effects and timers, and drives the mock in mock mode.
+- `ui/` holds the views. `ui/theme.rs` defines the light and dark themes; `ui/keys.rs` the keyboard shortcuts.
+- `platform/` is the desktop integration: menus, tray, close-to-tray, notifications, the dock badge, opening links, and the updater.
+- `tests/` run the host headlessly against the mock and against a scripted local server; `examples/screenshots.rs` renders the docs screenshots.
 
 Config is stored as JSON in the OS app-config directory with `0600` permissions. Passwords are stored in the OS keychain (service `app.hearth.irc`). If the keychain is unavailable, they stay in the config file instead.
 
