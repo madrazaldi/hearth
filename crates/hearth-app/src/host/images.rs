@@ -5,7 +5,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use gpui_kit::{Image, ImageFormat, ImageSource};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 /// Enough for a screenful of avatars and previews with room to scroll back.
@@ -21,7 +21,8 @@ pub enum Ask {
 #[derive(Default)]
 pub struct Images {
     inner: RefCell<Inner>,
-    asked: RefCell<HashSet<Ask>>,
+    /// Only what is waiting for the next flush: once requested, the model tracks
+    /// loading and failures, and asks again after its cache drops an entry.
     queue: RefCell<Vec<Ask>>,
 }
 
@@ -32,12 +33,13 @@ struct Inner {
 }
 
 impl Images {
-    /// Note that `url` is wanted. True the first time, when the caller should flush the queue.
+    /// Note that `url` is wanted. True when it was not queued yet, when the caller should flush the queue.
     pub fn ask(&self, ask: Ask) -> bool {
-        if !self.asked.borrow_mut().insert(ask.clone()) {
+        let mut queue = self.queue.borrow_mut();
+        if queue.contains(&ask) {
             return false;
         }
-        self.queue.borrow_mut().push(ask);
+        queue.push(ask);
         true
     }
 
@@ -158,6 +160,17 @@ mod tests {
         let images = Images::default();
         assert!(images.still("k", &url).is_some());
         assert!(images.get("k", &url).is_some(), "the animation itself is kept apart from its still");
+    }
+
+    #[test]
+    fn a_picture_can_be_asked_for_again_after_the_queue_was_flushed() {
+        // The model's cache may drop it later; it decides whether to fetch again.
+        let images = Images::default();
+        let ask = Ask::Preview("https://a.example/".into());
+        assert!(images.ask(ask.clone()));
+        assert!(!images.ask(ask.clone()), "queued once per flush");
+        assert_eq!(images.take_asks(), std::slice::from_ref(&ask));
+        assert!(images.ask(ask));
     }
 
     #[test]

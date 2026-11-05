@@ -102,6 +102,8 @@ pub(crate) enum Pending {
 /// A link preview as the UI sees it.
 #[derive(Debug, Clone)]
 pub enum PreviewState {
+    /// Never fetched, or dropped from the cache since: ask for it with [`App::request_preview`].
+    NotLoaded,
     Loading,
     /// The page has no preview, or fetching failed.
     Unavailable,
@@ -112,7 +114,10 @@ pub enum PreviewState {
 /// An avatar image as the UI sees it.
 #[derive(Debug, Clone)]
 pub enum AvatarState {
+    /// Never fetched, or dropped from the cache since: ask for it with [`App::request_avatar`].
+    NotLoaded,
     Loading,
+    /// Fetching failed.
     Unavailable,
     /// A `data:` URL.
     Ready(Arc<str>),
@@ -1165,7 +1170,7 @@ impl App {
             Some(Some(p)) => PreviewState::Ready(p.clone()),
             Some(None) => PreviewState::Unavailable,
             None if self.previews.contains(url) => PreviewState::Loading,
-            None => PreviewState::Unavailable,
+            None => PreviewState::NotLoaded,
         }
     }
 
@@ -1185,7 +1190,7 @@ impl App {
             Some(Some(d)) => AvatarState::Ready(d.clone()),
             Some(None) => AvatarState::Unavailable,
             None if self.avatars.contains(url) => AvatarState::Loading,
-            None => AvatarState::Unavailable,
+            None => AvatarState::NotLoaded,
         }
     }
 

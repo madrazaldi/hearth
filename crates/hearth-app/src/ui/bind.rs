@@ -16,8 +16,8 @@ pub fn avatar_pic(h: &Hearth, url: Option<String>) -> Pic {
     let Some(url) = url.filter(|_| h.app.settings.load_avatars) else { return Pic(None) };
     match h.app.avatar(&url) {
         AvatarState::Ready(data) => Pic(h.images.get(&url, &data)),
-        AvatarState::Loading => Pic(None),
-        AvatarState::Unavailable => {
+        AvatarState::Loading | AvatarState::Unavailable => Pic(None),
+        AvatarState::NotLoaded => {
             h.images.ask(Ask::Avatar(url));
             Pic(None)
         }

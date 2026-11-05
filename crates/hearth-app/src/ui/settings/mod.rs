@@ -421,14 +421,8 @@ impl SettingsView {
                     ),
                     &p,
                 ),
-                switch_row(
-                    "spell",
-                    "Check spelling as I type",
-                    Some("Underlines misspelled words in the message box. Autocorrect and auto-capitalization stay off."),
-                    s.spellcheck,
-                    Self::setter(&this, |s, v| s.spellcheck = v),
-                    &p,
-                ),
+                // No spellcheck toggle: GPUI has no spellchecker hook yet, so the composer
+                // cannot underline words. `Settings::spellcheck` is kept for when it can.
                 switch_row(
                     "updates",
                     "Check for updates automatically",

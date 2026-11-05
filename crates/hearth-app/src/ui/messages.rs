@@ -337,8 +337,8 @@ fn image_of(h: &crate::host::Hearth, key: &str, data: &str, w: Option<u32>, hgt:
 
 fn preview_of(h: &crate::host::Hearth, url: &str, st: &MessageSettings, nsfw: bool) -> Option<PreviewView> {
     let p = match h.app.preview(url) {
-        PreviewState::Loading => return None,
-        PreviewState::Unavailable => {
+        PreviewState::Loading | PreviewState::Unavailable => return None,
+        PreviewState::NotLoaded => {
             h.images.ask(Ask::Preview(url.to_string()));
             return None;
         }

@@ -439,3 +439,39 @@ fn welcome_warns_when_the_account_login_failed_but_the_connection_came_up() {
     assert!(app.welcome.failure.is_none(), "the attempt itself succeeded");
     assert!(app.welcome_sasl_failed(), "the screen says the login did not work");
 }
+
+#[test]
+fn a_preview_dropped_from_the_cache_can_be_fetched_again_but_a_failed_one_is_not_retried() {
+    use crate::state::PreviewState;
+    use crate::types::Preview;
+    let mut app = new_app();
+    let fetch = |app: &mut App, url: &str, ok: bool| {
+        app.request_preview(url);
+        let req = app.take_effects().into_iter().find_map(|e| matches!(e, Effect::LinkPreview { .. }).then(|| e.req()).flatten()).expect("a request");
+        let page = Preview {
+            url: url.into(),
+            kind: "page".into(),
+            title: Some("t".into()),
+            description: None,
+            site: None,
+            image: None,
+            width: None,
+            height: None,
+            animated: false,
+            mime: None,
+            size: None,
+        };
+        app.resolve(req, if ok { Ok(Reply::Preview(page)) } else { Err("no preview".into()) });
+    };
+    fetch(&mut app, "https://a.example/failed", false);
+    assert!(matches!(app.preview("https://a.example/failed"), PreviewState::Unavailable));
+    app.request_preview("https://a.example/failed");
+    assert!(app.take_effects().is_empty(), "a failure is remembered, not retried every frame");
+
+    for i in 0..501 {
+        fetch(&mut app, &format!("https://a.example/{i}"), true);
+    }
+    assert!(matches!(app.preview("https://a.example/0"), PreviewState::NotLoaded), "the oldest was evicted");
+    app.request_preview("https://a.example/0");
+    assert!(app.take_effects().iter().any(|e| matches!(e, Effect::LinkPreview { url, .. } if url == "https://a.example/0")));
+}

@@ -91,7 +91,7 @@ The macOS app, the Windows installer and the AppImage update themselves: new ver
   - Tab completion for nicks (most recent speakers first), channels, commands and aliases.
   - Emoji suggestions while typing `:name` (for example `:j` offers `:joy:`), and `:name:` turns into its emoji.
   - Command and alias suggestions as you type.
-  - Spellcheck, which can be turned off. Autocorrect and auto-capitalization stay off.
+  - No spellcheck yet: GPUI has no spellchecker hook, so the native app cannot underline words.
   - Input history.
   - Multi-line sends.
   - Long messages split on word boundaries.

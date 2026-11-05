@@ -40,7 +40,13 @@ pub struct Endpoint {
 }
 
 pub enum LineReader {
-    Raw(BufReader<ReadHalf<BoxStream>>),
+    /// `partial` holds a line still arriving. It lives here rather than in the
+    /// read future because the actor races reads against commands and timers,
+    /// and a cancelled read must not drop bytes it already consumed.
+    Raw {
+        reader: BufReader<ReadHalf<BoxStream>>,
+        partial: Vec<u8>,
+    },
     Ws(SplitStream<WebSocketStream<BoxStream>>),
 }
 
@@ -94,7 +100,7 @@ pub async fn connect(ep: &Endpoint) -> Result<(LineReader, LineWriter)> {
         }
         None => {
             let (r, w) = tokio::io::split(stream);
-            Ok((LineReader::Raw(BufReader::new(r)), LineWriter::Raw(w)))
+            Ok((LineReader::Raw { reader: BufReader::new(r), partial: Vec::new() }, LineWriter::Raw(w)))
         }
     }
 }
@@ -103,7 +109,7 @@ impl LineReader {
     /// Next complete line without its terminator. `None` means the peer closed.
     pub async fn next_line(&mut self) -> Result<Option<String>> {
         match self {
-            LineReader::Raw(r) => read_raw_line(r).await,
+            LineReader::Raw { reader, partial } => read_raw_line(reader, partial).await,
             LineReader::Ws(s) => loop {
                 match s.next().await {
                     None => return Ok(None),
@@ -120,8 +126,7 @@ impl LineReader {
 
 /// The next non-empty line. The buffer is bounded as it fills, not once a
 /// line is complete, so a peer that never sends a newline cannot grow it.
-async fn read_raw_line(r: &mut BufReader<ReadHalf<BoxStream>>) -> Result<Option<String>> {
-    let mut buf = Vec::with_capacity(512);
+async fn read_raw_line(r: &mut BufReader<ReadHalf<BoxStream>>, buf: &mut Vec<u8>) -> Result<Option<String>> {
     loop {
         let chunk = r.fill_buf().await?;
         let ended = chunk.is_empty();
@@ -140,7 +145,9 @@ async fn read_raw_line(r: &mut BufReader<ReadHalf<BoxStream>>) -> Result<Option<
                 buf.pop();
             }
             if !buf.is_empty() {
-                return Ok(Some(decode(&buf)));
+                let line = decode(buf);
+                buf.clear();
+                return Ok(Some(line));
             }
             if ended {
                 return Ok(None);
@@ -394,6 +401,22 @@ mod tests {
         let (mut reader, _writer) = connect(&ep).await.unwrap();
         let line = reader.next_line().await.unwrap().unwrap();
         assert_eq!(line, format!(":x PRIVMSG #a :{}{}", "a".repeat(400), "b".repeat(400)));
+    }
+
+    #[tokio::test]
+    async fn a_read_cancelled_mid_line_keeps_what_it_had_read() {
+        // The actor's select! drops a pending read whenever a command or timer wins.
+        let (listener, ep) = listen().await;
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            sock.write_all(b":alice!u@h PRIVMSG #hearth :hel").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            sock.write_all(b"lo\r\n").await.unwrap();
+            sock.shutdown().await.unwrap();
+        });
+        let (mut reader, _writer) = connect(&ep).await.unwrap();
+        assert!(tokio::time::timeout(Duration::from_millis(50), reader.next_line()).await.is_err(), "the first read is still waiting");
+        assert_eq!(reader.next_line().await.unwrap().as_deref(), Some(":alice!u@h PRIVMSG #hearth :hello"));
     }
 
     #[tokio::test]

@@ -109,6 +109,7 @@ pub struct Settings {
     pub network_highlights: BTreeMap<String, NetworkHighlights>,
     /// User slash commands: name (no slash) → `;`-separated commands.
     pub aliases: BTreeMap<String, String>,
+    /// Not acted on yet (the composer has no spellchecker); kept so a saved choice survives.
     pub spellcheck: bool,
 }
 
