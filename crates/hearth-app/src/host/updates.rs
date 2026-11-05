@@ -80,6 +80,8 @@ impl Hearth {
         if self.updates.busy() {
             return;
         }
+        // Taken before `Checking` replaces it, so a failed quiet recheck can put it back.
+        let offered = self.updates.offered();
         self.updates.phase = UpdatePhase::Checking;
         cx.notify();
         let scripted = self.updates.scripted;
@@ -108,7 +110,7 @@ impl Hearth {
                     }
                     // A failed background recheck should not hide an update that was already found.
                     Err(e) if quiet => {
-                        u.phase = u.offered().map(UpdatePhase::Available).unwrap_or(UpdatePhase::Idle);
+                        u.phase = offered.map(UpdatePhase::Available).unwrap_or(UpdatePhase::Idle);
                         log::warn!("update check failed: {e}");
                     }
                     Err(e) => u.phase = UpdatePhase::Error(e),
