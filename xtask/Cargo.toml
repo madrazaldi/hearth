@@ -1,0 +1,14 @@
+[package]
+name = "xtask"
+description = "Repository chores: version bump/check and release staging (`cargo xtask`)"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+semver = "1"
+serde_json = "1"
+toml_edit = "0.22"

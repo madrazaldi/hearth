@@ -1,0 +1,88 @@
+[package]
+name = "hearth-app"
+description = "Hearth's desktop app, built on GPUI Kit"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "hearth_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hearth"
+path = "src/main.rs"
+
+[dependencies]
+hearth-core = { path = "../hearth-core" }
+hearth-model = { path = "../hearth-model" }
+gpui-kit = "=0.9.0"
+anyhow = "1"
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+regex = "1"
+
+# Desktop integration (src/platform).
+async-channel = "2"
+base64 = "0.23"
+log = "0.4"
+url = "2"
+# gif and webp: the first frame of an animation is drawn while it is not playing.
+image = { version = "0.25", default-features = false, features = ["png", "gif", "webp"] }
+cargo-packager-updater = { version = "0.2.3", default-features = false, features = ["rustls-tls"] }
+# On Linux the StatusNotifierItem backend talks D-Bus on its own thread, so the
+# tray needs neither GTK nor an event loop of ours; elsewhere the platform's
+# own loop (the one GPUI runs) drives it.
+tray-icon = { version = "0.26", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
+notify-rust = "4.18"
+
+[target.'cfg(windows)'.dependencies]
+notify-rust = "4.18"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSDockTile", "NSResponder", "NSRunningApplication", "NSWindow"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSBundle", "NSError", "NSObject", "NSString"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNError", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSound", "UNUserNotificationCenter"] }
+
+[dev-dependencies]
+# Headless rendering for the screenshots example and the host tests.
+gpui-kit = { version = "=0.9.0", features = ["test-support"] }
+# Test keys for the updater are generated in memory; no signing material is committed.
+minisign = "0.7"
+
+# Installers are built by cargo-packager (`cargo install cargo-packager --locked`):
+#   cargo packager --release -p hearth-app
+# It takes the name, version and description from this package, so the workspace
+# version stays the only one. Output lands in target/release (see `cargo xtask stage`).
+[package.metadata.packager]
+product-name = "Hearth"
+identifier = "app.hearth.irc"
+publisher = "Hearth"
+category = "SocialNetworking"
+copyright = "Copyright (c) the Hearth contributors"
+before-packaging-command = "cargo build --release -p hearth-app"
+# Paths are relative to this crate. macOS uses the .icns, Windows the .ico, Linux the PNGs.
+icons = ["assets/icons/icon.icns", "assets/icons/icon.ico", "assets/icons/*.png"]
+
+[package.metadata.packager.macos]
+minimum-system-version = "12.0"
+# CI adds `signing-identity` here when the signing secrets are set (see release.yml).
+
+[package.metadata.packager.deb]
+depends = [
+    "libc6",
+    "libfontconfig1",
+    "libxkbcommon-x11-0",
+    "libxcb1",
+    "libvulkan1",
+    "libwayland-client0",
+    "libdbus-1-3",
+    "libasound2 | libasound2t64",
+]
