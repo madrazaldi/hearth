@@ -55,7 +55,7 @@ objc2-user-notifications = { version = "0.3", default-features = false, features
 # Headless rendering for the screenshots example and the host tests.
 gpui-kit = { version = "=0.9.0", features = ["test-support"] }
 # Test keys for the updater are generated in memory; no signing material is committed.
-minisign = "0.7"
+minisign = "0.10"
 
 # Installers are built by cargo-packager (`cargo install cargo-packager --locked`):
 #   cargo packager --release -p hearth-app
