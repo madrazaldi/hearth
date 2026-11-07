@@ -19,7 +19,7 @@ use crate::host::images::Ask;
 use crate::host::{host, request_flush};
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::popover::Popover;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::tooltip::Tooltip;
 use hearth_model::format::{parse_formatting, strip_formatting};
@@ -1115,12 +1115,36 @@ fn tools(l: &Line, can_reply: bool, can_delete: bool, c: &RowCtx, p: &Palette, g
     };
     let react = (c.view.can_react && l.msgid.is_some() && !l.redacted).then(|| {
         let d = c.dispatch.clone();
-        Button::new(SharedString::from(format!("react-btn-{id}"))).ghost().xsmall().icon(icon("smile", 14., muted)).dropdown_menu(move |mut m, _, _| {
-            for e in REACTIONS {
+        let trigger = Button::new(SharedString::from(format!("react-btn-{id}")))
+            .ghost()
+            .xsmall()
+            .w(px(24.))
+            .h(px(24.))
+            .rounded(px(6.75))
+            .icon(icon("smile", 14., muted))
+            .tooltip("React");
+        // One row of emoji under the toolbar, right-aligned with it, as before.
+        Popover::new(SharedString::from(format!("react-{id}"))).anchor(Anchor::TopRight).p(px(4.)).trigger(trigger).content(move |_, _, cx| {
+            let state = cx.entity();
+            h_flex().gap(px(1.)).children(REACTIONS.map(|e| {
                 let d = d.clone();
-                m = m.item(PopupMenuItem::new(e).on_click(move |_, w, cx| d(UiAction::React(id, e.to_string()), w, cx)));
-            }
-            m
+                let state = state.clone();
+                div()
+                    .id(SharedString::from(format!("react-{id}-{e}")))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(32.))
+                    .rounded(px(6.75))
+                    .text_size(px(16.))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover))
+                    .child(e)
+                    .on_click(move |_, w, cx| {
+                        state.update(cx, |s, cx| s.dismiss(w, cx));
+                        d(UiAction::React(id, e.to_string()), w, cx);
+                    })
+            }))
         })
     });
     h_flex()
