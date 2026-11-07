@@ -11,15 +11,17 @@ use std::rc::Rc;
 use std::sync::Arc;
 use ui::shell::ChatWindow;
 
-/// Hearth's own assets (logo) on top of the bundled lucide icon catalog.
+/// Hearth's own assets (logo, and lucide icons the catalog lacks) on top of the bundled lucide icon catalog.
 pub struct Assets;
 
 const LOGO: &[u8] = include_bytes!("../assets/logo.png");
+const SMILE: &[u8] = include_bytes!("../assets/lucide/smile.svg");
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         match path {
             "logo.png" => Ok(Some(Cow::Borrowed(LOGO))),
+            "icons/smile.svg" => Ok(Some(Cow::Borrowed(SMILE))),
             _ => AllAssets.load(path),
         }
     }
