@@ -96,6 +96,12 @@ impl Composer {
         !self.input.read(cx).selected_range().is_empty()
     }
 
+    /// Drops the field's selection, keeping the caret where it was.
+    pub fn collapse_selection(&mut self, cx: &mut Context<Self>) {
+        let end = self.input.read(cx).selected_range().end;
+        self.input.update(cx, |s, cx| s.set_selected_range(end..end, cx));
+    }
+
     fn buffer(&self) -> Option<BufferId> {
         self.view.as_ref().map(|v| v.buffer.clone())
     }
