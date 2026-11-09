@@ -7908,6 +7908,7 @@ dependencies = [
  "indexmap",
  "toml_datetime 1.1.2+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.5",
 ]
 
@@ -9602,7 +9603,7 @@ version = "0.2.0"
 dependencies = [
  "semver",
  "serde_json",
- "toml_edit 0.22.27",
+ "toml_edit 0.25.18+spec-1.1.0",
 ]
 
 [[package]]
