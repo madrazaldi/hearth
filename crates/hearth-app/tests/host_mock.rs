@@ -413,3 +413,42 @@ fn stress_frames_stay_cheap() {
     eprintln!("frame while scrolling 10k lines: {per:?}");
     assert!(per < Duration::from_millis(30), "a frame took {per:?}");
 }
+
+#[test]
+fn dragging_across_messages_selects_their_text_and_the_primary_c_copies_it() {
+    use gpui_kit::base::TextSelection;
+    use gpui_kit::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
+    let (mut cx, window, _, _) = open_with(MockOptions::default());
+    // A selection in the draft from before the drag gives way to the chat's.
+    cx.simulate_input(window, "draft");
+    cx.simulate_keystrokes(window, &primary("a"));
+    let mut vcx = gpui_kit::VisualTestContext::from_window(window, &cx);
+    let (from, to) = (point(px(420.), px(200.)), point(px(1000.), px(560.)));
+    vcx.simulate_event(MouseDownEvent { button: MouseButton::Left, position: from, modifiers: Modifiers::default(), click_count: 1, first_mouse: false });
+    for step in 1..=8 {
+        let at = from + (to - from) * (step as f32 / 8.);
+        vcx.simulate_event(MouseMoveEvent { position: at, pressed_button: Some(MouseButton::Left), modifiers: Modifiers::default() });
+        draw(&mut cx, window);
+    }
+    vcx.simulate_event(MouseUpEvent { button: MouseButton::Left, position: to, modifiers: Modifiers::default(), click_count: 1 });
+    draw(&mut cx, window);
+
+    let selected = cx.update_window(window, |_, w, cx| TextSelection::selected_text(w, cx)).unwrap();
+    assert!(selected.lines().count() > 1, "the drag spans several messages, got {selected:?}");
+
+    cx.simulate_keystrokes(window, &primary("c"));
+    let copied = cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default();
+    assert_eq!(copied, selected.trim());
+
+    // One made in the draft after it is the one copied.
+    cx.simulate_keystrokes(window, &primary("a"));
+    cx.simulate_keystrokes(window, &primary("c"));
+    assert_eq!(cx.read_from_clipboard().and_then(|c| c.text()).as_deref(), Some("draft"));
+
+    // A plain click selects nothing, so a click on a link still opens it.
+    vcx.simulate_event(MouseDownEvent { button: MouseButton::Left, position: from, modifiers: Modifiers::default(), click_count: 1, first_mouse: false });
+    vcx.simulate_event(MouseUpEvent { button: MouseButton::Left, position: from, modifiers: Modifiers::default(), click_count: 1 });
+    draw(&mut cx, window);
+    let after = cx.update_window(window, |_, w, cx| TextSelection::selected_text(w, cx)).unwrap();
+    assert_eq!(after, "", "a click clears the selection without starting one");
+}

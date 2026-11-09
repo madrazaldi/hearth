@@ -26,6 +26,8 @@ use super::theme::{self, HearthTheme as _, SANS, ThemePref};
 use super::welcome::Welcome;
 use super::widgets::toast_layer;
 use crate::host::{Hearth, hearth, host, request_flush};
+use gpui_kit::base::TextSelection;
+use gpui_kit::base::input::Copy;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{ResizableState, h_resizable, resizable_panel};
@@ -779,7 +781,24 @@ impl Render for ChatWindow {
                         h_flex()
                             .flex_1()
                             .min_h_0()
-                            .child(v_flex().flex_1().min_w_0().h_full().child(self.messages.clone()).child(self.composer.clone()))
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .child(
+                                        // A press in the chat may start a selection there, which then
+                                        // replaces the composer's as the one Copy takes.
+                                        div().flex_1().min_h_0().flex().flex_col().child(self.messages.clone()).on_any_mouse_down(cx.listener(
+                                            |this, ev: &MouseDownEvent, _, cx| {
+                                                if ev.button == MouseButton::Left {
+                                                    this.composer.update(cx, |c, cx| c.collapse_selection(cx));
+                                                }
+                                            },
+                                        )),
+                                    )
+                                    .child(self.composer.clone()),
+                            )
                             .children(members),
                     )
                     .into_any_element()
@@ -799,6 +818,19 @@ impl Render for ChatWindow {
             .font_family(SANS)
             .text_size(px(14.))
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, _| this.pointer = ev.position))
+            // The composer keeps the focus, and its own Copy would take the
+            // keystroke and copy its empty selection. Text dragged out in the
+            // chat goes first, unless the composer has a selection made since.
+            .capture_action(cx.listener(|this, _: &Copy, window, cx| {
+                if this.composer.read(cx).has_selection(cx) {
+                    return;
+                }
+                let text = TextSelection::selected_text(window, cx).trim().to_string();
+                if !text.is_empty() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    cx.stop_propagation();
+                }
+            }))
             .child(
                 h_resizable("shell")
                     .with_state(&self.resizable)

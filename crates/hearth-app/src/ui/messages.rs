@@ -398,9 +398,9 @@ fn render_item(ix: usize, c: &RowCtx, window: &mut Window, cx: &mut App) -> AnyE
                 RowKind::Whois => match host(cx).app.whois_card(&line) {
                     Some(card) => {
                         let clock = host(cx).app.clock(line.time);
-                        block_row(&line, clock, cards::whois_card(&line, &card, c.st.nick_colors, &c.dispatch, &p), c, &p)
+                        block_row(&line, clock, cards::whois_card(&line, text_order(*li), &card, c.st.nick_colors, &c.dispatch, &p), c, &p)
                     }
-                    None => event_row(&line, c, &p, cx),
+                    None => event_row(&line, text_order(*li), c, &p, cx),
                 },
                 RowKind::Block => {
                     let clock = host(cx).app.clock(line.time);
@@ -419,9 +419,9 @@ fn render_item(ix: usize, c: &RowCtx, window: &mut Window, cx: &mut App) -> AnyE
                 }
                 RowKind::Talk => {
                     let data = row_data(c, &line, cx);
-                    message_row(data, *cont, c, &p, window, cx)
+                    message_row(data, text_order(*li), *cont, c, &p, window, cx)
                 }
-                RowKind::Event => event_row(&line, c, &p, cx),
+                RowKind::Event => event_row(&line, text_order(*li), c, &p, cx),
             }
         }
     };
@@ -429,6 +429,13 @@ fn render_item(ix: usize, c: &RowCtx, window: &mut Window, cx: &mut App) -> AnyE
         request_flush(cx);
     }
     el
+}
+
+/// Where the texts of buffer line `li` fall in the window's text selection.
+/// Buffer order is display order (line ids are not, once history merges in);
+/// the low bits number the texts within one row.
+fn text_order(li: usize) -> u64 {
+    (li as u64) << 8
 }
 
 /// A card in the timeline: the row's time on the left, the card where the text would be.
@@ -565,7 +572,8 @@ fn nick_el(nick: &str, line_id: u64, bold: bool, c: &RowCtx, p: &Palette) -> Sta
         .child(nick.to_string())
 }
 
-fn message_row(data: RowData, cont: bool, c: &RowCtx, p: &Palette, window: &mut Window, cx: &mut App) -> AnyElement {
+#[allow(clippy::too_many_arguments)]
+fn message_row(data: RowData, order: u64, cont: bool, c: &RowCtx, p: &Palette, window: &mut Window, cx: &mut App) -> AnyElement {
     let RowData { line: l, clock, full_time, display_name, picture, reply_to, preview, can_reply, can_delete } = data;
     let group = format!("row{}", l.id);
     let action = l.kind == LineType::Action;
@@ -599,7 +607,7 @@ fn message_row(data: RowData, cont: bool, c: &RowCtx, p: &Palette, window: &mut 
             }
             rt.segments(&segs, p);
         }
-        rt.finish(SharedString::from(format!("body-{}", l.id)), c.dispatch.clone())
+        rt.finish(SharedString::from(format!("body-{}", l.id)), order, c.dispatch.clone())
     };
 
     let quote = l.reply_to.as_ref().filter(|_| !l.redacted).map(|_| {
@@ -941,7 +949,7 @@ pub fn image_box(im: &ImageView, w: f32, h: f32, radius: f32) -> AnyElement {
 // ── Events ──────────────────────────────────────────────────
 
 /// An event sentence as one wrapped text element, plus buttons it carries.
-fn event_text(l: &Line, c: &RowCtx, p: &Palette, id: SharedString) -> AnyElement {
+fn event_text(l: &Line, order: u64, c: &RowCtx, p: &Palette, id: SharedString) -> AnyElement {
     let muted = p.muted_foreground;
     let mut rt = RichText::new(if l.kind == LineType::Error { p.destructive } else { muted });
     let nicks = c.st.nick_colors;
@@ -960,7 +968,7 @@ fn event_text(l: &Line, c: &RowCtx, p: &Palette, id: SharedString) -> AnyElement
             EventPart::JoinButton(channel) => join = Some(channel),
         }
     }
-    let text = rt.finish(id, c.dispatch.clone());
+    let text = rt.finish(id, order, c.dispatch.clone());
     match join {
         None => text,
         Some(channel) => {
@@ -981,13 +989,13 @@ fn event_text(l: &Line, c: &RowCtx, p: &Palette, id: SharedString) -> AnyElement
     }
 }
 
-fn event_row(l: &Line, c: &RowCtx, p: &Palette, cx: &App) -> AnyElement {
+fn event_row(l: &Line, order: u64, c: &RowCtx, p: &Palette, cx: &App) -> AnyElement {
     let group = format!("row{}", l.id);
     let clock = host(cx).app.clock(l.time);
     let error = l.kind == LineType::Error;
     let gcolor = if error { p.destructive } else { p.muted_foreground };
     let g = || div().font_family(MONO).text_size(px(12.)).text_color(gcolor).child(event_glyph(l.kind));
-    let text = div().flex_1().min_w_0().text_size(px(c.st.font_size * 0.9)).child(event_text(l, c, p, SharedString::from(format!("ev-{}", l.id))));
+    let text = div().flex_1().min_w_0().text_size(px(c.st.font_size * 0.9)).child(event_text(l, order, c, p, SharedString::from(format!("ev-{}", l.id))));
     let row = shell(("line", l.id), &group, false, c.view.flash == Some(l.id), p, c).py(px(2.));
     match c.st.layout {
         Layout::Cozy => row
@@ -1031,13 +1039,13 @@ fn event_row(l: &Line, c: &RowCtx, p: &Palette, cx: &App) -> AnyElement {
 fn run_row(key: &str, lines: &[usize], c: &RowCtx, p: &Palette, cx: &App) -> AnyElement {
     let h = host(cx);
     let Some(b) = h.app.buffer(&c.view.buffer) else { return div().into_any_element() };
-    let all: Vec<Line> = lines.iter().filter_map(|&i| b.lines().get(i).cloned()).collect();
-    let Some(first) = all.first() else { return div().into_any_element() };
+    let all: Vec<(usize, Line)> = lines.iter().filter_map(|&i| Some((i, b.lines().get(i)?.clone()))).collect();
+    let Some((_, first)) = all.first() else { return div().into_any_element() };
     let open = c.expanded.contains(key);
     let group = format!("run{}", first.id);
     let this = c.this.clone();
     let k = key.to_string();
-    let summary = summarize_run(&all.iter().collect::<Vec<_>>());
+    let summary = summarize_run(&all.iter().map(|(_, l)| l).collect::<Vec<_>>());
     let toggle = h_flex()
         .id(SharedString::from(format!("run-{key}")))
         .gap(px(4.))
@@ -1056,13 +1064,13 @@ fn run_row(key: &str, lines: &[usize], c: &RowCtx, p: &Palette, cx: &App) -> Any
         .child(icon(if open { "chevron-down" } else { "chevron-right" }, 11., p.muted_foreground));
 
     let details = open.then(|| {
-        v_flex().mt(px(4.)).mb(px(2.)).gap(px(1.)).children(all.iter().map(|l| {
+        v_flex().mt(px(4.)).mb(px(2.)).gap(px(1.)).children(all.iter().map(|(li, l)| {
             h_flex()
                 .gap(px(8.))
                 .items_baseline()
                 .child(mono_time(h.app.clock(l.time), 11., p))
                 .child(div().font_family(MONO).text_size(px(12.)).text_color(p.muted_foreground).child(event_glyph(l.kind)))
-                .child(div().child(event_text(l, c, p, SharedString::from(format!("run-ev-{}", l.id)))))
+                .child(div().child(event_text(l, text_order(*li), c, p, SharedString::from(format!("run-ev-{}", l.id)))))
         }))
     });
     let clock = h.app.clock(first.time);
@@ -1169,7 +1177,7 @@ fn tools(l: &Line, can_reply: bool, can_delete: bool, c: &RowCtx, p: &Palette, g
 
 /// Plain message text in the surrounding colour (kept for callers outside the list).
 #[allow(dead_code)]
-fn plain_message(text: &str, base: Hsla, id: impl Into<ElementId>, dispatch: Dispatch, cx: &App) -> AnyElement {
+fn plain_message(text: &str, base: Hsla, id: impl Into<ElementId>, order: u64, dispatch: Dispatch, cx: &App) -> AnyElement {
     let _ = (HistMode::Before, strip_formatting(text));
-    message_text(text, base, id, dispatch, cx)
+    message_text(text, base, id, order, dispatch, cx)
 }
