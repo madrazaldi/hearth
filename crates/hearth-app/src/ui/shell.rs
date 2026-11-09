@@ -26,6 +26,8 @@ use super::theme::{self, HearthTheme as _, SANS, ThemePref};
 use super::welcome::Welcome;
 use super::widgets::toast_layer;
 use crate::host::{Hearth, hearth, host, request_flush};
+use gpui_kit::base::TextSelection;
+use gpui_kit::base::input::Copy;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::menu::PopupMenu;
 use gpui_kit::component::{ResizableState, h_resizable, resizable_panel};
@@ -799,6 +801,19 @@ impl Render for ChatWindow {
             .font_family(SANS)
             .text_size(px(14.))
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, _| this.pointer = ev.position))
+            // The composer keeps the focus, and its own Copy would take the
+            // keystroke and copy its empty selection. Text dragged out in the
+            // chat goes first, unless the composer has a selection of its own.
+            .capture_action(cx.listener(|this, _: &Copy, window, cx| {
+                if this.composer.read(cx).has_selection(cx) {
+                    return;
+                }
+                let text = TextSelection::selected_text(window, cx).trim().to_string();
+                if !text.is_empty() {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    cx.stop_propagation();
+                }
+            }))
             .child(
                 h_resizable("shell")
                     .with_state(&self.resizable)

@@ -133,6 +133,7 @@ fn main() -> anyhow::Result<()> {
     match only.as_deref() {
         Some("gaps") => return gap_scenes(&out),
         Some("welcome") => return welcome_scenes(&out),
+        Some("selection") => return selection_scene(&out),
         _ => {}
     }
     let list = if only.as_deref() == Some("extras") { extras() } else { shots() };
@@ -186,6 +187,44 @@ impl Scene {
         let chat = self.chat.clone();
         self.cx.update_window(self.window, |_, window, cx| chat.update(cx, |c, cx| f(c, window, cx))).unwrap();
     }
+}
+
+/// `screenshots <dir> selection`: text dragged out across several messages.
+fn selection_scene(out: &Path) -> anyhow::Result<()> {
+    let mut s = Scene::new(base(), out)?;
+    s.cx.update(|app| {
+        hearth(app).update(app, |h, cx| {
+            h.act(cx, |a| {
+                let key = a.conn("soju/1").and_then(|c| c.key_of("#hearth"));
+                if let Some(key) = key {
+                    a.open(&hearth_model::buffer::BufId::new("soju/1", key));
+                }
+            })
+        })
+    });
+    advance(&mut s.cx, 2 * STEP_MS);
+    s.chat(|c, _, cx| c.scroll_messages_up(24, cx));
+    advance(&mut s.cx, 2 * STEP_MS);
+    let (from, to) = (point(px(420.), px(200.)), point(px(1000.), px(560.)));
+    let left = Some(MouseButton::Left);
+    let mut events = vec![PlatformInput::MouseDown(MouseDownEvent {
+        button: MouseButton::Left,
+        position: from,
+        modifiers: Modifiers::default(),
+        click_count: 1,
+        first_mouse: false,
+    })];
+    events.extend((1..=8).map(|i| {
+        PlatformInput::MouseMove(MouseMoveEvent { position: from + (to - from) * (i as f32 / 8.), pressed_button: left, modifiers: Modifiers::default() })
+    }));
+    events.push(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: to, modifiers: Modifiers::default(), click_count: 1 }));
+    for event in events {
+        s.cx.update_window(s.window, |_, window, cx| {
+            window.dispatch_event(event, cx);
+        })?;
+        advance(&mut s.cx, STEP_MS);
+    }
+    s.shot("selection")
 }
 
 /// `screenshots <dir> gaps`: the message filter, the upload spinner and the drop target.

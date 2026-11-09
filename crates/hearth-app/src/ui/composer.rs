@@ -91,6 +91,11 @@ impl Composer {
         self.input.update(cx, |s, cx| s.focus(window, cx));
     }
 
+    /// Whether text is selected in the field, which Copy should take over the chat's.
+    pub fn has_selection(&self, cx: &App) -> bool {
+        !self.input.read(cx).selected_range().is_empty()
+    }
+
     fn buffer(&self) -> Option<BufferId> {
         self.view.as_ref().map(|v| v.buffer.clone())
     }

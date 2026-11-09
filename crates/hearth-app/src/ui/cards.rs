@@ -15,7 +15,7 @@ pub fn motd_default_open(l: &Line, buffer_lines: usize) -> bool {
     l.data.as_ref().is_some_and(|d| d.contains_key("title")) || buffer_lines < 40
 }
 
-pub fn whois_card(l: &Line, card: &WhoisCard, nick_colors: bool, dispatch: &Dispatch, p: &Palette) -> AnyElement {
+pub fn whois_card(l: &Line, order: u64, card: &WhoisCard, nick_colors: bool, dispatch: &Dispatch, p: &Palette) -> AnyElement {
     let d = dispatch.clone();
     let nick = if card.nick.is_empty() { l.nick.clone() } else { card.nick.clone() };
     let n = nick.clone();
@@ -25,7 +25,7 @@ pub fn whois_card(l: &Line, card: &WhoisCard, nick_colors: bool, dispatch: &Disp
         let value = if row.rich {
             let mut rt = RichText::new(p.text_2);
             rt.segments(&parse_formatting(&row.value), p);
-            rt.finish(SharedString::from(format!("whois-{}-{i}", l.id)), dispatch.clone())
+            rt.finish(SharedString::from(format!("whois-{}-{i}", l.id)), order + i as u64, dispatch.clone())
         } else if row.mono {
             div().font_family(MONO).text_size(px(12.)).text_color(p.text_2).child(row.value.clone()).into_any_element()
         } else {
